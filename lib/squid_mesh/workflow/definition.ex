@@ -314,6 +314,21 @@ defmodule SquidMesh.Workflow.Definition do
     |> maybe_put(:failure, normalize_failure_recovery(recovery_value(policy, :failure, nil)))
   end
 
+  @doc false
+  @spec serialize_recovery_policy(recovery_policy()) :: map()
+  def serialize_recovery_policy(policy) when is_map(policy) do
+    policy = normalize_recovery_policy(policy)
+
+    %{
+      "irreversible?" => policy.irreversible?,
+      "compensatable?" => policy.compensatable?,
+      "replay" => Atom.to_string(policy.replay),
+      "recovery" => Atom.to_string(policy.recovery)
+    }
+    |> maybe_put_serialized_compensation(Map.get(policy, :compensation))
+    |> maybe_put_serialized_failure(Map.get(policy, :failure))
+  end
+
   @doc """
   Applies the declared output mapping for one step result.
   """
@@ -732,6 +747,39 @@ defmodule SquidMesh.Workflow.Definition do
   defp maybe_put_serialized_recovery(serialized, recovery) do
     Map.put(serialized, "recovery", Atom.to_string(recovery))
   end
+
+  defp maybe_put_serialized_compensation(serialized, nil), do: serialized
+
+  defp maybe_put_serialized_compensation(serialized, compensation) when is_map(compensation) do
+    Map.put(serialized, "compensation", %{
+      "callback" => serialize_recovery_callback(Map.get(compensation, :callback)),
+      "status" => serialize_atom_field(Map.get(compensation, :status, :available))
+    })
+  end
+
+  defp maybe_put_serialized_failure(serialized, nil), do: serialized
+
+  defp maybe_put_serialized_failure(serialized, failure) when is_map(failure) do
+    Map.put(serialized, "failure", %{
+      "strategy" => serialize_atom_field(Map.get(failure, :strategy)),
+      "target" => serialize_failure_target(Map.get(failure, :target))
+    })
+  end
+
+  defp serialize_recovery_callback(nil), do: nil
+  defp serialize_recovery_callback(callback) when is_atom(callback), do: Atom.to_string(callback)
+  defp serialize_recovery_callback(callback), do: callback
+
+  defp serialize_atom_field(nil), do: nil
+  defp serialize_atom_field(value) when is_atom(value), do: Atom.to_string(value)
+  defp serialize_atom_field(value), do: value
+
+  defp serialize_failure_target(nil), do: nil
+
+  defp serialize_failure_target(target) when is_atom(target),
+    do: serialize_transition_target(target)
+
+  defp serialize_failure_target(target), do: target
 
   defp serialize_transition_target(:complete), do: "__complete__"
   defp serialize_transition_target(step) when is_atom(step), do: serialize_step(step)

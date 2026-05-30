@@ -297,7 +297,8 @@ Reusing an idempotency key returns the existing result without creating duplicat
 
 ## Compensation and Recovery
 
-When a step fails after retries with no forward `:error` route, Squid Mesh executes compensation callbacks in reverse completion order:
+Workflow authors can mark completed side effects as compensatable so operators
+and host tools can see the rollback contract when later work fails:
 
 ```elixir
 step :borrow_rope, Lothlorien.Steps.BorrowRope,
@@ -310,7 +311,10 @@ step :cross_moria, Fellowship.Steps.CrossMoria,
   retry: [max_attempts: 3]
 ```
 
-A failed `:cross_moria` triggers compensation in reverse order: cancel eagle, then return rope. Each compensation result is persisted in the step's recovery history.
+A failed `:cross_moria` exposes the completed compensatable steps and their
+declared callbacks through `inspect_run/2`, `inspect_run_graph/2`, and
+`explain_run/2`. The callback metadata is persisted with each runnable so
+dashboards can show rollback availability even if the workflow module changes.
 
 For side effects that cannot be reversed, mark steps as `irreversible: true` or `compensatable: false`. Squid Mesh exposes these boundaries during inspection and blocks replay by default after irreversible execution.
 

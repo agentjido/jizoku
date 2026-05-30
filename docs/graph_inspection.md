@@ -73,6 +73,11 @@ Nodes represent workflow steps:
 resolved through `SquidMesh.Workflow.resolve_spec_actions/2`. Compiled
 module-authored workflows usually leave it nil.
 
+`recovery` is populated from the durable runnable recovery policy when the
+runtime has one. For compensatable steps it includes the callback module name
+and status, letting host dashboards show rollback availability without parsing
+journal entries or loading the current workflow module.
+
 Node status values are:
 
 - `:waiting` - no runnable work has been recorded for the node

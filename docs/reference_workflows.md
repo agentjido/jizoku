@@ -28,7 +28,7 @@ modules live under `examples/minimal_host_app/lib/minimal_host_app/steps`.
 | `PaymentRecovery` | Manual | Retry policy, explicit recovery routing, non-compensatable side effects, and replay boundaries. |
 | `ManualApproval` | Manual | Durable operator approval, rejection, pause state, resume, and audit history. |
 | `DependencyRecovery` | Manual | Independent roots, dependency joins, named path input mapping, and inspectable joined work. |
-| `SagaCheckout` | Manual | Reversible side effects, compensation order, and retry exhaustion on a later step. |
+| `SagaCheckout` | Manual | Reversible side-effect metadata and retry exhaustion on a later step. |
 | `DailyDigest` | Manual and cron | One workflow graph shared by manual and scheduled starts, including cron idempotency metadata. |
 
 ## Payment Recovery
@@ -99,7 +99,8 @@ mapped input that reached `:prepare_notification`.
 
 ## Saga Checkout
 
-`MinimalHostApp.Workflows.SagaCheckout` demonstrates explicit compensation:
+`MinimalHostApp.Workflows.SagaCheckout` demonstrates explicit compensation
+metadata:
 
 ```elixir
 step :reserve_inventory, MinimalHostApp.Steps.ReserveInventory,
@@ -111,10 +112,11 @@ step :authorize_payment, MinimalHostApp.Steps.AuthorizePayment,
 step :capture_payment, MinimalHostApp.Steps.CapturePayment, retry: [max_attempts: 2]
 ```
 
-When capture exhausts its retry policy, Squid Mesh compensates completed
-side-effecting steps in reverse completion order. The example keeps each
-external effect behind a step module, while the workflow definition remains the
-place where retry and compensation semantics are visible.
+When capture exhausts its retry policy, Squid Mesh keeps the completed
+side-effecting steps and their declared rollback callbacks visible through run
+inspection, graph inspection, and explanation. The example keeps each external
+effect behind a step module, while the workflow definition remains the place
+where retry and compensation semantics are visible.
 
 ## Daily Digest
 
