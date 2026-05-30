@@ -753,7 +753,7 @@ defmodule SquidMesh.Workflow.Definition do
   defp maybe_put_serialized_compensation(serialized, compensation) when is_map(compensation) do
     Map.put(serialized, "compensation", %{
       "callback" => serialize_recovery_callback(Map.get(compensation, :callback)),
-      "status" => serialize_recovery_status(Map.get(compensation, :status, :available))
+      "status" => serialize_atom_field(Map.get(compensation, :status, :available))
     })
   end
 
@@ -761,7 +761,7 @@ defmodule SquidMesh.Workflow.Definition do
 
   defp maybe_put_serialized_failure(serialized, failure) when is_map(failure) do
     Map.put(serialized, "failure", %{
-      "strategy" => serialize_recovery_status(Map.get(failure, :strategy)),
+      "strategy" => serialize_atom_field(Map.get(failure, :strategy)),
       "target" => serialize_failure_target(Map.get(failure, :target))
     })
   end
@@ -770,12 +770,15 @@ defmodule SquidMesh.Workflow.Definition do
   defp serialize_recovery_callback(callback) when is_atom(callback), do: Atom.to_string(callback)
   defp serialize_recovery_callback(callback), do: callback
 
-  defp serialize_recovery_status(nil), do: nil
-  defp serialize_recovery_status(status) when is_atom(status), do: Atom.to_string(status)
-  defp serialize_recovery_status(status), do: status
+  defp serialize_atom_field(nil), do: nil
+  defp serialize_atom_field(value) when is_atom(value), do: Atom.to_string(value)
+  defp serialize_atom_field(value), do: value
 
   defp serialize_failure_target(nil), do: nil
-  defp serialize_failure_target(target) when is_atom(target), do: serialize_step(target)
+
+  defp serialize_failure_target(target) when is_atom(target),
+    do: serialize_transition_target(target)
+
   defp serialize_failure_target(target), do: target
 
   defp serialize_transition_target(:complete), do: "__complete__"

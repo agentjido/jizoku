@@ -1329,6 +1329,32 @@ defmodule SquidMesh.WorkflowTest do
            }
   end
 
+  test "serializes recovery policy metadata for persisted inspection" do
+    callback = InvoiceReminder.LoadInvoice
+
+    assert SquidMesh.Workflow.Definition.serialize_recovery_policy(%{
+             irreversible?: false,
+             compensatable?: true,
+             replay: :allowed,
+             recovery: :automatic,
+             compensation: %{callback: callback, status: :available},
+             failure: %{strategy: :undo, target: :complete}
+           }) == %{
+             "irreversible?" => false,
+             "compensatable?" => true,
+             "replay" => "allowed",
+             "recovery" => "automatic",
+             "compensation" => %{
+               "callback" => Atom.to_string(callback),
+               "status" => "available"
+             },
+             "failure" => %{
+               "strategy" => "undo",
+               "target" => "__complete__"
+             }
+           }
+  end
+
   test "supports introspection of definition segments" do
     assert InvoiceReminder.__workflow__(:steps) == InvoiceReminder.workflow_definition().steps
     assert InvoiceReminder.__workflow__(:payload) == InvoiceReminder.workflow_definition().payload
