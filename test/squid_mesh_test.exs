@@ -792,6 +792,61 @@ defmodule SquidMeshTest do
     end
   end
 
+  defmodule JournalCompensationWorkflow do
+    use SquidMesh.Workflow
+
+    workflow do
+      trigger :checkout do
+        manual()
+
+        payload do
+          field :order_id, :string
+        end
+      end
+
+      step :reserve_inventory, JournalCompensationWorkflow.ReserveInventory,
+        compensate: JournalCompensationWorkflow.ReleaseInventory
+
+      step :capture_payment, JournalCompensationWorkflow.CapturePayment
+
+      transition :reserve_inventory, on: :ok, to: :capture_payment
+      transition :capture_payment, on: :ok, to: :complete
+    end
+  end
+
+  defmodule JournalCompensationWorkflow.ReserveInventory do
+    use SquidMesh.Step,
+      name: :reserve_inventory,
+      description: "Reserves inventory for a checkout"
+
+    @impl SquidMesh.Step
+    def run(%{order_id: order_id}, _context) do
+      {:ok, %{inventory_reservation: %{order_id: order_id, status: "reserved"}}}
+    end
+  end
+
+  defmodule JournalCompensationWorkflow.ReleaseInventory do
+    use SquidMesh.Step,
+      name: :release_inventory,
+      description: "Releases a completed inventory reservation"
+
+    @impl SquidMesh.Step
+    def run(%{step: %{output: %{inventory_reservation: reservation}}}, _context) do
+      {:ok, %{released_inventory: Map.put(reservation, :status, "released")}}
+    end
+  end
+
+  defmodule JournalCompensationWorkflow.CapturePayment do
+    use SquidMesh.Step,
+      name: :capture_payment,
+      description: "Captures payment for a checkout"
+
+    @impl SquidMesh.Step
+    def run(_input, _context) do
+      {:error, %{message: "capture declined", code: "capture_declined"}}
+    end
+  end
+
   defmodule JournalSecretFailureWorkflow.LeakSecret do
     use Jido.Action,
       name: "leak_secret",
@@ -2110,6 +2165,62 @@ defmodule SquidMeshTest do
       assert SquidMesh.Runtime.RunIndexProjection.run_ids(run_index_projection) == [
                snapshot.run_id
              ]
+    end
+
+    test "inspect, graph, and explanation expose durable compensation policy" do
+      assert {:ok, %Snapshot{} = snapshot} =
+               SquidMesh.start(
+                 JournalCompensationWorkflow,
+                 :checkout,
+                 %{order_id: "order_compensation_policy"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      expected_recovery = %{
+        irreversible?: false,
+        compensatable?: true,
+        replay: :allowed,
+        recovery: :automatic,
+        compensation: %{
+          callback: Atom.to_string(JournalCompensationWorkflow.ReleaseInventory),
+          status: :available
+        }
+      }
+
+      assert [
+               %{
+                 step: "reserve_inventory",
+                 status: :available,
+                 recovery: ^expected_recovery
+               }
+             ] = snapshot.visible_attempts
+
+      assert {:ok, %SquidMesh.Runs.GraphInspection{} = graph} =
+               SquidMesh.inspect_run_graph(snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      nodes = Map.new(graph.nodes, &{&1.id, &1})
+
+      assert nodes["reserve_inventory"].recovery == expected_recovery
+
+      assert {:ok, %Diagnostic{} = diagnostic} =
+               SquidMesh.explain_run(snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert diagnostic.evidence.recovery_policies == %{
+               "reserve_inventory" => expected_recovery
+             }
     end
 
     test "apply_signal/2 starts journal runs through a durable signal receipt" do

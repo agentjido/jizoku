@@ -1475,13 +1475,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
 
   defp replay_recovery_policy(definition, step_name) do
     with {:ok, recovery} <- Definition.step_recovery_policy(definition, step_name) do
-      {:ok,
-       %{
-         "irreversible?" => recovery.irreversible?,
-         "compensatable?" => recovery.compensatable?,
-         "replay" => Atom.to_string(recovery.replay),
-         "recovery" => Atom.to_string(recovery.recovery)
-       }}
+      {:ok, Definition.serialize_recovery_policy(recovery)}
     end
   end
 

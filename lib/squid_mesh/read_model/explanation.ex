@@ -218,6 +218,7 @@ defmodule SquidMesh.ReadModel.Explanation do
       duplicate_commands: duplicate_commands(snapshot.command_history),
       planned_runnable_keys: snapshot.planned_runnable_keys,
       applied_runnable_keys: snapshot.applied_runnable_keys,
+      recovery_policies: recovery_policies(snapshot),
       next_visible_at: snapshot.next_visible_at,
       attempt_counts: attempt_counts(snapshot.attempts),
       anomaly_count: length(snapshot.anomalies),
@@ -306,6 +307,23 @@ defmodule SquidMesh.ReadModel.Explanation do
       signal_type: signal_type,
       count: count
     }
+  end
+
+  defp recovery_policies(%Snapshot{} = snapshot) do
+    snapshot.attempts
+    |> Kernel.++(snapshot.visible_attempts)
+    |> Kernel.++(snapshot.scheduled_attempts)
+    |> Kernel.++(snapshot.pending_results)
+    |> Kernel.++(snapshot.expired_claims)
+    |> Enum.reduce(%{}, fn attempt, policies ->
+      case {item_value(attempt, :step), item_value(attempt, :recovery)} do
+        {step, recovery} when is_binary(step) and is_map(recovery) ->
+          Map.put_new(policies, step, recovery)
+
+        _missing ->
+          policies
+      end
+    end)
   end
 
   defp attempt_counts(attempts) do

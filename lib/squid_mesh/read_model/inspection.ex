@@ -22,6 +22,7 @@ defmodule SquidMesh.ReadModel.Inspection do
   alias SquidMesh.Runtime.Journal
   alias SquidMesh.Runtime.Journal.Options
   alias SquidMesh.Runtime.WorkflowAgent
+  alias SquidMesh.Workflow.Definition
 
   @type storage_config :: Journal.storage_config()
   @type snapshot_option :: {:queue, atom() | String.t()} | {:now, DateTime.t()}
@@ -109,6 +110,11 @@ defmodule SquidMesh.ReadModel.Inspection do
         }
       end
 
+    recovery_by_runnable_key =
+      workflow_agent
+      |> WorkflowAgent.planned_runnables()
+      |> recovery_by_runnable_key()
+
     %Snapshot{
       run_id: run_id,
       workflow: workflow,
@@ -145,12 +151,14 @@ defmodule SquidMesh.ReadModel.Inspection do
         |> MapSet.to_list()
         |> Enum.sort(),
       pending_dispatches: normalize_runnables(pending_dispatches),
-      pending_results: Enum.map(pending_results, &attempt_snapshot/1),
-      visible_attempts: Enum.map(visible_attempts, &attempt_snapshot/1),
-      scheduled_attempts: Enum.map(scheduled_attempts, &attempt_snapshot/1),
+      pending_results: Enum.map(pending_results, &attempt_snapshot(&1, recovery_by_runnable_key)),
+      visible_attempts:
+        Enum.map(visible_attempts, &attempt_snapshot(&1, recovery_by_runnable_key)),
+      scheduled_attempts:
+        Enum.map(scheduled_attempts, &attempt_snapshot(&1, recovery_by_runnable_key)),
       next_visible_at: next_visible_at(scheduled_attempts),
-      expired_claims: Enum.map(expired_claims, &attempt_snapshot/1),
-      attempts: Enum.map(attempts, &attempt_snapshot/1),
+      expired_claims: Enum.map(expired_claims, &attempt_snapshot(&1, recovery_by_runnable_key)),
+      attempts: Enum.map(attempts, &attempt_snapshot(&1, recovery_by_runnable_key)),
       anomalies: projection_anomalies(workflow_projection, dispatch_projection)
     }
   end
@@ -283,7 +291,13 @@ defmodule SquidMesh.ReadModel.Inspection do
       Map.get(runnable, :key) || Map.get(runnable, "key") || ""
   end
 
-  defp attempt_snapshot(%ActionAttempt{} = attempt) do
+  defp recovery_by_runnable_key(runnables) when is_list(runnables) do
+    Map.new(runnables, fn runnable ->
+      {runnable_key(runnable), normalize_recovery(Map.get(runnable, :recovery))}
+    end)
+  end
+
+  defp attempt_snapshot(%ActionAttempt{} = attempt, recovery_by_runnable_key) do
     snapshot = %{
       runnable_key: attempt.runnable_key,
       status: attempt.status,
@@ -298,12 +312,19 @@ defmodule SquidMesh.ReadModel.Inspection do
       result: attempt.result,
       transition: attempt.transition,
       error: attempt.error,
+      recovery: Map.get(recovery_by_runnable_key, attempt.runnable_key),
       wakeup_emitted?: attempt.wakeup_emitted?,
       applied?: attempt.applied?
     }
 
     compact(snapshot)
   end
+
+  defp normalize_recovery(recovery) when is_map(recovery) do
+    Definition.normalize_recovery_policy(recovery)
+  end
+
+  defp normalize_recovery(_recovery), do: nil
 
   defp projection_anomalies(
          %WorkflowAgent.Projection{} = workflow_projection,

@@ -119,6 +119,7 @@ defmodule SquidMesh.Runs.GraphInspection do
         input: detail(include_details?, latest_attempt_value(attempts, :input)),
         output: detail(include_details?, latest_attempt_value(attempts, :result)),
         error: detail(include_details?, latest_attempt_value(attempts, :error)),
+        recovery: latest_attempt_value(attempts, :recovery),
         transition:
           Definition.deserialize_transition_decision(
             definition,

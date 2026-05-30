@@ -42,6 +42,7 @@ defmodule SquidMesh.ReadModel.Inspection.Snapshot do
           optional(:result) => map(),
           optional(:transition) => map(),
           optional(:error) => map(),
+          optional(:recovery) => map(),
           required(:wakeup_emitted?) => boolean(),
           required(:applied?) => boolean()
         }
