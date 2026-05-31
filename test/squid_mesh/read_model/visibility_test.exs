@@ -163,6 +163,25 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
              %{run_id: "child_123", workflow: "ChildWorkflow", status: :running}
            ]
 
+    assert redacted.child_links == [
+             %{
+               id: "review_payment:child_run:child_123",
+               from: "review_payment",
+               to: "child_123",
+               type: :child_run,
+               status: :linked,
+               child_run_id: "child_123",
+               child_workflow: "ChildWorkflow",
+               child_trigger: "manual",
+               child_key: "review_child",
+               origin: %{
+                 runnable_key: "run_123:review_payment:1",
+                 step: "review_payment",
+                 attempt: 1
+               }
+             }
+           ]
+
     assert [
              %{
                dynamic_key: "fanout",
@@ -173,7 +192,19 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
   end
 
   test "redacts JSON-ready graph maps by default" do
-    graph_map = GraphInspection.to_map(graph())
+    mixed_key_child_link = %{
+      "child_run_id" => "child_mixed",
+      "origin" => %{
+        "runnable_key" => "run_123:mixed:1",
+        "step" => "mixed",
+        "tenant_id" => "tenant_123"
+      }
+    }
+
+    graph_map =
+      graph()
+      |> GraphInspection.to_map()
+      |> Map.put("child_links", [mixed_key_child_link])
 
     assert {:ok, redacted} = Visibility.redact(graph_map, %{role: :external})
 
@@ -187,6 +218,16 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
              redacted.child_runs
 
     refute Map.has_key?(child, :input)
+    refute Map.has_key?(child, :started_at)
+
+    assert [%{child_run_id: "child_123"} = child_link] = redacted.child_links
+    refute Map.has_key?(child_link, :metadata)
+    refute Map.has_key?(child_link, :started_at)
+    refute Map.has_key?(child_link.origin, :tenant_id)
+    refute Map.has_key?(child_link.origin, :secret)
+
+    assert [%{child_run_id: "child_mixed"} = mixed_key_link] = redacted["child_links"]
+    refute Map.has_key?(mixed_key_link.origin, :tenant_id)
   end
 
   test "redacts stale malformed dynamic work shapes" do
@@ -458,7 +499,30 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
           run_id: "child_123",
           workflow: "ChildWorkflow",
           status: :running,
-          input: %{secret: "child-secret"}
+          input: %{secret: "child-secret"},
+          started_at: @now
+        }
+      ],
+      child_links: [
+        %{
+          id: "review_payment:child_run:child_123",
+          from: "review_payment",
+          to: "child_123",
+          type: :child_run,
+          status: :linked,
+          child_run_id: "child_123",
+          child_workflow: "ChildWorkflow",
+          child_trigger: "manual",
+          child_key: "review_child",
+          origin: %{
+            runnable_key: "run_123:review_payment:1",
+            step: "review_payment",
+            attempt: 1,
+            tenant_id: "tenant_123",
+            secret: "internal"
+          },
+          metadata: %{secret: "internal"},
+          started_at: @now
         }
       ],
       dynamic_work: [

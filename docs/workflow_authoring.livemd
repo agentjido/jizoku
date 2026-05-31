@@ -311,11 +311,12 @@ payload = SquidMesh.Runs.GraphInspection.to_map(graph)
   status: payload.status,
   current_node_ids: payload.current_node_ids,
   nodes: Enum.map(payload.nodes, &SquidMeshAuthoringLivebook.Output.node/1),
-  edges: Enum.map(payload.edges, &SquidMeshAuthoringLivebook.Output.edge/1)
+  edges: Enum.map(payload.edges, &SquidMeshAuthoringLivebook.Output.edge/1),
+  child_links: payload.child_links
 }
 ```
 
-For the complete node and edge contract, see
+For the complete node, edge, and child-link contract, see
 [Graph inspection contract](graph_inspection.md).
 
 ## Try Changing The Workflow

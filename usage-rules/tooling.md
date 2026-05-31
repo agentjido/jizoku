@@ -6,6 +6,8 @@
 - Use `SquidMesh.inspect_run/2` for factual run details.
 - Use `SquidMesh.inspect_run_graph/2` for graph-oriented dashboard and visual
   editor views.
+- Use `GraphInspection.to_map/1` `child_links` to render parent-to-child
+  subflow overlays; do not invent client-side child link ids from raw history.
 - Use `SquidMesh.explain_run/2` for operator-facing diagnosis and next actions.
 - Use `SquidMesh.record_dynamic_work/3` to persist validated dynamic nodes and
   edges that visual editors or dashboards should show on a run graph.

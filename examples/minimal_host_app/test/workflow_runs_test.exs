@@ -371,6 +371,23 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              }
            ] = retried_parent.child_runs
 
+    assert {:ok, parent_graph} = SquidMesh.inspect_run_graph(run.run_id)
+
+    parent_graph_map = SquidMesh.Runs.GraphInspection.to_map(parent_graph)
+
+    assert [
+             %{
+               from: "start_nested_invite",
+               to: ^child_run_id,
+               type: :child_run,
+               status: :linked,
+               child_run_id: ^child_run_id,
+               child_key: "invite_guest_456",
+               child_trigger: "deliver_invite",
+               metadata: %{guest_id: "guest_456"}
+             }
+           ] = parent_graph_map.child_links
+
     assert [%{step: "start_nested_invite", status: :retry_scheduled, attempt_number: 2}] =
              retried_parent.visible_attempts
 
@@ -388,6 +405,14 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     assert {:ok, reconstructed_waiting_child} =
              WorkflowRuns.inspect_run(child_run_id, queue: child_queue)
+
+    assert {:ok, reconstructed_parent_graph} = SquidMesh.inspect_run_graph(run.run_id)
+
+    reconstructed_parent_graph_map =
+      SquidMesh.Runs.GraphInspection.to_map(reconstructed_parent_graph)
+
+    assert [%{from: "start_nested_invite", to: ^child_run_id, type: :child_run}] =
+             reconstructed_parent_graph_map.child_links
 
     assert reconstructed_retried_parent.child_runs == retried_parent.child_runs
     assert reconstructed_waiting_child.parent_run == child_before_parent_retry.parent_run

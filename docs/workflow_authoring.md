@@ -793,6 +793,11 @@ node-and-edge view without reverse-engineering step history:
 For the stable host UI map shape, see the
 [graph inspection contract](graph_inspection.md).
 
+When a step starts a child workflow, graph maps expose a `child_links` overlay
+from the parent step to the child run id. Use those links for monitoring and
+visual editor inspection; the child workflow remains a separate run with its own
+retry, replay, cancellation, and graph-inspection boundary.
+
 For executable approval, recovery, dependency, saga, and scheduled workflow
 examples, see [reference workflows](reference_workflows.md).
 

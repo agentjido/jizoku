@@ -60,7 +60,48 @@ defmodule SquidMesh.Runs.GraphInspectionTest do
     assert graph.child_runs == [@child_run]
     assert graph.nodes == []
 
-    assert %{child_runs: [@child_run], nodes: []} = GraphInspection.to_map(graph)
+    assert %{
+             child_runs: [@child_run],
+             child_links: [
+               %{
+                 id: "fanout:child_run:child_run_123",
+                 from: "fanout",
+                 to: "child_run_123",
+                 type: :child_run,
+                 status: :linked,
+                 child_run_id: "child_run_123",
+                 child_workflow: "ChildWorkflow",
+                 child_trigger: "manual",
+                 child_key: "digest_subscription_1",
+                 origin: %{runnable_key: "run_123:fanout:1", step: "fanout", attempt: 1},
+                 metadata: %{subscription_id: "sub_123"}
+               }
+             ],
+             nodes: []
+           } = GraphInspection.to_map(graph)
+  end
+
+  test "skips stale child run records that cannot be linked to an origin step" do
+    snapshot = %Snapshot{
+      run_id: @run_id,
+      workflow: "MissingWorkflow",
+      queue: "default",
+      status: :running,
+      reason: :run_started,
+      terminal?: false,
+      terminal_status: nil,
+      thread_revisions: %{run: 2, dispatch: 0},
+      child_runs: [
+        %{child_run_id: "child_without_origin", origin: %{}},
+        %{origin: %{step: "fanout"}},
+        :legacy_child_run
+      ]
+    }
+
+    graph = GraphInspection.from_snapshot(snapshot, source: :read_model)
+
+    assert graph.child_links == []
+    assert %{child_links: []} = GraphInspection.to_map(graph)
   end
 
   test "exposes stable action identity from planned runnable metadata" do
