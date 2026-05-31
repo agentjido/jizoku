@@ -44,6 +44,35 @@ provider responses, tokens, or internal notes. Apply an allow-list at the HTTP,
 LiveView, CLI, or API boundary instead of serializing the full snapshot by
 default.
 
+`SquidMesh.ReadModel.Visibility.redact/2` and
+`SquidMesh.ReadModel.Visibility.redact/3` provide the built-in projection
+helper for that boundary. The helper accepts an existing listing summary,
+inspection snapshot, graph inspection, or explanation diagnostic plus a
+host-owned actor. The two-arity form defaults to `:external`; the three-arity
+form accepts a host policy. Policies may return `:external`, `:operator`, or
+`:auditor`; auditor views preserve the full read model, while external and
+operator views keep high-level runtime status and current/manual task shape
+without payloads, command history, claim metadata, or attempt results.
+The helper also applies conservative nested redaction to JSON-ready maps, which
+is useful after calling `SquidMesh.Runs.GraphInspection.to_map/1`.
+
+```elixir
+defmodule MyApp.SquidMeshVisibility do
+  def visibility_scope(%{role: :auditor}, _view), do: :auditor
+  def visibility_scope(%{role: :support}, _view), do: :operator
+  def visibility_scope(_actor, _view), do: :external
+end
+
+{:ok, snapshot} = SquidMesh.inspect_run(run_id, include_history: true)
+
+{:ok, visible_snapshot} =
+  SquidMesh.ReadModel.Visibility.redact(
+    snapshot,
+    current_actor,
+    MyApp.SquidMeshVisibility
+  )
+```
+
 For example, an operator summary can keep runtime state while dropping step
 payloads:
 
