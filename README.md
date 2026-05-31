@@ -350,8 +350,9 @@ Each child run has independent inspection, retry, replay, and cancellation. Repe
 
 ## Inspectable Dynamic Work
 
-Host code can also preview and record bounded dynamic work metadata for an
-active run without making those nodes executable yet:
+Host code can preview, record, or schedule bounded dynamic work for an active
+run. Preview is read-only, record persists inspection metadata, and schedule
+persists the same dynamic-work fact while planning executable runnable intents:
 
 ```elixir
 registry = %{"digest.deliver" => MyApp.Steps.DeliverDigest}
@@ -379,7 +380,12 @@ preview.added_node_ids
 preview.added_edge_ids
 preview.recordable?
 preview.graph.nodes
+```
 
+After previewing, choose one durable write path. Use `record_dynamic_work/3`
+when the dynamic structure should be inspectable only:
+
+```elixir
 {:ok, snapshot} =
   SquidMesh.record_dynamic_work(
     run.run_id,
@@ -399,18 +405,53 @@ preview.graph.nodes
   )
 ```
 
-`preview_dynamic_work/3` and `record_dynamic_work/3` share validation for stable
-ids, origin metadata, nodes, and optional edges against the current run snapshot.
-When `:action_registry` is supplied, each dynamic node must include an approved
-action key before Squid Mesh returns or records the overlay.
+Use `schedule_dynamic_work/3` instead when the dynamic nodes should execute:
+
+```elixir
+{:ok, snapshot} =
+  SquidMesh.schedule_dynamic_work(
+    run.run_id,
+    %{
+      dynamic_key: "subscription_digest_fanout",
+      origin: %{
+        runnable_key: "run_123:schedule_digest:1",
+        step: "schedule_digest",
+        attempt: 1
+      },
+      reason: :runtime_fanout,
+      nodes: [
+        %{
+          id: "deliver_digest:chat_1",
+          action: "digest.deliver",
+          input: %{subscription_id: "sub_123"}
+        }
+      ]
+    },
+    action_registry: registry
+  )
+```
+
+`preview_dynamic_work/3`, `record_dynamic_work/3`, and
+`schedule_dynamic_work/3` share validation for stable ids, origin metadata,
+nodes, and optional edges against the current run snapshot. Scheduled dynamic
+work requires `:action_registry`; each executable dynamic node must include an
+approved action key and may include an `:input` map for its attempt. The origin
+runnable must already be applied before executable dynamic work can be
+scheduled.
 Preview returns the normalized dynamic work plus a graph overlay without
 appending a journal fact. It also exposes stable overlay metadata for visual
 editors: the producer node id, added node ids, added edge ids, whether recording
 would append a new durable fact, and warnings such as duplicate dynamic work.
-Recording appends the durable fact. Terminal runs reject new dynamic work. The
-recorded structure is visible through
-`inspect_run/2`, `inspect_run_graph/2`, and `explain_run/2`, but it remains
-inspection-only until executable dynamic graph expansion is added.
+Recording appends only the durable inspection fact. Scheduling appends that fact
+and planned runnable intents in one run-thread write; the normal
+`execute_next/1` worker path claims, executes, retries, applies, and inspects the
+dynamic attempts. A scheduled dynamic node may opt into persisted retry with
+`retry: [max_attempts: n]`. Dynamic edges are graph-inspection metadata for now;
+scheduled dynamic nodes are queued as independent runnable intents. Dynamic
+steps are replay-unsafe by default and require manual review before irreversible
+replay. Recording and scheduling the same dynamic node are alternatives, not a
+promotion flow; scheduling an already-recorded node with the same id is rejected
+by duplicate-node validation. Terminal runs reject new dynamic work.
 `inspect_run_graph/2` also exposes `dynamic_work_overlays` so dashboards and
 visual editors can show producer nodes, added node ids, and added edge ids
 without reconstructing them from raw dynamic-work records.

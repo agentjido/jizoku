@@ -1306,7 +1306,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              dynamic_work_overlays: [
                %{
                  dynamic_key: "dynamic_invoice_fanout",
-                 status: :recorded,
+                 status: :scheduled,
                  origin_node_id: "load_account",
                  added_node_ids: ["notify_invoice:inv_dynamic_demo"],
                  added_edge_ids: ["load_account:dynamic:notify_invoice:inv_dynamic_demo"],

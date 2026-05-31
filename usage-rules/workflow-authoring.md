@@ -73,12 +73,19 @@
   boundaries. Do not mutate already-run parent steps to simulate dynamic
   expansion.
 - Use `SquidMesh.record_dynamic_work/3` for bounded dynamic work that should be
-  visible to operators but is not executable planner work yet.
+  visible to operators but should not execute.
+- Use `SquidMesh.schedule_dynamic_work/3` for bounded dynamic work that should
+  be persisted and executed through the journal dispatch path.
+- Schedule dynamic work only after the origin runnable has applied; do not use
+  dynamic scheduling to speculate ahead of the producer step.
 - Use `SquidMesh.preview_dynamic_work/3` before recording when tooling needs to
   validate and render the candidate graph overlay without appending. Use the
   preview's added id lists and warnings instead of client-side graph diffing.
 - Pass `:action_registry` to dynamic-work preview and record calls when the
-  overlay represents future executable work; each dynamic node must use a
-  host-approved action key.
+  overlay represents future executable work; pass it to every schedule call.
+  Each executable dynamic node must use a host-approved action key.
+- Use dynamic node `retry: [max_attempts: n]` only when the host action is safe
+  for repeated delivery. Treat dynamic edges as graph metadata, not dependency
+  ordering.
 - Do not rely on "this step should only run once" as the side-effect safety
   model.

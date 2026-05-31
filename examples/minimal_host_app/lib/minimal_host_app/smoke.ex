@@ -580,7 +580,7 @@ defmodule MinimalHostApp.Smoke do
   end
 
   @doc """
-  Records dynamic work metadata in the host example journal and verifies the
+  Schedules executable dynamic work in the host example journal and verifies the
   graph/explanation read models expose it.
   """
   @spec run_dynamic_work_inspection!() :: map()
@@ -599,8 +599,9 @@ defmodule MinimalHostApp.Smoke do
                  attempt_id: "attempt_dynamic_demo"
                }
              ),
-           :ok <- preview_dynamic_work!(started_run),
-           :ok <- record_dynamic_work!(started_run),
+           {:ok, producer_run} <- SquidMesh.execute_next(journal_run_execute_options()),
+           :ok <- preview_dynamic_work!(producer_run),
+           :ok <- schedule_dynamic_work!(producer_run),
            {:ok, inspected_run} <- drain_journal_run(started_run.run_id, @journal_run_attempts),
            {:ok, graph} <- SquidMesh.inspect_run_graph(inspected_run.run_id),
            {:ok, explanation} <- SquidMesh.explain_run(inspected_run.run_id) do
@@ -613,7 +614,7 @@ defmodule MinimalHostApp.Smoke do
                  Enum.any?(
                    graph_payload.dynamic_work_overlays,
                    &(&1.dynamic_key == "dynamic_invoice_fanout" and
-                       &1.status == :recorded and
+                       &1.status == :scheduled and
                        &1.origin_node_id == "load_account" and
                        &1.added_node_ids == ["notify_invoice:inv_dynamic_demo"] and
                        &1.added_edge_ids == [
@@ -622,7 +623,10 @@ defmodule MinimalHostApp.Smoke do
                        &1.node_count == 1 and
                        &1.edge_count == 1)
                  ) and
-                 Enum.any?(graph_payload.nodes, &(&1.id == "notify_invoice:inv_dynamic_demo")) and
+                 Enum.any?(
+                   graph_payload.nodes,
+                   &(&1.id == "notify_invoice:inv_dynamic_demo" and &1.status == :completed)
+                 ) and
                  explanation.details.dynamic_work_count == 1 do
           raise "unexpected dynamic work inspection smoke result"
         end
@@ -1307,16 +1311,16 @@ defmodule MinimalHostApp.Smoke do
     ]
   end
 
-  defp record_dynamic_work!(%SquidMesh.ReadModel.Inspection.Snapshot{} = inspected_run) do
-    case inspected_run.planned_runnables do
-      [runnable | _rest] -> record_dynamic_work_for_runnable(inspected_run, runnable)
-      _missing -> {:error, :missing_planned_runnable}
+  defp schedule_dynamic_work!(%SquidMesh.ReadModel.Inspection.Snapshot{} = inspected_run) do
+    case dynamic_work_origin(inspected_run) do
+      [runnable | _rest] -> schedule_dynamic_work_for_runnable(inspected_run, runnable)
+      _missing -> {:error, :missing_dynamic_work_origin}
     end
   end
 
-  defp record_dynamic_work_for_runnable(inspected_run, runnable) do
+  defp schedule_dynamic_work_for_runnable(inspected_run, runnable) do
     with {:ok, _snapshot} <-
-           SquidMesh.record_dynamic_work(
+           WorkflowRuns.schedule_dynamic_work(
              inspected_run.run_id,
              dynamic_work_attrs(runnable),
              action_registry: dynamic_work_action_registry()
@@ -1326,9 +1330,9 @@ defmodule MinimalHostApp.Smoke do
   end
 
   defp preview_dynamic_work!(%SquidMesh.ReadModel.Inspection.Snapshot{} = inspected_run) do
-    case inspected_run.planned_runnables do
+    case dynamic_work_origin(inspected_run) do
       [runnable | _rest] -> preview_dynamic_work_for_runnable(inspected_run, runnable)
-      _missing -> {:error, :missing_planned_runnable}
+      _missing -> {:error, :missing_dynamic_work_origin}
     end
   end
 
@@ -1371,11 +1375,19 @@ defmodule MinimalHostApp.Smoke do
         %{
           id: "notify_invoice:inv_dynamic_demo",
           action: "payment.notify_customer",
+          input: %{
+            invoice: %{id: "inv_dynamic_demo"},
+            gateway_check: %{status: "dynamic_fanout"}
+          },
           metadata: %{invoice_id: "inv_dynamic_demo", channel: "email"}
         }
       ],
       metadata: %{source: "minimal_host_app_smoke"}
     }
+  end
+
+  defp dynamic_work_origin(%SquidMesh.ReadModel.Inspection.Snapshot{attempts: attempts}) do
+    Enum.filter(attempts, &Map.get(&1, :applied?))
   end
 
   defp dynamic_work_action_registry do

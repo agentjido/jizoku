@@ -984,7 +984,8 @@ defmodule SquidMesh.Workflow.Definition do
     step_name = deserialize_completed_step(definition, completed_step)
     policy = normalize_recovery_policy(recovery)
 
-    if is_atom(step_name) and policy.replay == :manual_review_required do
+    if (is_atom(step_name) or is_binary(step_name)) and
+         policy.replay == :manual_review_required do
       [Map.put(policy, :step, step_name)]
     else
       []

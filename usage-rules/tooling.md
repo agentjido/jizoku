@@ -10,7 +10,13 @@
   subflow overlays; do not invent client-side child link ids from raw history.
 - Use `SquidMesh.explain_run/2` for operator-facing diagnosis and next actions.
 - Use `SquidMesh.record_dynamic_work/3` to persist validated dynamic nodes and
-  edges that visual editors or dashboards should show on a run graph.
+  edges that visual editors or dashboards should show on a run graph without
+  executing them.
+- Use `SquidMesh.schedule_dynamic_work/3` when host-approved dynamic nodes
+  should be persisted and executed through the journal dispatch path.
+- Only offer dynamic scheduling controls after the origin attempt has applied;
+  preview and record remain available for inspection-only overlays on active
+  runs.
 - Use `SquidMesh.preview_dynamic_work/3` to validate candidate dynamic nodes and
   render the graph overlay before committing them to the journal. Prefer its
   `origin_node_id`, `added_node_ids`, `added_edge_ids`, `recordable?`, and
@@ -19,7 +25,10 @@
   `GraphInspection.to_map/1` to inspect recorded dynamic work groups; use raw
   `dynamic_work` only when the caller needs the full normalized durable record.
 - Pass host-owned `:action_registry` options when previewing or recording
-  dynamic nodes that represent executable work candidates.
+  dynamic nodes that represent executable work candidates, and always pass it
+  when scheduling dynamic work.
+- Render dynamic edges as visual structure only unless a later API explicitly
+  reports dependency ordering for scheduled dynamic nodes.
 - Keep list responses redacted by default; fetch detailed history only when the
   caller asks for it.
 - Use `definition_version` from list, inspection, graph, and explanation

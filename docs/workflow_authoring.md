@@ -640,13 +640,16 @@ operation; delivery backends such as Bedrock or Oban should remain behind host
 adapter boundaries.
 
 Dynamic in-run graph expansion is tracked separately from child workflows. The
-current runtime can persist and inspect dynamic-work metadata so dashboards and
-visual editors can show bounded runtime-generated nodes, producer origins, and
-dynamic edges. Use `SquidMesh.preview_dynamic_work/3` to validate and render a
-candidate graph overlay without appending, then use
-`SquidMesh.record_dynamic_work/3` instead of appending `dynamic_work_recorded`
-journal facts directly. Preview or record dynamic work while the producer run is
-still active; terminal runs reject new dynamic-work previews and records.
+runtime can persist, inspect, and optionally schedule bounded runtime-generated
+nodes with producer origins and dynamic edges. Use
+`SquidMesh.preview_dynamic_work/3` to validate and render a candidate graph
+overlay without appending. Use `SquidMesh.record_dynamic_work/3` when dashboards
+only need durable metadata. Use `SquidMesh.schedule_dynamic_work/3` when the
+dynamic nodes should become executable runnable intents. Preview, record, or
+schedule dynamic work while the producer run is still active; terminal runs
+reject new dynamic work. Scheduling executable dynamic work also requires the
+origin runnable to be applied already, so dynamic fanout cannot race ahead of
+the producer side effect.
 
 ```elixir
 registry = %{"digest.deliver" => MyApp.Steps.DeliverDigest}
@@ -662,7 +665,12 @@ registry = %{"digest.deliver" => MyApp.Steps.DeliverDigest}
     },
     action_registry: registry
   )
+```
 
+After preview, record or schedule the dynamic work. Recording is for durable
+inspection metadata:
+
+```elixir
 {:ok, _snapshot} =
   SquidMesh.record_dynamic_work(
     run_id,
@@ -676,18 +684,46 @@ registry = %{"digest.deliver" => MyApp.Steps.DeliverDigest}
   )
 ```
 
+Scheduling is the executable path:
+
+```elixir
+{:ok, _snapshot} =
+  SquidMesh.schedule_dynamic_work(
+    run_id,
+    %{
+      dynamic_key: "subscription_digest_fanout",
+      origin: %{runnable_key: runnable_key, step: "schedule_digest", attempt: 1},
+      reason: :runtime_fanout,
+      nodes: [
+        %{
+          id: "deliver_digest:chat_1",
+          action: "digest.deliver",
+          input: %{subscription_id: "sub_123"}
+        }
+      ]
+    },
+    action_registry: registry
+  )
+```
+
 Preview results include the normalized dynamic work, a graph overlay, and
 editor-friendly metadata such as `origin_node_id`, `added_node_ids`,
 `added_edge_ids`, `recordable?`, and `warnings`. Use those fields to drive visual
 editor affordances instead of recomputing graph diffs in the host UI.
-Recorded dynamic work exposes the same inspection-friendly ids through
-`dynamic_work_overlays` on `inspect_run_graph/2`.
-When `:action_registry` is supplied, every dynamic node must include a
-host-approved action key before Squid Mesh previews or records the overlay.
-
-Those recorded dynamic nodes are inspection-only in this slice: they do not
-become executable planner work until the later dynamic graph execution semantics
-are added.
+Recorded and scheduled dynamic work expose the same inspection-friendly ids
+through `dynamic_work_overlays` on `inspect_run_graph/2`.
+Scheduled dynamic work requires `:action_registry`; every executable dynamic
+node must include a host-approved action key before Squid Mesh appends the
+dynamic-work fact or planned runnable intents. Scheduled dynamic nodes run
+through `execute_next/1` like declared steps, and graph inspection derives their
+status from the dynamic attempts. Add `retry: [max_attempts: n]` to a dynamic
+node when it should retry through the persisted dispatch path. Dynamic edges are
+inspection metadata today; scheduled dynamic nodes are queued as independent
+runnable intents, not dependency-ordered by dynamic-to-dynamic edges. Dynamic
+steps are replay-unsafe by default and require manual review before an
+irreversible replay. Recording and scheduling the same dynamic node are
+alternatives, not a promotion flow; scheduling an already-recorded node with the
+same id is rejected by duplicate-node validation.
 
 Built-in steps:
 

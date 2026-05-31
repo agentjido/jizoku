@@ -198,18 +198,20 @@ defmodule SquidMesh.Runs.GraphInspection do
   defp child_link(_child_run), do: []
 
   defp origin_step(origin) when is_map(origin) do
-    origin
-    |> field(:step)
-    |> normalize_id()
+    normalize_id(field(origin, :step))
   end
 
   defp origin_step(_origin), do: nil
 
   defp snapshot_nodes(%Snapshot{} = snapshot, definition, include_details?) do
     attempts_by_step = Enum.group_by(snapshot.attempts, &Map.fetch!(&1, :step))
+    dynamic_node_ids = dynamic_node_ids(snapshot.dynamic_work)
 
     step_sources =
-      snapshot.attempts ++ snapshot.planned_runnables ++ snapshot.pending_dispatches
+      Enum.reject(
+        snapshot.attempts ++ snapshot.planned_runnables ++ snapshot.pending_dispatches,
+        &(snapshot_step_id(&1) in dynamic_node_ids)
+      )
 
     step_sources_by_id = Enum.group_by(step_sources, &snapshot_step_id/1)
     node_ids = ordered_node_ids(definition, step_sources, &snapshot_step_id/1)
@@ -237,16 +239,42 @@ defmodule SquidMesh.Runs.GraphInspection do
         }
       end)
 
-    declared_nodes ++ dynamic_nodes(snapshot.dynamic_work)
+    declared_nodes ++ dynamic_nodes(snapshot, attempts_by_step, include_details?)
   end
 
-  defp dynamic_nodes(dynamic_work) when is_list(dynamic_work) do
-    Enum.flat_map(dynamic_work, &dynamic_work_nodes/1)
+  defp dynamic_nodes(
+         %Snapshot{dynamic_work: dynamic_work} = snapshot,
+         attempts_by_step,
+         include_details?
+       )
+       when is_list(dynamic_work) and is_map(attempts_by_step) do
+    Enum.flat_map(
+      dynamic_work,
+      &dynamic_work_nodes(&1, snapshot, attempts_by_step, include_details?)
+    )
   end
 
-  defp dynamic_nodes(_dynamic_work), do: []
+  defp dynamic_nodes(%Snapshot{}, _attempts_by_step, _include_details?), do: []
 
-  defp dynamic_work_nodes(dynamic_work) when is_map(dynamic_work) do
+  defp dynamic_node_ids(dynamic_work) when is_list(dynamic_work) do
+    dynamic_work
+    |> Enum.flat_map(fn
+      dynamic when is_map(dynamic) ->
+        dynamic
+        |> field(:nodes, [])
+        |> dynamic_items()
+        |> Enum.map(&field(&1, :id))
+
+      _dynamic ->
+        []
+    end)
+    |> Enum.filter(&is_binary/1)
+  end
+
+  defp dynamic_node_ids(_dynamic_work), do: []
+
+  defp dynamic_work_nodes(dynamic_work, snapshot, attempts_by_step, include_details?)
+       when is_map(dynamic_work) do
     origin = field(dynamic_work, :origin)
 
     dynamic_work
@@ -255,15 +283,22 @@ defmodule SquidMesh.Runs.GraphInspection do
     |> Enum.flat_map(fn node ->
       case field(node, :id) do
         id when is_binary(id) ->
+          attempts = Map.get(attempts_by_step, id, [])
+
           [
             %Node{
               id: id,
               action: field(node, :action),
-              status: normalize_node_status(field(node, :status, :recorded)),
+              status: dynamic_node_status(snapshot, id, node, attempts),
               current?: false,
+              input: detail(include_details?, latest_attempt_value(attempts, :input)),
+              output: detail(include_details?, latest_attempt_value(attempts, :result)),
+              error: detail(include_details?, latest_attempt_value(attempts, :error)),
+              recovery: latest_attempt_value(attempts, :recovery),
               dynamic?: true,
               origin: origin,
-              metadata: field(node, :metadata, %{})
+              metadata: field(node, :metadata, %{}),
+              attempts: detail(include_details?, Enum.map(attempts, &snapshot_attempt/1), [])
             }
           ]
 
@@ -273,7 +308,34 @@ defmodule SquidMesh.Runs.GraphInspection do
     end)
   end
 
-  defp dynamic_work_nodes(_dynamic_work), do: []
+  defp dynamic_work_nodes(_dynamic_work, _snapshot, _attempts_by_step, _include_details?), do: []
+
+  defp dynamic_node_status(snapshot, id, _node, [_attempt | _attempts] = attempts) do
+    snapshot_node_status(snapshot, id, attempts)
+  end
+
+  defp dynamic_node_status(%Snapshot{} = snapshot, id, node, []) do
+    case dynamic_planned_runnable(snapshot, id) do
+      %{runnable_key: runnable_key} when is_binary(runnable_key) ->
+        if runnable_key in snapshot.applied_runnable_keys do
+          :completed
+        else
+          :pending
+        end
+
+      nil ->
+        normalize_node_status(field(node, :status, :recorded))
+    end
+  end
+
+  defp dynamic_planned_runnable(%Snapshot{planned_runnables: planned_runnables}, id)
+       when is_list(planned_runnables) and is_binary(id) do
+    planned_runnables
+    |> Enum.filter(&(field(&1, :step) == id))
+    |> Enum.max_by(&field(&1, :attempt_number, 1), fn -> nil end)
+  end
+
+  defp dynamic_planned_runnable(%Snapshot{}, _id), do: nil
 
   defp dynamic_edges(dynamic_work) when is_list(dynamic_work) do
     Enum.flat_map(dynamic_work, &dynamic_work_edges/1)
@@ -313,11 +375,14 @@ defmodule SquidMesh.Runs.GraphInspection do
   defp normalize_dynamic_work_status(nil), do: nil
   defp normalize_dynamic_work_status(status) when is_atom(status), do: status
   defp normalize_dynamic_work_status("recorded"), do: :recorded
+  defp normalize_dynamic_work_status("scheduled"), do: :scheduled
   defp normalize_dynamic_work_status("preview"), do: :preview
   defp normalize_dynamic_work_status(_status), do: :recorded
 
+  defp normalize_node_status(:scheduled), do: :pending
   defp normalize_node_status(status) when is_atom(status), do: status
   defp normalize_node_status("recorded"), do: :recorded
+  defp normalize_node_status("scheduled"), do: :pending
   defp normalize_node_status("waiting"), do: :waiting
   defp normalize_node_status("pending"), do: :pending
   defp normalize_node_status("running"), do: :running

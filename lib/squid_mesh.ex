@@ -12,6 +12,8 @@ defmodule SquidMesh do
   alias SquidMesh.ReadModel.Listing
   alias SquidMesh.Runs.DynamicWorkPreview
   alias SquidMesh.Runs.GraphInspection
+  alias SquidMesh.Runtime.DispatchAgent
+  alias SquidMesh.Runtime.DispatchProtocol
   alias SquidMesh.Runtime.Journal.Cancellation
   alias SquidMesh.Runtime.Journal.ChildStarter
   alias SquidMesh.Runtime.Journal.DynamicWork
@@ -23,9 +25,12 @@ defmodule SquidMesh do
   alias SquidMesh.Runtime.Journal.WorkflowDefinitionLoader
   alias SquidMesh.Runtime.ScheduleIdentity
   alias SquidMesh.Runtime.Signal
+  alias SquidMesh.Runtime.WorkflowAgent
+  alias SquidMesh.Workflow.ActionRegistry
 
   @read_models [:read_model]
   @runtimes [:journal]
+  @dispatch_schedule_retries 25
   @projection_snapshot_options [:queue, :now]
   @projection_list_options [:queue, :now]
   @journal_start_options [:runtime, :journal_storage, :queue, :now, :run_id]
@@ -442,6 +447,54 @@ defmodule SquidMesh do
   end
 
   def record_dynamic_work(_run_id, _attrs, _overrides) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
+  end
+
+  @doc """
+  Records bounded dynamic work and schedules each dynamic node as executable work.
+
+  This is the executable counterpart to `record_dynamic_work/3`. The dynamic
+  work fact and the planned runnable intents are appended to the run thread in
+  one optimistic write, then missing dispatch attempts are scheduled from that
+  durable plan. Pass `:action_registry`; every dynamic node must include an
+  approved `:action` key and may include an `:input` map for the scheduled
+  attempt.
+  """
+  @spec schedule_dynamic_work(String.t(), map() | keyword(), keyword()) ::
+          {:ok, SquidMesh.ReadModel.Inspection.Snapshot.t()}
+          | {:error,
+             :not_found
+             | Config.config_error()
+             | read_option_error()
+             | DynamicWork.dynamic_work_error()
+             | term()}
+  def schedule_dynamic_work(run_id, attrs, overrides \\ [])
+
+  def schedule_dynamic_work(run_id, attrs, overrides) when is_list(overrides) do
+    with :ok <- public_dynamic_work_options(overrides),
+         {:ok, :journal} <- runtime(overrides),
+         {:ok, :read_model} <- read_model(overrides),
+         {:ok, storage} <- journal_storage(overrides),
+         {:ok, queue} <- dynamic_work_queue(overrides),
+         {:ok, registry} <- dynamic_work_action_registry(overrides),
+         {:ok, run_id} <- Options.thread_part(run_id, :run_id),
+         {:ok, now} <- dynamic_work_time(overrides),
+         {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides),
+         {:ok, context} <- dynamic_work_context(snapshot, overrides),
+         {:ok, intent} <-
+           DynamicWork.new_entry(
+             run_id,
+             put_new_dynamic_work_status(attrs, :scheduled),
+             now,
+             context
+           ),
+         :ok <- dynamic_work_origin_applied(intent, snapshot),
+         {:ok, runnables} <- dynamic_work_runnables(run_id, intent, queue, now, registry) do
+      schedule_dynamic_work_intent(storage, run_id, overrides, snapshot, intent, runnables, now)
+    end
+  end
+
+  def schedule_dynamic_work(_run_id, _attrs, _overrides) do
     {:error, {:invalid_option, {:opts, :invalid}}}
   end
 
@@ -942,6 +995,30 @@ defmodule SquidMesh do
     end
   end
 
+  defp dynamic_work_queue(overrides) do
+    overrides
+    |> projected_snapshot_options()
+    |> Keyword.get(:queue, "default")
+    |> Options.queue()
+  end
+
+  defp dynamic_work_action_registry(overrides) do
+    case Keyword.fetch(overrides, :action_registry) do
+      {:ok, registry} -> {:ok, registry}
+      :error -> {:error, {:invalid_dynamic_work, {:action_registry, :required}}}
+    end
+  end
+
+  defp put_new_dynamic_work_status(attrs, status) when is_map(attrs) do
+    Map.put_new(attrs, :status, status)
+  end
+
+  defp put_new_dynamic_work_status(attrs, status) when is_list(attrs) do
+    if Keyword.keyword?(attrs), do: Keyword.put_new(attrs, :status, status), else: attrs
+  end
+
+  defp put_new_dynamic_work_status(attrs, _status), do: attrs
+
   defp record_dynamic_work_intent(
          _storage,
          _run_id,
@@ -970,6 +1047,199 @@ defmodule SquidMesh do
 
       {:error, _reason} = error ->
         error
+    end
+  end
+
+  defp schedule_dynamic_work_intent(
+         storage,
+         run_id,
+         overrides,
+         %Inspection.Snapshot{},
+         :duplicate,
+         _runnables,
+         %DateTime{} = now
+       ) do
+    schedule_pending_dynamic_dispatches(storage, run_id, overrides, now)
+  end
+
+  defp schedule_dynamic_work_intent(
+         storage,
+         run_id,
+         overrides,
+         %Inspection.Snapshot{} = snapshot,
+         entry,
+         runnables,
+         %DateTime{} = now
+       ) do
+    with {:ok, planned_entry} <- dynamic_work_runnables_planned_entry(run_id, runnables, now),
+         {:ok, queue} <- dynamic_work_queue(overrides),
+         {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
+         {:ok, %{agent: dispatch_agent}} <-
+           ensure_dynamic_work_run_queued(storage, dispatch_agent, run_id, now),
+         {:ok, _thread} <-
+           SquidMesh.Runtime.Journal.append_entries(storage, [entry, planned_entry],
+             expected_rev: snapshot.thread_revisions.run
+           ),
+         {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
+         {:ok, _scheduled} <-
+           WorkflowAgent.schedule_pending_dispatches(storage, workflow_agent, dispatch_agent,
+             now: now
+           ) do
+      inspect_projected_run(run_id, overrides)
+    else
+      {:error, :conflict} ->
+        resolve_scheduled_dynamic_work_conflict(storage, run_id, overrides, entry, now)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp resolve_scheduled_dynamic_work_conflict(
+         storage,
+         run_id,
+         overrides,
+         entry,
+         %DateTime{} = now
+       ) do
+    with {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides),
+         {:ok, context} <- dynamic_work_context(snapshot, overrides) do
+      case DynamicWork.new_entry(run_id, entry.data, entry.occurred_at, context) do
+        {:ok, :duplicate} ->
+          schedule_pending_dynamic_dispatches(storage, run_id, overrides, now)
+
+        {:error, {:invalid_dynamic_work, {:run, :terminal}}} = error ->
+          error
+
+        {:ok, _entry} ->
+          {:error, :conflict}
+
+        {:error, _reason} = error ->
+          error
+      end
+    end
+  end
+
+  defp schedule_pending_dynamic_dispatches(storage, run_id, overrides, %DateTime{} = now) do
+    with {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
+         {:ok, queue} <- dynamic_work_queue(overrides),
+         {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
+         {:ok, %{agent: dispatch_agent}} <-
+           ensure_dynamic_work_run_queued(storage, dispatch_agent, run_id, now),
+         {:ok, _scheduled} <-
+           WorkflowAgent.schedule_pending_dispatches(storage, workflow_agent, dispatch_agent,
+             now: now
+           ) do
+      inspect_projected_run(run_id, overrides)
+    end
+  end
+
+  defp ensure_dynamic_work_run_queued(storage, dispatch_agent, run_id, %DateTime{} = now) do
+    ensure_dynamic_work_run_queued(
+      storage,
+      dispatch_agent,
+      run_id,
+      now,
+      @dispatch_schedule_retries
+    )
+  end
+
+  defp ensure_dynamic_work_run_queued(_storage, _dispatch_agent, _run_id, %DateTime{}, 0) do
+    {:error, :conflict}
+  end
+
+  defp ensure_dynamic_work_run_queued(storage, dispatch_agent, run_id, %DateTime{} = now, retries) do
+    case DispatchAgent.ensure_run_queued(storage, dispatch_agent, run_id, now: now) do
+      {:ok, _queued} = ok ->
+        ok
+
+      {:error, :conflict} ->
+        with {:ok, queue} <- Options.queue(dispatch_agent.state.queue),
+             {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue) do
+          ensure_dynamic_work_run_queued(storage, dispatch_agent, run_id, now, retries - 1)
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp dynamic_work_runnables_planned_entry(run_id, runnables, %DateTime{} = now) do
+    DispatchProtocol.new_entry(:runnables_planned, %{
+      run_id: run_id,
+      runnables: runnables,
+      occurred_at: now
+    })
+  end
+
+  defp dynamic_work_runnables(_run_id, :duplicate, _queue, _now, _registry), do: {:ok, []}
+
+  defp dynamic_work_runnables(run_id, %DispatchProtocol.Entry{} = entry, queue, now, registry) do
+    entry.data.nodes
+    |> Enum.reduce_while({:ok, []}, fn node, {:ok, runnables} ->
+      case dynamic_work_runnable(run_id, entry.data, node, queue, now, registry) do
+        {:ok, runnable} -> {:cont, {:ok, [runnable | runnables]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, runnables} -> {:ok, Enum.reverse(runnables)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp dynamic_work_runnable(run_id, dynamic_work, node, queue, %DateTime{} = now, registry) do
+    case ActionRegistry.resolve_action(Map.get(node, :action), registry) do
+      {:ok, module} ->
+        node_id = Map.fetch!(node, :id)
+        runnable_key = Enum.join([run_id, node_id, 1], ":")
+
+        {:ok,
+         %{
+           run_id: run_id,
+           runnable_key: runnable_key,
+           idempotency_key: runnable_key,
+           attempt_number: 1,
+           queue: queue,
+           step: node_id,
+           input: Map.get(node, :input, %{}),
+           visible_at: now,
+           recovery: dynamic_work_recovery(Map.get(node, :action)),
+           dynamic?: true,
+           dynamic_work: %{
+             dynamic_key: dynamic_work.dynamic_key,
+             action: Map.get(node, :action),
+             module: module,
+             retry: Map.get(node, :retry),
+             origin: dynamic_work.origin
+           }
+         }}
+
+      {:error, reason} ->
+        {:error, {:invalid_dynamic_work, {:nodes, {:action, reason}}}}
+    end
+  end
+
+  defp dynamic_work_recovery(action) do
+    %{
+      irreversible?: true,
+      compensatable?: false,
+      replay: :manual_review_required,
+      recovery: :manual_intervention,
+      dynamic?: true,
+      action: action
+    }
+  end
+
+  defp dynamic_work_origin_applied(:duplicate, _snapshot), do: :ok
+
+  defp dynamic_work_origin_applied(%DispatchProtocol.Entry{} = entry, snapshot) do
+    origin_key = entry.data.origin.runnable_key
+
+    if origin_key in snapshot.applied_runnable_keys do
+      :ok
+    else
+      {:error, {:invalid_dynamic_work, {:origin, :unapplied_runnable}}}
     end
   end
 

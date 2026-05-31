@@ -137,7 +137,7 @@ defmodule SquidMesh.Runtime.WorkflowAgent do
   @spec pending_dispatches(Agent.t(), Agent.t()) :: [map()]
   def pending_dispatches(
         %Agent{agent_module: __MODULE__, state: %{projection: projection}},
-        %Agent{agent_module: DispatchAgent} = dispatch_agent
+        %Agent{agent_module: DispatchAgent, state: %{queue: queue}} = dispatch_agent
       ) do
     dispatched_keys = DispatchAgent.runnable_keys(dispatch_agent)
     applied_keys = Projection.applied_runnable_keys(projection)
@@ -146,7 +146,10 @@ defmodule SquidMesh.Runtime.WorkflowAgent do
     |> Projection.planned_runnables()
     |> Enum.reject(fn runnable ->
       key = runnable_key(runnable)
-      MapSet.member?(dispatched_keys, key) or MapSet.member?(applied_keys, key)
+
+      normalize_queue(runnable_queue(runnable) || queue) != queue or
+        MapSet.member?(dispatched_keys, key) or
+        MapSet.member?(applied_keys, key)
     end)
     |> reject_when_terminal(projection)
   end
@@ -273,6 +276,15 @@ defmodule SquidMesh.Runtime.WorkflowAgent do
   end
 
   defp runnable_key(_runnable), do: nil
+
+  defp runnable_queue(runnable) when is_map(runnable) do
+    Map.get(runnable, :queue) || Map.get(runnable, "queue")
+  end
+
+  defp runnable_queue(_runnable), do: nil
+
+  defp normalize_queue(queue) when is_binary(queue), do: queue
+  defp normalize_queue(queue), do: to_string(queue)
 
   defp persist_workflow_entry(
          storage,
