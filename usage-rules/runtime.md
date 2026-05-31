@@ -19,6 +19,9 @@
   `child_key`.
 - Preserve dynamic-work records as validated, inspection-only journal facts
   until executable dynamic graph expansion is explicitly supported.
+- When `:action_registry` is supplied for dynamic work, reject missing, unknown,
+  disabled, or incompatible dynamic node action keys before previewing or
+  appending.
 
 ## Execution
 

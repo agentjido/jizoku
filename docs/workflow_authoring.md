@@ -625,27 +625,39 @@ journal facts directly. Preview or record dynamic work while the producer run is
 still active; terminal runs reject new dynamic-work previews and records.
 
 ```elixir
+registry = %{"digest.deliver" => MyApp.Steps.DeliverDigest}
+
 {:ok, _preview} =
-  SquidMesh.preview_dynamic_work(run_id, %{
-    dynamic_key: "subscription_digest_fanout",
-    origin: %{runnable_key: runnable_key, step: "schedule_digest", attempt: 1},
-    reason: :runtime_fanout,
-    nodes: [%{id: "deliver_digest:chat_1", action: "digest.deliver"}]
-  })
+  SquidMesh.preview_dynamic_work(
+    run_id,
+    %{
+      dynamic_key: "subscription_digest_fanout",
+      origin: %{runnable_key: runnable_key, step: "schedule_digest", attempt: 1},
+      reason: :runtime_fanout,
+      nodes: [%{id: "deliver_digest:chat_1", action: "digest.deliver"}]
+    },
+    action_registry: registry
+  )
 
 {:ok, _snapshot} =
-  SquidMesh.record_dynamic_work(run_id, %{
-    dynamic_key: "subscription_digest_fanout",
-    origin: %{runnable_key: runnable_key, step: "schedule_digest", attempt: 1},
-    reason: :runtime_fanout,
-    nodes: [%{id: "deliver_digest:chat_1", action: "digest.deliver"}]
-  })
+  SquidMesh.record_dynamic_work(
+    run_id,
+    %{
+      dynamic_key: "subscription_digest_fanout",
+      origin: %{runnable_key: runnable_key, step: "schedule_digest", attempt: 1},
+      reason: :runtime_fanout,
+      nodes: [%{id: "deliver_digest:chat_1", action: "digest.deliver"}]
+    },
+    action_registry: registry
+  )
 ```
 
 Preview results include the normalized dynamic work, a graph overlay, and
 editor-friendly metadata such as `origin_node_id`, `added_node_ids`,
 `added_edge_ids`, `recordable?`, and `warnings`. Use those fields to drive visual
 editor affordances instead of recomputing graph diffs in the host UI.
+When `:action_registry` is supplied, every dynamic node must include a
+host-approved action key before Squid Mesh previews or records the overlay.
 
 Those recorded dynamic nodes are inspection-only in this slice: they do not
 become executable planner work until the later dynamic graph execution semantics

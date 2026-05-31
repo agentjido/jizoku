@@ -69,5 +69,8 @@
 - Use `SquidMesh.preview_dynamic_work/3` before recording when tooling needs to
   validate and render the candidate graph overlay without appending. Use the
   preview's added id lists and warnings instead of client-side graph diffing.
+- Pass `:action_registry` to dynamic-work preview and record calls when the
+  overlay represents future executable work; each dynamic node must use a
+  host-approved action key.
 - Do not rely on "this step should only run once" as the side-effect safety
   model.

@@ -15,6 +15,8 @@
   render the graph overlay before committing them to the journal. Prefer its
   `origin_node_id`, `added_node_ids`, `added_edge_ids`, `recordable?`, and
   `warnings` fields over ad hoc graph diffing in visual editor clients.
+- Pass host-owned `:action_registry` options when previewing or recording
+  dynamic nodes that represent executable work candidates.
 - Keep list responses redacted by default; fetch detailed history only when the
   caller asks for it.
 - Use `definition_version` from list, inspection, graph, and explanation

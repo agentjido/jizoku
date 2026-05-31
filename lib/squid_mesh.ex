@@ -47,7 +47,15 @@ defmodule SquidMesh do
   ]
   @journal_control_options [:runtime, :journal_storage, :queue, :now]
   @journal_execute_options [:runtime, :journal_storage, :queue, :owner_id, :lease_for, :now]
-  @journal_dynamic_work_options [:runtime, :read_model, :journal_storage, :queue, :now, :repo]
+  @journal_dynamic_work_options [
+    :runtime,
+    :read_model,
+    :journal_storage,
+    :queue,
+    :now,
+    :repo,
+    :action_registry
+  ]
 
   @typedoc """
   Structured validation errors returned by the public read-model APIs.
@@ -353,7 +361,8 @@ defmodule SquidMesh do
   This is the read-only companion to `record_dynamic_work/3`. It applies the
   same validation and normalization rules, but does not append a journal fact.
   Use it for UI previews, visual editor validation, and host-side dry runs
-  before recording dynamic work durably.
+  before recording dynamic work durably. Pass `:action_registry` to require
+  every dynamic node action key to be host-allowlisted before previewing.
   """
   @spec preview_dynamic_work(String.t(), map() | keyword(), keyword()) ::
           {:ok, DynamicWorkPreview.t()}
@@ -401,10 +410,11 @@ defmodule SquidMesh do
       recorded dynamic nodes.
 
   Optional `:edges`, `:metadata`, `:reason`, and `:status` values are normalized
-  and redacted like other journal metadata. Exact duplicate records are
-  idempotent while the run remains active. Terminal runs, stale workflow
-  definitions, invalid origins, node collisions, unknown options, and write
-  conflicts return structured `{:error, reason}` tuples.
+  and redacted like other journal metadata. Pass `:action_registry` to require
+  every dynamic node action key to be host-allowlisted before recording. Exact
+  duplicate records are idempotent while the run remains active. Terminal runs,
+  stale workflow definitions, invalid origins, node collisions, unknown options,
+  and write conflicts return structured `{:error, reason}` tuples.
   """
   @spec record_dynamic_work(String.t(), map() | keyword(), keyword()) ::
           {:ok, SquidMesh.ReadModel.Inspection.Snapshot.t()}
@@ -963,25 +973,38 @@ defmodule SquidMesh do
     end
   end
 
-  defp dynamic_work_context(%Inspection.Snapshot{terminal?: true} = snapshot, _overrides) do
-    {:ok,
-     %{
-       terminal?: snapshot.terminal?,
-       planned_runnables: snapshot.planned_runnables,
-       dynamic_work: snapshot.dynamic_work,
-       definition: nil
-     }}
-  end
-
-  defp dynamic_work_context(%Inspection.Snapshot{} = snapshot, overrides) do
-    with {:ok, definition} <- dynamic_work_definition(snapshot, overrides) do
+  defp dynamic_work_context(%Inspection.Snapshot{terminal?: true} = snapshot, overrides) do
+    maybe_put_dynamic_work_action_registry(
       {:ok,
        %{
          terminal?: snapshot.terminal?,
          planned_runnables: snapshot.planned_runnables,
          dynamic_work: snapshot.dynamic_work,
-         definition: definition
-       }}
+         definition: nil
+       }},
+      overrides
+    )
+  end
+
+  defp dynamic_work_context(%Inspection.Snapshot{} = snapshot, overrides) do
+    with {:ok, definition} <- dynamic_work_definition(snapshot, overrides) do
+      maybe_put_dynamic_work_action_registry(
+        {:ok,
+         %{
+           terminal?: snapshot.terminal?,
+           planned_runnables: snapshot.planned_runnables,
+           dynamic_work: snapshot.dynamic_work,
+           definition: definition
+         }},
+        overrides
+      )
+    end
+  end
+
+  defp maybe_put_dynamic_work_action_registry({:ok, context}, overrides) do
+    case Keyword.fetch(overrides, :action_registry) do
+      {:ok, registry} -> {:ok, Map.put(context, :action_registry, registry)}
+      :error -> {:ok, context}
     end
   end
 
