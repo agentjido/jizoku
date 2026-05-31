@@ -35,8 +35,14 @@
 
 - Execute visible work through `SquidMesh.execute_next/1`.
 - Use a stable `owner_id` for workers when possible.
+- Use `heartbeat_interval_ms` on `SquidMesh.execute_next/1` for long-running
+  steps that may exceed the journal claim lease window. Keep intervals at or
+  above the runtime minimum and large enough to avoid unnecessary journal write
+  volume.
 - Keep internal execution controls private; public callers must not pass claim
   tokens or private runner options.
+- Keep external backend leases separate from journal claim leases; Bedrock,
+  Oban, or another host scheduler must renew its own delivery lease if needed.
 - Retry scheduling must be durable journal intent with a future `visible_at`.
 - Built-in `:wait` must create delayed journal intent instead of sleeping in a
   worker.

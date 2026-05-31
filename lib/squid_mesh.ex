@@ -51,7 +51,15 @@ defmodule SquidMesh do
     :metadata
   ]
   @journal_control_options [:runtime, :journal_storage, :queue, :now]
-  @journal_execute_options [:runtime, :journal_storage, :queue, :owner_id, :lease_for, :now]
+  @journal_execute_options [
+    :runtime,
+    :journal_storage,
+    :queue,
+    :owner_id,
+    :lease_for,
+    :heartbeat_interval_ms,
+    :now
+  ]
   @journal_dynamic_work_options [
     :runtime,
     :read_model,
@@ -557,7 +565,7 @@ defmodule SquidMesh do
   end
 
   defp public_execute_option_keys do
-    [:runtime, :journal_storage, :queue, :owner_id, :lease_for, :now]
+    [:runtime, :journal_storage, :queue, :owner_id, :lease_for, :heartbeat_interval_ms, :now]
   end
 
   defp public_child_start_options(opts) do

@@ -9,6 +9,18 @@ This example keeps two storage boundaries visible:
 - Bedrock Job Queue owns queued jobs, delayed delivery, leases, retries, and
   queue metadata through the embedded Bedrock cluster.
 
+It also keeps two lease responsibilities separate:
+
+- Bedrock leases protect the delivery job while
+  `BedrockMinimalHostApp.Jobs.SquidMeshPayload.perform/2` is running.
+- Squid Mesh journal claim leases protect the individual workflow attempt
+  claimed by `SquidMesh.execute_next/1`.
+
+Those leases are intentionally not the same thing. Bedrock decides whether the
+payload job may be redelivered. Squid Mesh decides whether a journal attempt may
+be claimed by another workflow worker. Long-running hosts must size both lease
+policies for their real work.
+
 ## Setup
 
 Start a local Postgres instance and point `DATABASE_URL` at it. The default is:
@@ -74,6 +86,24 @@ The gateway check step also copies the durable step-context metadata into its
 output under `gateway_check.attempt`, so the Bedrock example demonstrates the
 same native context fields as the minimal host app while keeping delivery and
 leasing behind the host-owned Bedrock adapter.
+
+`BedrockMinimalHostApp.Jobs.SquidMeshPayload` drains journal attempts while the
+Bedrock payload is leased. The job passes `heartbeat_interval_ms` into
+`SquidMesh.execute_next/1` so Squid Mesh renews the active journal claim during
+long-running steps. That journal heartbeat is separate from the Bedrock job
+lease; hosts with backend-owned delivery still need their backend lease policy
+to match their job runtime. Configure the journal heartbeat interval through:
+
+```elixir
+config :bedrock_minimal_host_app, BedrockMinimalHostApp.Jobs.SquidMeshPayload,
+  journal_heartbeat_interval_ms: 10_000,
+  max_journal_attempts: 50
+```
+
+Set `journal_heartbeat_interval_ms: nil` only when every drained journal step is
+short enough to finish inside the Squid Mesh journal claim window. Keep the
+Bedrock job lease duration configured in the Bedrock queue policy; changing the
+Squid Mesh heartbeat interval does not renew the Bedrock lease.
 
 The `BedrockMinimalHostApp.WorkflowRuns` boundary also demonstrates runtime
 control signals: host code builds `SquidMesh.Runtime.Signal` values for

@@ -166,7 +166,11 @@ defmodule MyApp.SquidMeshWorker do
 
   defp drain_once(state) do
     interval =
-      case SquidMesh.execute_next(owner_id: state.owner_id) do
+      case SquidMesh.execute_next(
+             owner_id: state.owner_id,
+             lease_for: 30,
+             heartbeat_interval_ms: 10_000
+           ) do
         {:ok, :none} -> 100
         {:ok, _snapshot} -> 0
         {:error, _reason} -> 1_000
@@ -182,6 +186,16 @@ This loop is intentionally small. Production hosts can add capacity limits,
 back-pressure, node placement, metrics, and shutdown policy around the same
 public call. Squid Mesh still owns the journaled claim, completion, retry,
 manual-control, and terminal-state facts.
+
+`lease_for` and `heartbeat_interval_ms` are journal executor controls, not an
+external backend requirement. Hosts without Bedrock or another leased job
+backend may still pass them when steps can run longer than a claim window. Oban
+OSS workers fall into this plain-host category for this purpose: keep Oban job
+delivery concerns separate and let `SquidMesh.execute_next/1` maintain the
+journal claim lease. Short step workers can omit `heartbeat_interval_ms`. Hosts
+that also use a backend lease must maintain that backend lease separately from
+the journal claim lease. The runtime rejects intervals below 50ms to keep
+heartbeat write volume bounded.
 
 ## Cron Payload Contract
 
@@ -316,6 +330,15 @@ keeps the storage and lease boundaries explicit:
 - `BedrockMinimalHostApp.Jobs.SquidMeshPayload` delivers cron payloads and then
   drains visible journal attempts while the Bedrock lease is held.
 
+There are two independent lease layers in that setup. The Bedrock lease belongs
+to the host job backend and controls whether the payload job can be redelivered.
+The Squid Mesh journal claim lease belongs to `SquidMesh.execute_next/1` and
+controls whether another workflow worker can reclaim a journal attempt. The
+Bedrock example passes `journal_heartbeat_interval_ms` into `execute_next/1` so
+long-running journal steps keep their Squid Mesh claim alive while the Bedrock
+payload job is executing. That option does not renew the Bedrock job lease; the
+host backend must size and renew its own lease separately.
+
 A host app using the same shape should:
 
 1. Configure `:squid_mesh` with the host repo and journal queue.
@@ -324,6 +347,9 @@ A host app using the same shape should:
    supervision.
 4. Keep workflow definitions backend-neutral; only the Bedrock adapter modules
    should know Bedrock exists.
+5. Configure both lease policies explicitly: Bedrock job lease duration for
+   payload delivery, and `journal_heartbeat_interval_ms` for long-running Squid
+   Mesh attempts.
 
 The example config shape is:
 
@@ -335,6 +361,10 @@ config :my_app, MyApp.SquidMeshDeliveryAdapter,
 config :squid_mesh,
   repo: MyApp.Repo,
   queue: "tenant_a"
+
+config :my_app, MyApp.Jobs.SquidMeshPayload,
+  journal_heartbeat_interval_ms: 10_000,
+  max_journal_attempts: 50
 ```
 
 To verify the reference path locally:

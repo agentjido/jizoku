@@ -26,6 +26,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
 
   @dispatch_append_retries 25
   @run_append_retries 25
+  @minimum_heartbeat_interval_ms 50
 
   @type execute_error ::
           {:invalid_option,
@@ -38,7 +39,9 @@ defmodule SquidMesh.Runtime.Journal.Executor do
            | {:owner_id, term()}
            | {:claim_id, term()}
            | {:claim_token, term()}
+           | {:heartbeat_interval_ms, term()}
            | {:test_after_claim, term()}
+           | {:test_before_completion, term()}
            | {:test_after_transaction_step, term()}
            | {:option, atom()}}
           | Definition.load_error()
@@ -59,6 +62,8 @@ defmodule SquidMesh.Runtime.Journal.Executor do
   - `:owner_id` identifies the worker claiming the attempt.
   - `:claim_id` and `:claim_token` may be supplied by tests or host lease backends
     that need deterministic fencing values.
+  - `:heartbeat_interval_ms` renews the claim lease while the executor owns a
+    running attempt. The executor keeps claim tokens internal.
   - `:now` controls visibility, lease, and event timestamps.
   - `:finished_at` controls completion/failure timestamps for deterministic
     tests. Runtime callers normally omit it so the timestamp is captured after
@@ -145,6 +150,173 @@ defmodule SquidMesh.Runtime.Journal.Executor do
       Inspection.snapshot(storage, attempt.run_id, queue: queue, now: claim_now)
     else
       run_active_claimed_attempt(storage, queue, claim_now, opts, claim)
+    end
+  end
+
+  defp run_with_heartbeat(
+         %{storage: storage, runtime: %{queue: queue}, opts: opts, claim: claim},
+         fun
+       )
+       when is_function(fun, 1) do
+    heartbeat_loop = start_heartbeat_loop(storage, queue, opts, claim)
+
+    try do
+      fun.(fn -> mark_heartbeat_finishing(heartbeat_loop) end)
+    after
+      stop_heartbeat_loop(heartbeat_loop)
+    end
+  end
+
+  defp start_heartbeat_loop(storage, queue, opts, %{
+         dispatch_agent: dispatch_agent,
+         attempt: %ActionAttempt{} = attempt,
+         claim_id: claim_id,
+         claim_token: claim_token
+       }) do
+    case Keyword.get(opts, :heartbeat_interval_ms) do
+      interval_ms when is_integer(interval_ms) and interval_ms > 0 ->
+        stop_ref = make_ref()
+        finish_ref = make_ref()
+        lease_for = Keyword.get(opts, :lease_for, 300)
+        parent_pid = self()
+
+        state = %{
+          stop_ref: stop_ref,
+          finish_ref: finish_ref,
+          parent_pid: parent_pid,
+          phase: :running,
+          storage: storage,
+          queue: queue,
+          dispatch_agent: dispatch_agent,
+          runnable_key: attempt.runnable_key,
+          claim_id: claim_id,
+          claim_token: claim_token,
+          lease_for: lease_for,
+          interval_ms: interval_ms
+        }
+
+        pid =
+          spawn_link(fn ->
+            state
+            |> Map.put(:owner_monitor_ref, Process.monitor(parent_pid))
+            |> heartbeat_loop()
+          end)
+
+        %{pid: pid, monitor_ref: Process.monitor(pid), stop_ref: stop_ref, finish_ref: finish_ref}
+
+      _disabled ->
+        nil
+    end
+  end
+
+  defp mark_heartbeat_finishing(nil), do: :ok
+
+  defp mark_heartbeat_finishing(%{pid: pid, finish_ref: finish_ref}) do
+    ack_ref = make_ref()
+    send(pid, {finish_ref, :finishing, self(), ack_ref})
+
+    receive do
+      {^ack_ref, :ok} -> :ok
+    after
+      1_000 -> :ok
+    end
+  end
+
+  defp stop_heartbeat_loop(nil), do: :ok
+
+  defp stop_heartbeat_loop(%{pid: pid, monitor_ref: monitor_ref, stop_ref: stop_ref}) do
+    send(pid, {stop_ref, :stop})
+
+    receive do
+      {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
+    after
+      1_000 ->
+        Process.unlink(pid)
+        Process.exit(pid, :kill)
+        Process.demonitor(monitor_ref, [:flush])
+    end
+
+    :ok
+  end
+
+  defp heartbeat_loop(
+         %{stop_ref: stop_ref, finish_ref: finish_ref, interval_ms: interval_ms} = state
+       ) do
+    receive do
+      {^stop_ref, :stop} ->
+        :ok
+
+      {^finish_ref, :finishing, caller, ack_ref} ->
+        send(caller, {ack_ref, :ok})
+        heartbeat_loop(%{state | phase: :finishing})
+
+      {:DOWN, owner_monitor_ref, :process, parent_pid, _reason}
+      when owner_monitor_ref == state.owner_monitor_ref and parent_pid == state.parent_pid ->
+        :ok
+    after
+      interval_ms ->
+        case heartbeat_claim(state) do
+          {:ok, state} ->
+            heartbeat_loop(state)
+
+          {:lost, reason} ->
+            Process.exit(state.parent_pid, :kill)
+            exit({:squid_mesh_heartbeat_lost, reason})
+        end
+    end
+  end
+
+  defp heartbeat_claim(state) do
+    state
+    |> do_heartbeat_claim()
+    |> maybe_retry_conflicted_heartbeat()
+  rescue
+    _error -> {:lost, :heartbeat_failed}
+  catch
+    _kind, _reason -> {:lost, :heartbeat_failed}
+  end
+
+  defp do_heartbeat_claim(
+         %{
+           storage: storage,
+           dispatch_agent: dispatch_agent,
+           runnable_key: runnable_key,
+           claim_id: claim_id,
+           claim_token: claim_token,
+           lease_for: lease_for
+         } = state
+       ) do
+    case DispatchAgent.heartbeat(storage, dispatch_agent, runnable_key, claim_id, claim_token,
+           lease_for: lease_for,
+           now: DateTime.utc_now()
+         ) do
+      {:ok, %{agent: heartbeat_agent}} -> {:ok, %{state | dispatch_agent: heartbeat_agent}}
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  defp maybe_retry_conflicted_heartbeat({:error, :conflict, state}) do
+    state
+    |> rebuild_heartbeat_agent()
+    |> do_heartbeat_claim()
+    |> heartbeat_result()
+  end
+
+  defp maybe_retry_conflicted_heartbeat(other), do: heartbeat_result(other)
+
+  defp heartbeat_result({:ok, state}), do: {:ok, state}
+
+  defp heartbeat_result({:error, reason, %{phase: :finishing} = state})
+       when reason in [:stale_claim, :terminal_run] do
+    {:ok, state}
+  end
+
+  defp heartbeat_result({:error, reason, _state}), do: {:lost, reason}
+
+  defp rebuild_heartbeat_agent(%{storage: storage, queue: queue} = state) do
+    case DispatchAgent.rebuild(storage, queue) do
+      {:ok, dispatch_agent} -> %{state | dispatch_agent: dispatch_agent}
+      {:error, _reason} -> state
     end
   end
 
@@ -2160,22 +2332,46 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     end
   end
 
-  defp run_step_and_record(%{
-         runtime: runtime,
-         claim: claim,
-         workflow: workflow,
-         definition: definition,
-         step_name: step_name,
-         step: step,
-         context: context
-       }) do
-    case run_step(step, claim.attempt.input, context) do
-      {:ok, output, execution_opts} ->
-        complete_attempt(runtime, claim, definition, step_name, output, execution_opts)
+  defp run_step_and_record(
+         %{
+           claim: claim,
+           step: step,
+           context: context
+         } = execution
+       ) do
+    run_with_heartbeat(execution, fn mark_finishing ->
+      step
+      |> run_step(claim.attempt.input, context)
+      |> record_step_result(execution, mark_finishing)
+    end)
+  end
 
-      {:error, reason} ->
-        fail_attempt(runtime, claim, workflow, definition, step_name, reason)
+  defp record_step_result(
+         {:ok, output, execution_opts},
+         %{runtime: runtime, claim: claim, definition: definition, step_name: step_name} =
+           execution,
+         mark_finishing
+       ) do
+    mark_finishing.()
+
+    with :ok <- run_test_before_completion_hook(execution.opts, claim.attempt) do
+      complete_attempt(runtime, claim, definition, step_name, output, execution_opts)
     end
+  end
+
+  defp record_step_result(
+         {:error, reason},
+         %{
+           runtime: runtime,
+           claim: claim,
+           workflow: workflow,
+           definition: definition,
+           step_name: step_name
+         },
+         mark_finishing
+       ) do
+    mark_finishing.()
+    fail_attempt(runtime, claim, workflow, definition, step_name, reason)
   end
 
   defp run_repo_transaction_attempt(repo, execution) do
@@ -2204,17 +2400,29 @@ defmodule SquidMesh.Runtime.Journal.Executor do
   end
 
   defp run_transactional_step_and_record(repo, execution) do
-    case run_transactional_step(
-           execution.step,
-           execution.claim.attempt.input,
-           execution.context
-         ) do
-      {:ok, output, execution_opts} ->
-        complete_transactional_attempt(repo, execution, output, execution_opts)
+    run_with_heartbeat(execution, fn mark_finishing ->
+      execution.step
+      |> run_transactional_step(execution.claim.attempt.input, execution.context)
+      |> record_transactional_step_result(repo, execution, mark_finishing)
+    end)
+  end
 
-      {:error, reason} ->
-        repo.rollback({:squid_mesh_step_error, reason})
+  defp record_transactional_step_result(
+         {:ok, output, execution_opts},
+         repo,
+         execution,
+         mark_finishing
+       ) do
+    mark_finishing.()
+
+    with :ok <- run_test_before_completion_hook(execution.opts, execution.claim.attempt) do
+      complete_transactional_attempt(repo, execution, output, execution_opts)
     end
+  end
+
+  defp record_transactional_step_result({:error, reason}, repo, _execution, mark_finishing) do
+    mark_finishing.()
+    repo.rollback({:squid_mesh_step_error, reason})
   end
 
   defp complete_transactional_attempt(repo, execution, output, execution_opts) do
@@ -2412,7 +2620,9 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     with :ok <- validate_keyword_options(opts),
          :ok <- validate_supported_options(opts),
          :ok <- validate_finished_at_option(opts),
+         :ok <- validate_heartbeat_interval_option(opts),
          :ok <- validate_test_hook_option(opts, :test_after_claim),
+         :ok <- validate_test_hook_option(opts, :test_before_completion),
          :ok <- validate_test_hook_option(opts, :test_after_transaction_step),
          :ok <- validate_runtime_option(opts) do
       {:ok, opts}
@@ -2433,6 +2643,17 @@ defmodule SquidMesh.Runtime.Journal.Executor do
   defp validate_finished_at_option(opts) do
     if Keyword.has_key?(opts, :finished_at) and not match?(%DateTime{}, opts[:finished_at]) do
       invalid_option(:finished_at)
+    else
+      :ok
+    end
+  end
+
+  defp validate_heartbeat_interval_option(opts) do
+    interval_ms = Keyword.get(opts, :heartbeat_interval_ms)
+
+    if interval_ms != nil and
+         not (is_integer(interval_ms) and interval_ms >= @minimum_heartbeat_interval_ms) do
+      invalid_option(:heartbeat_interval_ms)
     else
       :ok
     end
@@ -2459,9 +2680,11 @@ defmodule SquidMesh.Runtime.Journal.Executor do
       :claim_id,
       :claim_token,
       :lease_for,
+      :heartbeat_interval_ms,
       :now,
       :finished_at,
       :test_after_claim,
+      :test_before_completion,
       :test_after_transaction_step
     ]
   end
@@ -2470,6 +2693,20 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     case Keyword.get(opts, :test_after_claim) do
       nil -> :ok
       hook when is_function(hook, 1) -> hook.(attempt)
+    end
+  end
+
+  defp run_test_before_completion_hook(opts, %ActionAttempt{} = attempt) do
+    case Keyword.get(opts, :test_before_completion) do
+      nil ->
+        :ok
+
+      hook when is_function(hook, 1) ->
+        case hook.(attempt) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:test_before_completion, reason}}
+          other -> {:error, {:test_before_completion, other}}
+        end
     end
   end
 

@@ -12,6 +12,7 @@ defmodule MinimalHostApp.JournalRun do
 
   @idle_interval_ms 100
   @error_interval_ms 1_000
+  @heartbeat_interval_ms 10_000
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -23,7 +24,8 @@ defmodule MinimalHostApp.JournalRun do
     state = %{
       owner_id: Keyword.get(opts, :owner_id, "minimal-host-app-journal-run"),
       idle_interval_ms: Keyword.get(opts, :idle_interval_ms, @idle_interval_ms),
-      error_interval_ms: Keyword.get(opts, :error_interval_ms, @error_interval_ms)
+      error_interval_ms: Keyword.get(opts, :error_interval_ms, @error_interval_ms),
+      heartbeat_interval_ms: Keyword.get(opts, :heartbeat_interval_ms, @heartbeat_interval_ms)
     }
 
     {:ok, state, {:continue, :drain}}
@@ -40,7 +42,7 @@ defmodule MinimalHostApp.JournalRun do
   end
 
   defp drain_once(state) do
-    case SquidMesh.execute_next(owner_id: state.owner_id) do
+    case SquidMesh.execute_next(execute_options(state)) do
       {:ok, :none} ->
         schedule_drain(state.idle_interval_ms)
 
@@ -52,6 +54,17 @@ defmodule MinimalHostApp.JournalRun do
     end
 
     state
+  end
+
+  defp execute_options(state) do
+    [owner_id: state.owner_id]
+    |> maybe_put_heartbeat_interval(state.heartbeat_interval_ms)
+  end
+
+  defp maybe_put_heartbeat_interval(opts, nil), do: opts
+
+  defp maybe_put_heartbeat_interval(opts, heartbeat_interval_ms) do
+    Keyword.put(opts, :heartbeat_interval_ms, heartbeat_interval_ms)
   end
 
   defp schedule_drain(interval_ms) do

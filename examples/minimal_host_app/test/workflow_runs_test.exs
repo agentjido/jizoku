@@ -570,6 +570,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
       {MinimalHostApp.JournalRun,
        name: journal_run_name,
        owner_id: "minimal-host-app-supervised-test",
+       heartbeat_interval_ms: 100,
        idle_interval_ms: 10,
        error_interval_ms: 10}
     )

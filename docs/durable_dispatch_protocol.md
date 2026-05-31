@@ -199,15 +199,18 @@ only before the current lease expires.
 `SquidMesh.Runtime.DispatchAgent.heartbeat/6`,
 `SquidMesh.Runtime.DispatchAgent.complete/7`, and
 `SquidMesh.Runtime.DispatchAgent.fail/7` are the current durable claim lifecycle
-boundaries for the Jido-native runtime work. Claiming selects the next visible
-or expired attempt from a rebuilt dispatch-agent projection and appends an
-`attempt_claimed` entry with Jido's optimistic `:expected_rev` fence. Heartbeat,
-completion, and failure appends validate the current claim fence before writing,
-then append the matching lifecycle entry with the same optimistic thread fence.
-On success, each API returns a lifecycle update map containing the updated
-`:agent`, the lifecycle `:attempt`, and `:lease_until` for heartbeat calls. The
-post-append projection is available at `agent.state.projection`; concurrent
-stale callers receive `{:error, :conflict}` from the journal append.
+boundaries for the Jido-native runtime work. `SquidMesh.execute_next/1` owns the
+claim token after claiming work. When called with `heartbeat_interval_ms: n`, the
+executor heartbeats the active claim until the step completes, fails, or the
+executor exits. Claiming selects the next visible or expired attempt from a
+rebuilt dispatch-agent projection and appends an `attempt_claimed` entry with
+Jido's optimistic `:expected_rev` fence. Heartbeat, completion, and failure
+appends validate the current claim fence before writing, then append the
+matching lifecycle entry with the same optimistic thread fence. On success, each
+API returns a lifecycle update map containing the updated `:agent`, the lifecycle
+`:attempt`, and `:lease_until` for heartbeat calls. The post-append projection is
+available at `agent.state.projection`; concurrent stale callers receive
+`{:error, :conflict}` from the journal append.
 
 Backend-owned lease integration remains dependency-free at the Squid Mesh core
 layer. Bedrock is the recommended reference backend, but the protocol only
