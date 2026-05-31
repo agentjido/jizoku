@@ -16,6 +16,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
   alias SquidMesh.Runtime.DispatchProtocol.ActionAttempt
   alias SquidMesh.Runtime.Journal
   alias SquidMesh.Runtime.Journal.Options
+  alias SquidMesh.Runtime.Journal.WorkflowDefinitionLoader
   alias SquidMesh.Runtime.RetryPolicy
   alias SquidMesh.Runtime.StepInput
   alias SquidMesh.Runtime.WorkflowAgent
@@ -1804,8 +1805,8 @@ defmodule SquidMesh.Runtime.Journal.Executor do
   end
 
   defp executable_step(storage, workflow_agent, %ActionAttempt{} = attempt) do
-    with {:ok, workflow, definition} <- Definition.load_serialized(workflow_agent.state.workflow),
-         :ok <- validate_definition_fingerprint(storage, attempt.run_id, definition),
+    with {:ok, workflow, definition} <-
+           WorkflowDefinitionLoader.load(storage, attempt.run_id, workflow_agent.state.workflow),
          step_name when is_atom(step_name) <-
            Definition.deserialize_step(definition, attempt.step),
          {:ok, step} <- Definition.step(definition, step_name) do
@@ -1814,45 +1815,6 @@ defmodule SquidMesh.Runtime.Journal.Executor do
       step_name when is_binary(step_name) -> {:error, {:unknown_step, step_name}}
       {:error, _reason} = error -> error
     end
-  end
-
-  defp validate_definition_fingerprint(storage, run_id, definition) do
-    case persisted_definition_metadata(storage, run_id) do
-      {:ok, %{definition_fingerprint: nil} = persisted} ->
-        {:error, Definition.incompatible_definition_error(definition, persisted)}
-
-      {:ok, %{definition_fingerprint: fingerprint} = persisted} ->
-        if fingerprint == Definition.fingerprint(definition) do
-          :ok
-        else
-          {:error, Definition.incompatible_definition_error(definition, persisted)}
-        end
-
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  defp persisted_definition_metadata(storage, run_id) do
-    with {:ok, %{entries: entries}} <- Journal.load_thread(storage, {:run, run_id}) do
-      metadata =
-        Enum.find_value(entries, fn
-          %{type: :run_started, data: data} ->
-            %{
-              definition_version: definition_metadata_value(data, :definition_version),
-              definition_fingerprint: definition_metadata_value(data, :definition_fingerprint)
-            }
-
-          _entry ->
-            nil
-        end)
-
-      {:ok, metadata || %{definition_version: nil, definition_fingerprint: nil}}
-    end
-  end
-
-  defp definition_metadata_value(data, key) when is_map(data) and is_atom(key) do
-    Map.get(data, key) || Map.get(data, Atom.to_string(key))
   end
 
   defp step_context(workflow_agent, %ActionAttempt{} = attempt, workflow, step_name, claim_id) do

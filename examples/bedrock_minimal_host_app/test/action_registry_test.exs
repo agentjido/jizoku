@@ -2,6 +2,7 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
   use ExUnit.Case, async: true
 
   alias BedrockMinimalHostApp.Steps
+  alias BedrockMinimalHostApp.WorkflowRuns
   alias BedrockMinimalHostApp.Workflows.PaymentRecovery
 
   test "validates runtime-authored specs through host-owned action keys" do
@@ -50,6 +51,26 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
              {:load_invoice, Steps.LoadInvoice, "payment.load_invoice"},
              {:notify_customer, Steps.NotifyCustomer, "payment.notify_customer"}
            ]
+  end
+
+  test "starts a runtime-authored workflow through the host boundary" do
+    storage = {Jido.Storage.ETS, table: :bedrock_minimal_host_app_runtime_spec_test}
+    run_id = "00000000-0000-4000-8000-000000000257"
+
+    assert {:ok, run} =
+             WorkflowRuns.start_runtime_digest(
+               %{channel: "ops", digest_date: "2026-05-30"},
+               journal_storage: storage,
+               run_id: run_id
+             )
+
+    assert run.workflow == "Elixir.BedrockMinimalHostApp.RuntimeAuthoredDigest"
+    assert run.trigger == "manual_digest"
+    assert run.definition_version == "bedrock-minimal-host-runtime-digest-v1"
+    assert [%{step: "record_digest_delivery", status: :available}] = run.visible_attempts
+
+    assert {:ok, completed_run} = SquidMesh.execute_next(journal_storage: storage)
+    assert completed_run.status == :completed
   end
 
   test "compiled payment recovery workflow exposes numeric gateway routing condition" do

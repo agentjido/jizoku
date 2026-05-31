@@ -81,8 +81,8 @@ boundary options when a host needs a non-default journal setup.
 | Scheduled-start metadata | Supported, evolving | Intended schedule windows are stored in durable run context for journal cron starts and exposed to steps through `context.state.schedule`. |
 | Conditional and deferred continuation | Supported, evolving | Durable planner facts and deferred wakeups are tracked in [#140](https://github.com/dark-trench/squid_mesh/issues/140). |
 | Fan-out and fan-in contract | Supported, evolving | Runic-backed dependency ordering and join semantics are defined for the current static workflow graph; [#142](https://github.com/dark-trench/squid_mesh/issues/142) captured the closed design clarification. |
-| Runtime-authored workflow specs | Planned | Validated data-structure authoring for UI-authored or DB-authored workflows is tracked in [#254](https://github.com/dark-trench/squid_mesh/issues/254). |
-| Safe action registry | Supported, evolving | `validate_spec/2` and `resolve_spec_actions/2` let host apps allowlist runtime-authored action keys before activation; runtime-authored execution remains tracked in [#254](https://github.com/dark-trench/squid_mesh/issues/254). |
+| Runtime-authored workflow specs | Supported, evolving | `start_spec/3` and `start_spec/4` can start validated UI-authored or DB-authored specs through the journal runtime. The resolved definition is persisted with the run for execution and graph inspection; replay support remains future work. |
+| Safe action registry | Supported, evolving | `validate_spec/2`, `resolve_spec_actions/2`, and `start_spec/3`/`4` let host apps allowlist runtime-authored action keys before activation. |
 | UI graph serialization | Supported, evolving | `SquidMesh.Runs.GraphInspection.to_map/1` exposes stable node, edge, status, output, and selected-edge data for dashboards and CLIs. `SquidMesh.Workflow.EditorSpec` supports JSON-safe spec round trips and draft graph previews for visual editors. |
 | Dynamic child runs | Supported, evolving | Native steps can start idempotent child workflow runs with durable parent lineage through `SquidMesh.start_child_run/4` and `SquidMesh.start_child_run/5`; richer visual-editor expansion remains future work. |
 | Oban-specific core | Out of scope | Host apps may choose Oban behind the delivery boundary, but Squid Mesh core is not Oban-centric. |
@@ -194,12 +194,12 @@ provides the workflow DSL, persisted run and dispatch facts, journal dispatch
 claims, retries, approvals, pause/resume controls, replay, cancellation,
 projection-backed inspection, and UI-friendly graph output.
 
-Planned rows describe accepted direction, not runtime guarantees. The most
-important planned work is runtime-authored workflow activation
-([#254](https://github.com/dark-trench/squid_mesh/issues/254)) for
-UI-authored or DB-authored workflow systems. The safe action registry is
-available as the allowlist boundary that activation work builds on. Visual
-editor spec round trips are available today through
+Planned rows describe accepted direction, not runtime guarantees.
+Runtime-authored workflow activation for UI-authored or DB-authored workflow
+systems is now available through `SquidMesh.start_spec/3` and
+`SquidMesh.start_spec/4`, with the safe action registry as the allowlist
+boundary for executable actions. Full replay support for runtime-authored specs
+remains future work. Visual editor spec round trips are available today through
 `SquidMesh.Workflow.EditorSpec`, and inspected run graph serialization is
 available through `SquidMesh.Runs.GraphInspection.to_map/1`.
 

@@ -348,6 +348,28 @@ end
 
 Each child run has independent inspection, retry, replay, and cancellation. Repeating the same `child_key` returns the existing child instead of creating duplicates.
 
+## Runtime-Authored Specs
+
+Host-owned editors or databases can activate validated workflow specs without
+runtime code generation. Use stable action keys, resolve them through an
+allowlist, then start the resolved spec through the public API:
+
+```elixir
+registry = %{"digest.record_delivery" => MyApp.Steps.RecordDigestDelivery}
+
+:ok = SquidMesh.Workflow.validate_spec(spec, action_registry: registry)
+
+{:ok, run} =
+  SquidMesh.start_spec(spec, :manual_digest, payload,
+    action_registry: registry
+  )
+```
+
+Squid Mesh persists the resolved definition with the run so workers and
+`inspect_run_graph/2` can inspect and execute it later. Replay for
+runtime-authored spec runs is intentionally rejected until that lifecycle is
+supported.
+
 ## Cancellation, Replay, and Listing
 
 ```elixir

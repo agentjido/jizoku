@@ -40,6 +40,11 @@ defmodule BedrockMinimalHostApp.WorkflowRuns do
           required(:digest_date) => String.t()
         }
 
+  @type runtime_digest_attrs :: %{
+          required(:channel) => String.t(),
+          required(:digest_date) => String.t()
+        }
+
   @type saga_checkout_attrs :: %{
           required(:account_id) => String.t(),
           required(:order_id) => String.t()
@@ -62,6 +67,7 @@ defmodule BedrockMinimalHostApp.WorkflowRuns do
   @type explanation_result :: SquidMesh.ReadModel.Explanation.Diagnostic.t()
   @type listing_result :: SquidMesh.ReadModel.Listing.Summary.t()
 
+  alias BedrockMinimalHostApp.Steps
   alias SquidMesh.Runtime.Signal
 
   @spec start_payment_recovery(payment_recovery_attrs()) ::
@@ -112,6 +118,20 @@ defmodule BedrockMinimalHostApp.WorkflowRuns do
           {:ok, run_result()} | {:error, term()}
   def start_manual_digest(attrs) when is_map(attrs) do
     SquidMesh.start(BedrockMinimalHostApp.Workflows.DailyDigest, :manual_digest, attrs)
+  end
+
+  @doc """
+  Starts a runtime-authored digest workflow through the public spec API.
+  """
+  @spec start_runtime_digest(runtime_digest_attrs(), keyword()) ::
+          {:ok, run_result()} | {:error, term()}
+  def start_runtime_digest(attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
+    SquidMesh.start_spec(
+      runtime_digest_spec(),
+      :manual_digest,
+      attrs,
+      Keyword.put(opts, :action_registry, runtime_action_registry())
+    )
   end
 
   @doc """
@@ -205,5 +225,43 @@ defmodule BedrockMinimalHostApp.WorkflowRuns do
   @spec list_daily_digest_runs() :: {:ok, [listing_result()]} | {:error, term()}
   def list_daily_digest_runs do
     SquidMesh.list_runs(workflow: BedrockMinimalHostApp.Workflows.DailyDigest)
+  end
+
+  defp runtime_action_registry do
+    %{
+      "digest.record_delivery" => Steps.RecordDigestDelivery
+    }
+  end
+
+  defp runtime_digest_spec do
+    %{
+      workflow: BedrockMinimalHostApp.RuntimeAuthoredDigest,
+      definition_version: "bedrock-minimal-host-runtime-digest-v1",
+      triggers: [
+        %{
+          name: :manual_digest,
+          type: :manual,
+          config: %{},
+          payload: [
+            %{name: :channel, type: :string, opts: []},
+            %{name: :digest_date, type: :string, opts: []}
+          ]
+        }
+      ],
+      payload: [
+        %{name: :channel, type: :string, opts: []},
+        %{name: :digest_date, type: :string, opts: []}
+      ],
+      steps: [
+        %{name: :record_digest_delivery, action: "digest.record_delivery", opts: []}
+      ],
+      transitions: [
+        %{from: :record_digest_delivery, on: :ok, to: :complete}
+      ],
+      retries: [],
+      entry_steps: [:record_digest_delivery],
+      initial_step: :record_digest_delivery,
+      entry_step: :record_digest_delivery
+    }
   end
 end

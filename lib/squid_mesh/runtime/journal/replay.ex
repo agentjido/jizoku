@@ -13,6 +13,7 @@ defmodule SquidMesh.Runtime.Journal.Replay do
   alias SquidMesh.Runtime.DispatchAgent
   alias SquidMesh.Runtime.Journal.Options
   alias SquidMesh.Runtime.Journal.Starter
+  alias SquidMesh.Runtime.Journal.WorkflowDefinitionLoader
   alias SquidMesh.Runtime.WorkflowAgent
   alias SquidMesh.Runtime.WorkflowAgent.Projection
   alias SquidMesh.Workflow.Definition
@@ -23,7 +24,12 @@ defmodule SquidMesh.Runtime.Journal.Replay do
           | {:invalid_option, term()}
           | {:incompatible_workflow_definition, :replay, map()}
           | {:invalid_replay_source,
-             :workflow | :trigger | :missing_input | {:missing_recovery, term()}}
+             :workflow
+             | :trigger
+             | :runtime_spec
+             | :missing_input
+             | {:missing_recovery, term()}}
+          | {:invalid_replay_source, :workflow, term()}
           | {:unsafe_replay, map()}
           | Starter.start_error()
 
@@ -41,7 +47,7 @@ defmodule SquidMesh.Runtime.Journal.Replay do
          {:ok, queue} <- queue(config_opts),
          {:ok, source_agent} <- source_agent(storage, run_id),
          {:ok, completed_dispatch_keys} <- completed_dispatch_keys(storage, source_agent, queue),
-         {:ok, workflow, definition} <- source_workflow(source_agent),
+         {:ok, workflow, definition} <- source_workflow(storage, source_agent),
          :ok <- validate_definition_fingerprint(source_agent, definition),
          :ok <-
            ensure_replay_allowed(source_agent, definition, replay_opts, completed_dispatch_keys),
@@ -70,16 +76,33 @@ defmodule SquidMesh.Runtime.Journal.Replay do
     end
   end
 
-  defp source_workflow(%Agent{state: %{projection: %Projection{workflow: workflow}}})
+  defp source_workflow(
+         storage,
+         %Agent{state: %{run_id: run_id, projection: %Projection{workflow: workflow}}}
+       )
        when is_binary(workflow) do
+    case WorkflowDefinitionLoader.runtime_spec_run?(storage, run_id) do
+      {:ok, true} -> {:error, {:invalid_replay_source, :runtime_spec}}
+      {:ok, false} -> load_replay_workflow(workflow)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp source_workflow(_storage, %Agent{}) do
+    {:error, {:invalid_replay_source, :workflow}}
+  end
+
+  defp load_replay_workflow(workflow) do
     case Definition.load_serialized(workflow) do
       {:ok, _workflow, _definition} = ok -> ok
       {:error, {:invalid_workflow, _workflow}} -> {:error, {:invalid_replay_source, :workflow}}
     end
-  end
-
-  defp source_workflow(%Agent{}) do
-    {:error, {:invalid_replay_source, :workflow}}
+  rescue
+    error in CaseClauseError ->
+      case error.term do
+        {:error, reason} -> {:error, {:invalid_replay_source, :workflow, reason}}
+        reason -> {:error, {:invalid_replay_source, :workflow, reason}}
+      end
   end
 
   defp ensure_replay_allowed(%Agent{} = source_agent, definition, opts, completed_dispatch_keys) do

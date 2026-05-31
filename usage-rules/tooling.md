@@ -20,12 +20,17 @@
   specs in tooling.
 - Use `SquidMesh.Workflow.validate_spec/2` with `:action_registry` before
   trusting runtime-authored specs that reference executable actions.
+- Use `SquidMesh.start_spec/3` or `SquidMesh.start_spec/4` for runtime-authored
+  activation after validation; the persisted run definition is the execution
+  and graph-inspection source of truth.
 - Use `SquidMesh.Workflow.EditorSpec.to_map/1`,
   `SquidMesh.Workflow.EditorSpec.validate_map/1`, and
   `SquidMesh.Workflow.EditorSpec.preview_graph/1` for JSON-safe visual editor
   round trips and draft graph previews that do not start runs.
 - Treat unresolved specs as data for editors, diagrams, and validation; only
   the host-owned action registry is the module ownership allowlist.
+- Do not offer replay controls for runtime-authored spec runs until Squid Mesh
+  exposes replay support for that definition source.
 - Reject client edits to runtime-owned fields such as fingerprints, run ids,
   journal history, attempts, dispatches, and audit history.
 - Preserve stable ids for workflow, trigger, step, transition, and condition

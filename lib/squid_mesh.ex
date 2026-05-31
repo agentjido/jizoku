@@ -18,6 +18,7 @@ defmodule SquidMesh do
   alias SquidMesh.Runtime.Journal.Replay
   alias SquidMesh.Runtime.Journal.SignalInterpreter
   alias SquidMesh.Runtime.Journal.Starter
+  alias SquidMesh.Runtime.Journal.WorkflowDefinitionLoader
   alias SquidMesh.Runtime.ScheduleIdentity
   alias SquidMesh.Runtime.Signal
 
@@ -26,6 +27,14 @@ defmodule SquidMesh do
   @projection_snapshot_options [:queue, :now]
   @projection_list_options [:queue, :now]
   @journal_start_options [:runtime, :journal_storage, :queue, :now, :run_id]
+  @journal_spec_start_options [
+    :runtime,
+    :journal_storage,
+    :queue,
+    :now,
+    :run_id,
+    :action_registry
+  ]
   @journal_child_start_options [
     :runtime,
     :journal_storage,
@@ -143,6 +152,53 @@ defmodule SquidMesh do
          {:ok, :journal} <- runtime(overrides) do
       start_triggered_run_with_runtime(:journal, workflow, trigger_name, payload, overrides)
     end
+  end
+
+  @doc """
+  Starts a runtime-authored workflow spec through its default trigger.
+
+  Runtime-authored specs should be validated with a host-owned action registry
+  before activation. Passing `:action_registry` lets Squid Mesh resolve stable
+  action keys to approved executable modules at the start boundary.
+  """
+  @spec start_spec(SquidMesh.Workflow.Spec.t() | map(), map(), keyword()) ::
+          {:ok, SquidMesh.ReadModel.Inspection.Snapshot.t()}
+          | {:error, Config.config_error()}
+          | {:error, start_option_error()}
+          | {:error, Starter.start_error()}
+          | {:error, {:dispatch_failed, term()}}
+  def start_spec(spec, payload, overrides \\ [])
+
+  def start_spec(spec, payload, overrides) when is_map(payload) and is_list(overrides) do
+    with :ok <- reject_public_start_options(overrides),
+         {:ok, :journal} <- runtime(overrides) do
+      start_spec_run_with_runtime(:journal, spec, nil, payload, overrides)
+    end
+  end
+
+  def start_spec(_spec, _payload, overrides) when is_list(overrides) do
+    {:error, {:invalid_payload, :expected_map}}
+  end
+
+  @doc """
+  Starts a runtime-authored workflow spec through a named trigger.
+  """
+  @spec start_spec(SquidMesh.Workflow.Spec.t() | map(), atom(), map(), keyword()) ::
+          {:ok, SquidMesh.ReadModel.Inspection.Snapshot.t()}
+          | {:error, Config.config_error()}
+          | {:error, start_option_error()}
+          | {:error, Starter.start_error()}
+          | {:error, {:dispatch_failed, term()}}
+  def start_spec(spec, trigger_name, payload, overrides)
+      when is_atom(trigger_name) and is_map(payload) and is_list(overrides) do
+    with :ok <- reject_public_start_options(overrides),
+         {:ok, :journal} <- runtime(overrides) do
+      start_spec_run_with_runtime(:journal, spec, trigger_name, payload, overrides)
+    end
+  end
+
+  def start_spec(_spec, trigger_name, _payload, overrides) when is_list(overrides) do
+    {:error, {:invalid_trigger, trigger_name}}
   end
 
   @doc false
@@ -579,6 +635,10 @@ defmodule SquidMesh do
     Starter.start_run(workflow, trigger_name, payload, journal_start_options(overrides))
   end
 
+  defp start_spec_run_with_runtime(:journal, spec, trigger_name, payload, overrides) do
+    Starter.start_spec_run(spec, trigger_name, payload, journal_spec_start_options(overrides))
+  end
+
   defp start_initial_context_run_with_runtime(
          :journal,
          workflow,
@@ -775,15 +835,31 @@ defmodule SquidMesh do
   end
 
   defp graph_inspection(%Inspection.Snapshot{} = snapshot, read_model, overrides) do
-    GraphInspection.from_snapshot(snapshot, graph_inspection_options(read_model, overrides))
+    GraphInspection.from_snapshot(
+      snapshot,
+      graph_inspection_options(snapshot, read_model, overrides)
+    )
   end
 
-  defp graph_inspection_options(read_model, overrides) do
+  defp graph_inspection_options(%Inspection.Snapshot{} = snapshot, read_model, overrides) do
     [
       source: read_model,
-      include_details: Keyword.get(overrides, :include_history, false)
+      include_details: Keyword.get(overrides, :include_history, false),
+      definition: graph_definition(snapshot, overrides)
     ]
   end
+
+  defp graph_definition(%Inspection.Snapshot{run_id: run_id, workflow: workflow}, overrides)
+       when is_binary(run_id) and is_binary(workflow) do
+    with {:ok, storage} <- journal_storage(overrides),
+         {:ok, _workflow, definition} <- WorkflowDefinitionLoader.load(storage, run_id, workflow) do
+      definition
+    else
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp graph_definition(%Inspection.Snapshot{}, _overrides), do: nil
 
   defp explain_projected_run(run_id, overrides) do
     with {:ok, storage} <- journal_storage(overrides) do
@@ -879,6 +955,10 @@ defmodule SquidMesh do
 
   defp journal_start_options(overrides) do
     configured_journal_options(overrides, @journal_start_options)
+  end
+
+  defp journal_spec_start_options(overrides) do
+    configured_journal_options(overrides, @journal_spec_start_options)
   end
 
   defp journal_control_options(overrides) do
