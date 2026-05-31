@@ -10,6 +10,7 @@ defmodule SquidMesh do
   alias SquidMesh.Config
   alias SquidMesh.ReadModel.Inspection
   alias SquidMesh.ReadModel.Listing
+  alias SquidMesh.Runs.DynamicWorkPreview
   alias SquidMesh.Runs.GraphInspection
   alias SquidMesh.Runtime.Journal.Cancellation
   alias SquidMesh.Runtime.Journal.ChildStarter
@@ -344,6 +345,41 @@ defmodule SquidMesh do
          {:ok, inspection} <- inspect_graph_source(run_id, :read_model, overrides) do
       {:ok, graph_inspection(inspection, :read_model, overrides)}
     end
+  end
+
+  @doc """
+  Validates bounded dynamic work and returns the graph it would produce.
+
+  This is the read-only companion to `record_dynamic_work/3`. It applies the
+  same validation and normalization rules, but does not append a journal fact.
+  Use it for UI previews, visual editor validation, and host-side dry runs
+  before recording dynamic work durably.
+  """
+  @spec preview_dynamic_work(String.t(), map() | keyword(), keyword()) ::
+          {:ok, DynamicWorkPreview.t()}
+          | {:error,
+             :not_found
+             | Config.config_error()
+             | read_option_error()
+             | DynamicWork.dynamic_work_error()
+             | term()}
+  def preview_dynamic_work(run_id, attrs, overrides \\ [])
+
+  def preview_dynamic_work(run_id, attrs, overrides) when is_list(overrides) do
+    with :ok <- public_dynamic_work_options(overrides),
+         {:ok, :journal} <- runtime(overrides),
+         {:ok, :read_model} <- read_model(overrides),
+         {:ok, run_id} <- Options.thread_part(run_id, :run_id),
+         {:ok, now} <- dynamic_work_time(overrides),
+         {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides),
+         {:ok, context} <- dynamic_work_context(snapshot, overrides),
+         {:ok, preview} <- DynamicWork.preview(run_id, attrs, now, context) do
+      {:ok, dynamic_work_preview(snapshot, preview, overrides)}
+    end
+  end
+
+  def preview_dynamic_work(_run_id, _attrs, _overrides) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
   end
 
   @doc """
@@ -947,6 +983,36 @@ defmodule SquidMesh do
          definition: definition
        }}
     end
+  end
+
+  defp dynamic_work_preview(%Inspection.Snapshot{} = snapshot, preview, overrides)
+       when is_map(preview) do
+    dynamic_work = Map.fetch!(preview, :dynamic_work)
+    duplicate? = Map.fetch!(preview, :duplicate?)
+
+    preview_snapshot =
+      if duplicate? do
+        snapshot
+      else
+        %Inspection.Snapshot{
+          snapshot
+          | dynamic_work: preview_dynamic_work_items(snapshot.dynamic_work, dynamic_work)
+        }
+      end
+
+    DynamicWorkPreview.new(
+      snapshot.run_id,
+      dynamic_work,
+      duplicate?,
+      graph_inspection(preview_snapshot, :read_model, overrides)
+    )
+  end
+
+  defp preview_dynamic_work_items(dynamic_work, preview) when is_list(dynamic_work) do
+    Enum.sort_by(
+      [preview | dynamic_work],
+      &{Map.get(&1, :dynamic_key), Map.get(&1, :recorded_at)}
+    )
   end
 
   defp resolve_dynamic_work_conflict(run_id, overrides, entry) do

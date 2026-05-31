@@ -120,12 +120,14 @@ Host apps should still authorize and redact this payload before exposing it
 outside trusted operator surfaces. For field-selection guidance, see
 [Observability: redaction and field selection](observability.md#redaction-and-field-selection).
 
-Dynamic work nodes are inspectable runtime-authored structure. Record them
-through `SquidMesh.record_dynamic_work/3` so the runtime validates the stable
-dynamic key, producer origin, node ids, and optional dynamic edges against an
-active run snapshot before appending durable metadata. Graph projections mark
-those nodes with
-`dynamic?: true` so graph UIs can distinguish them from declared workflow steps:
+Dynamic work nodes are inspectable runtime-authored structure. Preview them
+through `SquidMesh.preview_dynamic_work/3` when a UI or visual editor needs to
+validate a candidate payload and render the graph overlay before writing. Record
+them through `SquidMesh.record_dynamic_work/3` so the runtime validates the
+stable dynamic key, producer origin, node ids, and optional dynamic edges
+against an active run snapshot before appending durable metadata. Graph
+projections mark those nodes with `dynamic?: true` so graph UIs can distinguish
+them from declared workflow steps:
 
 ```elixir
 %{
@@ -141,9 +143,10 @@ those nodes with
 
 The current dynamic-work support is inspection-only. It lets dashboards and
 visual editors show bounded runtime-generated structure before Squid Mesh adds
-execution semantics for dynamic in-run graph expansion. Recording dynamic work
-does not schedule dispatch attempts, alter dependency readiness, or change
-terminal-state decisions. Terminal runs reject new dynamic-work records.
+execution semantics for dynamic in-run graph expansion. Previewing or recording
+dynamic work does not schedule dispatch attempts, alter dependency readiness, or
+change terminal-state decisions. Terminal runs reject new dynamic-work previews
+and records.
 
 ## Edge Shape
 

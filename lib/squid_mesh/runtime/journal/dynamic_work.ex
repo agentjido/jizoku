@@ -43,15 +43,38 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
           {:ok, Entry.t() | :duplicate} | {:error, dynamic_work_error() | term()}
   @doc false
   def new_entry(run_id, attrs, %DateTime{} = occurred_at, context) when is_binary(run_id) do
-    with {:ok, attrs} <- validate_attrs(attrs),
-         attrs <- Map.put(attrs, :run_id, run_id),
-         attrs <- Map.put(attrs, :occurred_at, occurred_at),
-         {:ok, entry} <- DispatchProtocol.new_entry(:dynamic_work_recorded, attrs) do
-      validate_context(entry, context)
+    with {:ok, %{entry: entry, duplicate?: duplicate?}} <-
+           preview(run_id, attrs, occurred_at, context) do
+      if duplicate? do
+        {:ok, :duplicate}
+      else
+        {:ok, entry}
+      end
     end
   end
 
   def new_entry(_run_id, _attrs, %DateTime{}, _context), do: invalid(:attrs, :invalid)
+
+  @spec preview(String.t(), map() | keyword(), DateTime.t(), validation_context()) ::
+          {:ok, %{entry: Entry.t(), dynamic_work: map(), duplicate?: boolean()}}
+          | {:error, dynamic_work_error() | term()}
+  @doc false
+  def preview(run_id, attrs, %DateTime{} = occurred_at, context) when is_binary(run_id) do
+    with {:ok, attrs} <- validate_attrs(attrs),
+         attrs <- Map.put(attrs, :run_id, run_id),
+         attrs <- Map.put(attrs, :occurred_at, occurred_at),
+         {:ok, entry} <- DispatchProtocol.new_entry(:dynamic_work_recorded, attrs),
+         {:ok, duplicate?} <- validate_preview(entry, context) do
+      {:ok,
+       %{
+         entry: entry,
+         dynamic_work: projected_dynamic_work(entry.data),
+         duplicate?: duplicate?
+       }}
+    end
+  end
+
+  def preview(_run_id, _attrs, %DateTime{}, _context), do: invalid(:attrs, :invalid)
 
   defp validate_attrs(attrs) when is_map(attrs) do
     attrs = Map.new(attrs)
@@ -86,15 +109,19 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
 
   defp validate_attrs(_attrs), do: invalid(:attrs, :invalid)
 
-  defp validate_context(%Entry{}, %{terminal?: true}) do
+  defp validate_preview(%Entry{}, %{terminal?: true}) do
     invalid(:run, :terminal)
   end
 
-  defp validate_context(%Entry{data: data} = entry, context) do
-    if duplicate_dynamic_work?(data, context) do
-      {:ok, :duplicate}
+  defp validate_preview(%Entry{data: data} = entry, context) do
+    duplicate? = duplicate_dynamic_work?(data, context)
+
+    if duplicate? do
+      {:ok, true}
     else
-      validate_new_dynamic_work(entry, context)
+      with {:ok, _entry} <- validate_new_dynamic_work(entry, context) do
+        {:ok, false}
+      end
     end
   end
 
@@ -134,8 +161,16 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
       origin: data.origin,
       nodes: nodes,
       edges: projected_dynamic_edges(data, nodes),
-      metadata: Map.get(data, :metadata, %{})
+      metadata: Map.get(data, :metadata, %{}),
+      recorded_at: projected_recorded_at(data)
     })
+  end
+
+  defp projected_recorded_at(data) do
+    case Map.get(data, :recorded_at) do
+      %DateTime{} = recorded_at -> recorded_at
+      _missing -> Map.get(data, :occurred_at)
+    end
   end
 
   defp projected_dynamic_node(node) do
