@@ -16,6 +16,7 @@ defmodule BedrockMinimalHostApp.Jobs.SquidMeshPayload do
   alias SquidMesh.Runtime.Runner
 
   @default_max_journal_attempts 50
+  @default_journal_heartbeat_interval_ms 10_000
 
   @impl true
   def perform(%{"kind" => "drain", "queue" => queue}, _meta) when is_binary(queue) do
@@ -46,10 +47,25 @@ defmodule BedrockMinimalHostApp.Jobs.SquidMeshPayload do
     end
   end
 
-  defp execute_next(nil), do: SquidMesh.execute_next(owner_id: "bedrock-minimal-host-app")
+  defp execute_next(nil), do: SquidMesh.execute_next(journal_execute_options(nil))
 
   defp execute_next(queue) when is_binary(queue) do
-    SquidMesh.execute_next(owner_id: "bedrock-minimal-host-app", queue: queue)
+    SquidMesh.execute_next(journal_execute_options(queue))
+  end
+
+  defp journal_execute_options(queue) do
+    [owner_id: "bedrock-minimal-host-app"]
+    |> maybe_put_queue(queue)
+    |> maybe_put_heartbeat_interval(journal_heartbeat_interval_ms())
+  end
+
+  defp maybe_put_queue(opts, nil), do: opts
+  defp maybe_put_queue(opts, queue), do: Keyword.put(opts, :queue, queue)
+
+  defp maybe_put_heartbeat_interval(opts, nil), do: opts
+
+  defp maybe_put_heartbeat_interval(opts, heartbeat_interval_ms) do
+    Keyword.put(opts, :heartbeat_interval_ms, heartbeat_interval_ms)
   end
 
   defp journal_queue(%{"queue" => queue}) when is_binary(queue), do: queue
@@ -59,5 +75,11 @@ defmodule BedrockMinimalHostApp.Jobs.SquidMeshPayload do
     :bedrock_minimal_host_app
     |> Application.get_env(__MODULE__, [])
     |> Keyword.get(:max_journal_attempts, @default_max_journal_attempts)
+  end
+
+  defp journal_heartbeat_interval_ms do
+    :bedrock_minimal_host_app
+    |> Application.get_env(__MODULE__, [])
+    |> Keyword.get(:journal_heartbeat_interval_ms, @default_journal_heartbeat_interval_ms)
   end
 end

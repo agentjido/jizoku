@@ -9873,6 +9873,217 @@ defmodule SquidMeshTest do
              ]
     end
 
+    test "execute_next/1 heartbeats a long-running claimed attempt without exposing claim tokens" do
+      parent = self()
+      queue = "executor-heartbeat-#{System.unique_integer([:positive])}"
+      now = DateTime.utc_now()
+
+      on_exit(fn -> :persistent_term.erase(:journal_gateway_run_hook) end)
+
+      :persistent_term.put(:journal_gateway_run_hook, fn ->
+        send(parent, {:heartbeat_step_started, self()})
+
+        receive do
+          :release_heartbeat_step -> :ok
+        after
+          5_000 -> raise "timed out waiting to release heartbeat step"
+        end
+      end)
+
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               SquidMesh.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_live_heartbeat"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: queue,
+                 now: now
+               )
+
+      task =
+        Task.async(fn ->
+          execute_journal_next(
+            runtime: :journal,
+            journal_storage: @read_model_storage,
+            queue: queue,
+            owner_id: "heartbeat-worker",
+            claim_id: "claim_live_heartbeat",
+            claim_token: "token_live_heartbeat",
+            lease_for: 1,
+            heartbeat_interval_ms: 100,
+            now: now
+          )
+        end)
+
+      assert_receive {:heartbeat_step_started, step_pid}, 1_000
+      Process.sleep(1_200)
+
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, queue})
+
+      assert Enum.any?(dispatch_entries, &(&1.type == :attempt_heartbeat))
+
+      heartbeat_entries = Enum.filter(dispatch_entries, &(&1.type == :attempt_heartbeat))
+
+      assert Enum.all?(heartbeat_entries, fn entry ->
+               Map.has_key?(entry.data, :claim_token_hash) and
+                 not Map.has_key?(entry.data, :claim_token)
+             end)
+
+      refute inspect(dispatch_entries) =~ "token_live_heartbeat"
+
+      assert {:ok, :none} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: queue,
+                 owner_id: "competing-worker",
+                 now: DateTime.utc_now()
+               )
+
+      send(step_pid, :release_heartbeat_step)
+
+      assert {:ok, %Snapshot{} = completed_snapshot} = Task.await(task, 5_000)
+      assert completed_snapshot.run_id == started_snapshot.run_id
+      assert completed_snapshot.status == :completed
+    end
+
+    test "execute_next/1 stops heartbeat renewal when the executor process exits" do
+      parent = self()
+      queue = "executor-heartbeat-exit-#{System.unique_integer([:positive])}"
+      now = DateTime.utc_now()
+
+      on_exit(fn -> :persistent_term.erase(:journal_gateway_run_hook) end)
+
+      :persistent_term.put(:journal_gateway_run_hook, fn ->
+        send(parent, {:heartbeat_exit_step_started, self()})
+
+        receive do
+          :release_heartbeat_exit_step -> :ok
+        after
+          5_000 -> raise "timed out waiting to release heartbeat exit step"
+        end
+      end)
+
+      assert {:ok, %Snapshot{}} =
+               SquidMesh.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_heartbeat_executor_exit"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: queue,
+                 now: now
+               )
+
+      {executor_pid, executor_ref} =
+        spawn_monitor(fn ->
+          Process.flag(:trap_exit, true)
+
+          execute_journal_next(
+            runtime: :journal,
+            journal_storage: @read_model_storage,
+            queue: queue,
+            owner_id: "heartbeat-exit-worker",
+            claim_id: "claim_heartbeat_exit",
+            claim_token: "token_heartbeat_exit",
+            lease_for: 1,
+            heartbeat_interval_ms: 100,
+            now: now
+          )
+        end)
+
+      assert_receive {:heartbeat_exit_step_started, _step_pid}, 1_000
+      Process.sleep(250)
+
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, queue})
+
+      heartbeat_count = Enum.count(dispatch_entries, &(&1.type == :attempt_heartbeat))
+      assert heartbeat_count > 0
+
+      Process.exit(executor_pid, :kill)
+      assert_receive {:DOWN, ^executor_ref, :process, ^executor_pid, :killed}, 1_000
+      Process.sleep(300)
+
+      assert {:ok, dispatch_entries_after_exit} =
+               Journal.load_entries(@read_model_storage, {:dispatch, queue})
+
+      assert Enum.count(dispatch_entries_after_exit, &(&1.type == :attempt_heartbeat)) ==
+               heartbeat_count
+
+      recovery_task =
+        Task.async(fn ->
+          execute_journal_next(
+            runtime: :journal,
+            journal_storage: @read_model_storage,
+            queue: queue,
+            owner_id: "heartbeat-exit-recovery-worker",
+            now: DateTime.add(now, 2, :second)
+          )
+        end)
+
+      assert_receive {:heartbeat_exit_step_started, recovery_step_pid}, 1_000
+      send(recovery_step_pid, :release_heartbeat_exit_step)
+
+      assert {:ok, %Snapshot{} = recovered_snapshot} = Task.await(recovery_task, 5_000)
+      assert recovered_snapshot.status == :completed
+    end
+
+    test "execute_next/1 fails closed when heartbeat detects a terminal run" do
+      parent = self()
+      queue = "executor-heartbeat-terminal-#{System.unique_integer([:positive])}"
+      now = DateTime.utc_now()
+
+      on_exit(fn -> :persistent_term.erase(:journal_gateway_run_hook) end)
+
+      :persistent_term.put(:journal_gateway_run_hook, fn ->
+        send(parent, {:heartbeat_terminal_step_started, self()})
+
+        receive do
+          :release_heartbeat_terminal_step -> :ok
+        after
+          5_000 -> raise "timed out waiting to release heartbeat terminal step"
+        end
+      end)
+
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               SquidMesh.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_heartbeat_terminal"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: queue,
+                 now: now
+               )
+
+      {executor_pid, executor_ref} =
+        spawn_monitor(fn ->
+          execute_journal_next(
+            runtime: :journal,
+            journal_storage: @read_model_storage,
+            queue: queue,
+            owner_id: "heartbeat-terminal-worker",
+            claim_id: "claim_heartbeat_terminal",
+            claim_token: "token_heartbeat_terminal",
+            lease_for: 1,
+            heartbeat_interval_ms: 100,
+            now: now
+          )
+        end)
+
+      assert_receive {:heartbeat_terminal_step_started, _step_pid}, 1_000
+
+      assert {:ok, %Snapshot{status: :cancelled}} =
+               SquidMesh.cancel(started_snapshot.run_id,
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: queue,
+                 now: DateTime.utc_now()
+               )
+
+      assert_receive {:DOWN, ^executor_ref, :process, ^executor_pid, :killed}, 1_000
+    end
+
     test "execute_next/1 exposes safe attempt metadata to native step context" do
       storage = {Jido.Storage.ETS, table: :squid_mesh_native_attempt_context_test}
       queue = "native-attempt-context-test"
@@ -10000,6 +10211,60 @@ defmodule SquidMeshTest do
       assert completed_snapshot.run_id == started_snapshot.run_id
       assert completed_snapshot.status == :completed
       assert transactional_events(started_snapshot.run_id) == ["recorded"]
+    end
+
+    test "execute_next/1 heartbeats returned step output until durable completion" do
+      parent = self()
+
+      queue = "completion-heartbeat-#{System.unique_integer([:positive])}"
+      now = DateTime.utc_now()
+
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               SquidMesh.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_completion_heartbeat"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: queue,
+                 now: now
+               )
+
+      test_before_completion = fn %{run_id: run_id} ->
+        assert run_id == started_snapshot.run_id
+        send(parent, :journal_completion_pending)
+        Process.sleep(1_200)
+        :ok
+      end
+
+      task =
+        Task.async(fn ->
+          execute_journal_next(
+            runtime: :journal,
+            journal_storage: @read_model_storage,
+            queue: queue,
+            owner_id: "completion-heartbeat-worker",
+            lease_for: 1,
+            heartbeat_interval_ms: 100,
+            now: now,
+            test_before_completion: test_before_completion
+          )
+        end)
+
+      assert_receive :journal_completion_pending, 1_000
+      Process.sleep(1_100)
+
+      assert {:ok, :none} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: queue,
+                 owner_id: "completion-heartbeat-competitor",
+                 now: DateTime.utc_now()
+               )
+
+      assert {:ok, %Snapshot{} = completed_snapshot} = Task.await(task, 5_000)
+      assert completed_snapshot.run_id == started_snapshot.run_id
+      assert completed_snapshot.status == :completed
     end
 
     test "execute_next/1 fails repo transaction steps closed for non-Ecto journal storage" do
@@ -12357,6 +12622,23 @@ defmodule SquidMeshTest do
 
       assert reason == {:invalid_option, {:owner_id, :invalid}}
       refute inspect(reason) =~ "super-secret-token"
+
+      assert {:error, reason} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 heartbeat_interval_ms: secret_value
+               )
+
+      assert reason == {:invalid_option, {:heartbeat_interval_ms, :invalid}}
+      refute inspect(reason) =~ "super-secret-token"
+
+      assert {:error, {:invalid_option, {:heartbeat_interval_ms, :invalid}}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 heartbeat_interval_ms: 49
+               )
     end
 
     test "explain_run/2 can read from the read model" do

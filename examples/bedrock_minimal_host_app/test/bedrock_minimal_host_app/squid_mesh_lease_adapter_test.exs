@@ -10,6 +10,7 @@ defmodule BedrockMinimalHostApp.SquidMeshLeaseAdapterTest do
   alias BedrockMinimalHostApp.WorkflowRuns
   alias BedrockMinimalHostApp.Workflows.DailyDigest
   alias SquidMesh.Executor.Payload
+  alias SquidMesh.Runtime.Journal
 
   setup do
     :ok = Sandbox.checkout(Repo)
@@ -231,13 +232,20 @@ defmodule BedrockMinimalHostApp.SquidMeshLeaseAdapterTest do
 
   test "executes payment recovery through a Bedrock lease with runtime attempt metadata",
        %{queue: queue} do
+    Sandbox.mode(Repo, {:shared, self()})
+
     bypass = Bypass.open()
 
     Bypass.expect_once(bypass, "GET", "/gateway", fn conn ->
+      Process.sleep(250)
       Plug.Conn.resp(conn, 200, "retry_required")
     end)
 
     with_squid_mesh_queue(queue, fn ->
+      Application.put_env(:bedrock_minimal_host_app, SquidMeshPayload,
+        journal_heartbeat_interval_ms: 50
+      )
+
       assert {:ok, started_run} =
                WorkflowRuns.start_payment_recovery(%{
                  account_id: "acct_bedrock_payment",
@@ -258,6 +266,16 @@ defmodule BedrockMinimalHostApp.SquidMeshLeaseAdapterTest do
       assert completed_run.context.gateway_check.attempt.idempotency_key
       assert completed_run.context.gateway_check.attempt.claim_id
       refute Map.has_key?(completed_run.context.gateway_check.attempt, :claim_token)
+
+      storage = {SquidMesh.Runtime.Journal.Storage.Ecto, repo: Repo}
+      assert {:ok, dispatch_entries} = Journal.load_entries(storage, {:dispatch, queue})
+      heartbeat_entries = Enum.filter(dispatch_entries, &(&1.type == :attempt_heartbeat))
+      assert heartbeat_entries != []
+
+      assert Enum.all?(heartbeat_entries, fn entry ->
+               Map.has_key?(entry.data, :claim_token_hash) and
+                 not Map.has_key?(entry.data, :claim_token)
+             end)
     end)
   end
 

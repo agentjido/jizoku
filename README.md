@@ -456,6 +456,24 @@ by duplicate-node validation. Terminal runs reject new dynamic work.
 visual editors can show producer nodes, added node ids, and added edge ids
 without reconstructing them from raw dynamic-work records.
 
+## Long-Running Steps
+
+Workers can ask the journal executor to renew the active claim while a step is
+running:
+
+```elixir
+SquidMesh.execute_next(
+  owner_id: "billing-worker-1",
+  lease_for: 30,
+  heartbeat_interval_ms: 10_000
+)
+```
+
+The executor keeps raw claim tokens internal. Durable heartbeat entries store
+only the claim-token hash and are fenced by the same claim id and token used for
+completion or failure. The minimum heartbeat interval is 50ms; production
+workers should choose a much larger interval relative to `lease_for`.
+
 ## Runtime-Authored Specs
 
 Host-owned editors or databases can activate validated workflow specs without
