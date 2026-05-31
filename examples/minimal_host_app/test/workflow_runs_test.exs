@@ -153,6 +153,25 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            ]
   end
 
+  test "starts a runtime-authored workflow through the host boundary" do
+    assert {:ok, run} =
+             WorkflowRuns.start_runtime_digest(%{
+               channel: "ops",
+               digest_date: "2026-05-30"
+             })
+
+    assert run.workflow == "Elixir.MinimalHostApp.RuntimeAuthoredDigest"
+    assert run.trigger == "manual_digest"
+    assert run.definition_version == "minimal-host-runtime-digest-v1"
+    assert [%{step: "record_digest_delivery", status: :available}] = run.visible_attempts
+
+    assert {:ok, completed_run} = MinimalHostApp.RuntimeHarness.await_terminal_run(run.run_id)
+    assert completed_run.status == :completed
+
+    assert {:ok, graph} = SquidMesh.inspect_run_graph(run.run_id)
+    assert Enum.map(graph.nodes, & &1.id) == ["record_digest_delivery"]
+  end
+
   test "host app examples round-trip workflow specs through the editor JSON contract" do
     assert {:ok, spec} = SquidMesh.Workflow.to_spec(PaymentRecovery)
 

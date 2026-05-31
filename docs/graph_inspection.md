@@ -44,6 +44,12 @@ Workflow modules are serialized with `Atom.to_string/1`, so Elixir modules use
 the normal `"Elixir."` prefix. Persisted serialized workflow definitions keep
 their stored string value.
 
+For runtime-authored specs started with `SquidMesh.start_spec/3` or
+`SquidMesh.start_spec/4`, graph inspection uses the resolved definition
+persisted on the run. The stored workflow value remains a stable identity, but
+nodes, edges, action keys, and selected transitions come from the durable spec
+rather than from loading a workflow module.
+
 `current_node_id` is the first active node for simple callers.
 `current_node_ids` preserves parallel runnable nodes in dependency workflows.
 `terminal?` is true when the run is in a terminal state such as `:completed`,

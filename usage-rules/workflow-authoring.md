@@ -12,12 +12,14 @@
   when tooling needs a normalized data representation.
 - Use `SquidMesh.Workflow.validate_spec/2` with `:action_registry` before
   trusting runtime-authored spec data that references executable actions.
+- Use `SquidMesh.start_spec/3` or `SquidMesh.start_spec/4` to activate
+  runtime-authored specs only after action keys resolve through a host-owned
+  registry.
 - Use `SquidMesh.Workflow.EditorSpec` for visual-editor JSON round trips and
   draft graph previews. Do not treat editor preview data as an execution
   boundary.
-- Do not activate runtime-authored workflows from request input until the host
-  has resolved action keys through a host-owned registry and the runtime
-  execution boundary supports that spec shape.
+- Do not activate runtime-authored workflows directly from request input; route
+  them through the host registry and Squid Mesh start boundary.
 
 ## Steps
 

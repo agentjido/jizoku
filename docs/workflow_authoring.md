@@ -113,6 +113,11 @@ spec = %{
 
 :ok = SquidMesh.Workflow.validate_spec(spec, action_registry: registry)
 {:ok, resolved_spec} = SquidMesh.Workflow.resolve_spec_actions(spec, action_registry: registry)
+
+{:ok, run} =
+  SquidMesh.start_spec(spec, :manual, %{invoice_id: "inv_123"},
+    action_registry: registry
+  )
 ```
 
 The registry is an allowlist. Entries must resolve to loaded `SquidMesh.Step`
@@ -121,6 +126,15 @@ as `[module: Billing.Steps.LoadInvoice, enabled?: false]`, and incompatible
 modules return structured `{:invalid_workflow_spec, errors}` before activation.
 Resolved specs keep the stable action key on each step and in step metadata so
 inspection and graph tooling can show the approved action identity.
+
+`start_spec/3` starts a runtime-authored spec through its default trigger;
+`start_spec/4` starts a named trigger. Both paths validate and resolve the spec
+at the start boundary when `:action_registry` is supplied, persist the resolved
+definition with the run, and execute from that persisted definition. This lets
+`inspect_run/2` and `inspect_run_graph/2` keep working even when the workflow
+module name is only a stable identity for a UI-authored workflow. Replaying
+runtime-authored spec runs is intentionally rejected for now with
+`{:error, {:invalid_replay_source, :runtime_spec}}`.
 
 ## Visual Editor Round Trips
 
@@ -224,10 +238,12 @@ Validation errors keep stable paths for field highlighting:
 [%{path: [:transitions, 0, :to], code: :unknown_transition_target}] = errors
 ```
 
-For runtime-authored workflow activation, keep using `validate_spec/2` and
-`resolve_spec_actions/2` with a host-owned action registry. The editor preview
-contract is intentionally read-only and does not replace the future
-runtime-authored execution boundary tracked separately.
+For runtime-authored workflow activation, keep using `validate_spec/2`,
+`resolve_spec_actions/2`, and `start_spec/3` or `start_spec/4` with a host-owned
+action registry. The editor preview contract is intentionally read-only; runtime
+activation still happens at the Squid Mesh start boundary so action allowlists,
+payload validation, durable definition persistence, and journal inspection stay
+centralized.
 
 The spec is an Elixir data representation with atom keys and module atoms:
 
@@ -344,12 +360,13 @@ Invalid specs return structured errors:
 [%{path: [:workflow], code: :invalid_workflow} | _] = errors
 ```
 
-Serialized module names and string-keyed runtime records are intentionally
-rejected. Runtime-authored activation remains out of scope until the runtime
-spec execution boundary lands; host applications should continue to define
-normal workflows as compiled Elixir modules. When a host accepts spec-shaped
-data from tooling, `validate_spec/2` with an `:action_registry` is the module
-ownership allowlist.
+Serialized module names and fully string-keyed editor records are intentionally
+rejected by `validate_spec/1`; convert editor JSON through
+`SquidMesh.Workflow.EditorSpec` before treating it as a runtime spec.
+Runtime-authored specs can be activated through `SquidMesh.start_spec/3` or
+`SquidMesh.start_spec/4`. When a host accepts spec-shaped data from tooling,
+`validate_spec/2` with an `:action_registry` remains the module ownership
+allowlist.
 
 ## Triggers
 

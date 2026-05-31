@@ -28,10 +28,24 @@ defmodule SquidMesh.Runtime.Journal.Starter do
   alias SquidMesh.Runtime.Signal
   alias SquidMesh.Runtime.WorkflowAgent
   alias SquidMesh.Runtime.WorkflowAgent.Projection
+  alias SquidMesh.Workflow.ActionRegistry
   alias SquidMesh.Workflow.Definition
   alias SquidMesh.Workflow.RunicPlanner
+  alias SquidMesh.Workflow.Spec
 
   @dispatch_schedule_retries 25
+  @spec_fields [
+    :workflow,
+    :definition_version,
+    :triggers,
+    :payload,
+    :steps,
+    :transitions,
+    :retries,
+    :entry_steps,
+    :initial_step,
+    :entry_step
+  ]
 
   @type start_error ::
           {:invalid_payload, Definition.payload_error_details()}
@@ -83,6 +97,89 @@ defmodule SquidMesh.Runtime.Journal.Starter do
     end
   end
 
+  @doc """
+  Starts a runtime-authored workflow spec by appending journal facts and
+  scheduling dispatch.
+  """
+  @spec start_spec_run(Spec.t() | map(), atom() | nil, map(), keyword()) ::
+          {:ok, Inspection.Snapshot.t()}
+          | {:ok, {:duplicate_schedule_start, Inspection.Snapshot.t()}}
+          | {:error, start_error()}
+  def start_spec_run(spec, trigger_name, payload, opts)
+      when is_map(payload) and is_list(opts) do
+    with :ok <- validate_command_signal(opts),
+         {:ok, storage} <- journal_storage(opts),
+         {:ok, queue} <- queue(opts),
+         {:ok, now} <- now(opts),
+         {:ok, spec} <- runtime_spec(spec, opts),
+         definition <- definition_from_spec(spec),
+         {:ok, trigger} <- trigger(definition, trigger_name),
+         {:ok, resolved_payload} <- Definition.resolve_payload(trigger, payload),
+         {:ok, planner} <- RunicPlanner.new(spec),
+         {:ok, _planned, runnables} <- RunicPlanner.plan(planner, resolved_payload),
+         {:ok, run_id} <- run_id(opts),
+         :ok <- validate_initial_context(opts),
+         {:ok, journal_runnables} <- journal_runnables(definition, run_id, queue, runnables, now),
+         {:ok, start_state} <-
+           ensure_run_started(
+             storage,
+             %{
+               workflow: spec.workflow,
+               definition: definition,
+               definition_source: :runtime_spec,
+               definition_spec: spec,
+               trigger: trigger,
+               input: resolved_payload,
+               run_id: run_id
+             },
+             journal_runnables,
+             now,
+             opts
+           ) do
+      complete_started_run(storage, spec.workflow, run_id, queue, now, start_state, opts)
+    end
+  end
+
+  def start_spec_run(_spec, _trigger_name, _payload, opts) when is_list(opts) do
+    {:error, {:invalid_payload, :expected_map}}
+  end
+
+  defp runtime_spec(spec, opts) do
+    with {:ok, resolved_spec} <- resolve_runtime_spec(spec, opts),
+         resolved_spec <- to_spec_struct(resolved_spec),
+         :ok <- Spec.validate(resolved_spec) do
+      {:ok, resolved_spec}
+    end
+  end
+
+  defp resolve_runtime_spec(spec, opts) do
+    case Keyword.fetch(opts, :action_registry) do
+      {:ok, registry} -> ActionRegistry.resolve_spec(spec, registry)
+      :error -> {:ok, spec}
+    end
+  end
+
+  defp to_spec_struct(%Spec{} = spec), do: spec
+
+  defp to_spec_struct(spec) when is_map(spec) do
+    struct(Spec, spec_field_values(spec))
+  end
+
+  defp definition_from_spec(%Spec{} = spec), do: Map.from_struct(spec)
+
+  defp spec_field_values(spec) when is_map(spec) do
+    Map.new(@spec_fields, fn field ->
+      {field, spec_field_value(spec, field)}
+    end)
+  end
+
+  defp spec_field_value(spec, field) do
+    case Map.fetch(spec, field) do
+      {:ok, value} -> value
+      :error -> Map.get(spec, Atom.to_string(field))
+    end
+  end
+
   defp trigger(definition, nil),
     do: Definition.trigger(definition, Definition.default_trigger(definition))
 
@@ -90,9 +187,26 @@ defmodule SquidMesh.Runtime.Journal.Starter do
 
   defp ensure_run_started(
          storage,
+         attrs,
+         runnables,
+         %DateTime{} = now,
+         opts
+       ) do
+    attrs =
+      attrs
+      |> Map.put_new(:definition_source, :module)
+      |> Map.put_new(:definition_spec, nil)
+
+    do_ensure_run_started(storage, attrs, runnables, now, opts)
+  end
+
+  defp do_ensure_run_started(
+         storage,
          %{
            workflow: workflow,
            definition: definition,
+           definition_source: definition_source,
+           definition_spec: definition_spec,
            trigger: trigger,
            input: input,
            run_id: run_id
@@ -103,18 +217,25 @@ defmodule SquidMesh.Runtime.Journal.Starter do
        ) do
     expected_fingerprint = Definition.fingerprint(definition)
 
+    run_started_attrs =
+      maybe_put_runtime_definition(
+        %{
+          run_id: run_id,
+          workflow: Definition.serialize_workflow(workflow),
+          trigger: Atom.to_string(Map.fetch!(trigger, :name)),
+          input: input,
+          context: initial_context(opts),
+          replayed_from_run_id: replayed_from_run_id(opts),
+          definition_version: definition.definition_version,
+          definition_fingerprint: expected_fingerprint,
+          occurred_at: now
+        },
+        definition_source,
+        definition_spec
+      )
+
     with {:ok, run_started} <-
-           DispatchProtocol.new_entry(:run_started, %{
-             run_id: run_id,
-             workflow: Definition.serialize_workflow(workflow),
-             trigger: Atom.to_string(Map.fetch!(trigger, :name)),
-             input: input,
-             context: initial_context(opts),
-             replayed_from_run_id: replayed_from_run_id(opts),
-             definition_version: definition.definition_version,
-             definition_fingerprint: expected_fingerprint,
-             occurred_at: now
-           }),
+           DispatchProtocol.new_entry(:run_started, run_started_attrs),
          {:ok, run_signal_received} <-
            CommandReceipt.new(
              start_signal_type(opts),
@@ -145,6 +266,17 @@ defmodule SquidMesh.Runtime.Journal.Starter do
         error
     end
   end
+
+  defp maybe_put_runtime_definition(attrs, :runtime_spec, %Spec{} = spec) do
+    attrs =
+      attrs
+      |> Map.put(:definition_source, :runtime_spec)
+      |> Map.put(:definition_spec, spec)
+
+    attrs
+  end
+
+  defp maybe_put_runtime_definition(attrs, _source, _spec), do: attrs
 
   defp start_signal_type(opts) do
     case start_command_signal(opts) do

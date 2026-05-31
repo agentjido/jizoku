@@ -51,7 +51,7 @@ defmodule SquidMesh.Runs.GraphInspection do
   def from_snapshot(%Snapshot{} = snapshot, opts) when is_list(opts) do
     source = Keyword.get(opts, :source, :read_model)
     include_details? = Keyword.get(opts, :include_details, false)
-    definition = load_definition(snapshot.workflow)
+    definition = Keyword.get(opts, :definition) || load_definition(snapshot.workflow)
     current_node_ids = snapshot_current_node_ids(snapshot)
     current_node_id = List.first(current_node_ids)
     initial_nodes = snapshot_nodes(snapshot, definition, include_details?)
