@@ -17,11 +17,19 @@
 - Preserve child-run lineage as durable journal facts. Child starts must be
   idempotent for the parent run, parent step, child workflow, child trigger, and
   `child_key`.
-- Preserve dynamic-work records as validated, inspection-only journal facts
-  until executable dynamic graph expansion is explicitly supported.
-- When `:action_registry` is supplied for dynamic work, reject missing, unknown,
-  disabled, or incompatible dynamic node action keys before previewing or
-  appending.
+- Preserve dynamic-work records as validated journal facts. `record_dynamic_work/3`
+  remains inspection-only; `schedule_dynamic_work/3` must append the
+  dynamic-work fact and planned runnable intents together before dispatch
+  scheduling.
+- Reject missing, unknown, disabled, or incompatible dynamic node action keys
+  before scheduling executable dynamic work. `schedule_dynamic_work/3` requires
+  the host-owned `:action_registry`.
+- Require the dynamic-work origin runnable to be applied before scheduling
+  executable dynamic nodes.
+- Treat dynamic edges as inspection metadata until dependency-ordered dynamic
+  scheduling is explicitly implemented.
+- Treat scheduled dynamic nodes as replay-unsafe by default unless a future
+  API persists a stronger host-owned recovery policy.
 
 ## Execution
 
@@ -39,7 +47,12 @@
   must be rejected at the boundary.
 - Previewing or recording dynamic work must not schedule dispatch attempts,
   change dependency readiness, or mutate terminal-state decisions.
-- Terminal runs must reject new dynamic-work previews and records.
+- Scheduling dynamic work must use durable planned runnable intents and the
+  normal `SquidMesh.execute_next/1` claim, completion, failure, and application
+  path.
+- Dynamic node retry must be persisted in the planned runnable metadata; do not
+  recover retry behavior from current host code alone.
+- Terminal runs must reject new dynamic-work previews, records, and schedules.
 
 ## Runtime Command Signals
 

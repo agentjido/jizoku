@@ -230,7 +230,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
       claim_token: claim_token
     }
 
-    with {:ok, result} <- Definition.apply_output_mapping(definition, step_name, output),
+    with {:ok, result} <- apply_step_output_mapping(definition, step_name, output),
          {:ok, %{agent: dispatch_agent}} <-
            complete_current_claim(
              storage,
@@ -340,7 +340,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     error = normalize_error(reason)
 
     retry_opts =
-      retry_options(workflow, step_name, attempt, error, now)
+      retry_options(workflow_agent, workflow, step_name, attempt, error, now)
 
     with {:ok, _failed} <-
            fail_current_claim(
@@ -590,6 +590,9 @@ defmodule SquidMesh.Runtime.Journal.Executor do
           {:ok, nil, progression_entries}
         end
 
+      dynamic_attempt?(workflow_agent, attempt) ->
+        {:ok, nil, terminal_completion_entries(workflow_agent, attempt, progression.now)}
+
       Definition.dependency_mode?(definition) ->
         with {:ok, progression_entries} <-
                dependency_success_progression_entries(
@@ -609,7 +612,8 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         with {:ok, %{to: target} = transition} <-
                Definition.transition(definition, step_name, :ok, context),
              {:ok, progression_entries} <-
-               success_progression_entries(
+               success_target_progression_entries(
+                 workflow_agent,
                  attempt,
                  definition,
                  target,
@@ -708,23 +712,19 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     if failed_progression_recorded?(workflow_agent, attempt) do
       {:ok, workflow_agent}
     else
-      retry_runnable_key = Keyword.fetch!(retry_opts, :retry_runnable_key)
       retry_visible_at = Keyword.fetch!(retry_opts, :retry_visible_at)
       attempt_number = attempt.attempt_number + 1
 
-      with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
-        retry_runnable = %{
-          run_id: attempt.run_id,
-          runnable_key: retry_runnable_key,
-          idempotency_key: retry_runnable_key,
-          attempt_number: attempt_number,
-          queue: queue,
-          step: Definition.serialize_step(step_name),
-          input: attempt.input || %{},
-          recovery: recovery,
-          visible_at: retry_visible_at
-        }
-
+      with {:ok, retry_runnable} <-
+             retry_runnable_for_failure(
+               definition,
+               step_name,
+               attempt,
+               retry_opts,
+               attempt_number,
+               queue,
+               retry_visible_at
+             ) do
         append_failure_run_entries(
           storage,
           workflow_agent,
@@ -734,6 +734,24 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         )
       end
     end
+  end
+
+  defp append_failure_progression(
+         %{storage: storage, now: now},
+         workflow_agent,
+         %ActionAttempt{} = attempt,
+         _definition,
+         step_name,
+         _error,
+         []
+       )
+       when not is_atom(step_name) do
+    append_run_entries(
+      storage,
+      workflow_agent,
+      [run_terminal_entry!(attempt.run_id, :failed, now)],
+      @run_append_retries
+    )
   end
 
   defp append_failure_progression(
@@ -769,31 +787,14 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         )
 
       {:ok, %{to: next_step} = transition} when is_atom(next_step) ->
-        with {:ok, runnable} <-
-               successor_runnable(
-                 attempt,
-                 definition,
-                 next_step,
-                 journal_context(workflow_agent, attempt, %{}),
-                 queue,
-                 now
-               ) do
-          append_failure_run_entries(
-            storage,
-            workflow_agent,
-            attempt,
-            [
-              runnable_applied_entry!(
-                attempt,
-                %{},
-                Definition.serialize_transition_decision(transition),
-                now
-              ),
-              runnables_planned_entry!(attempt.run_id, [runnable], now)
-            ],
-            @run_append_retries
-          )
-        end
+        append_failure_successor_progression(
+          %{storage: storage, queue: queue, now: now},
+          workflow_agent,
+          attempt,
+          definition,
+          transition,
+          next_step
+        )
 
       {:error, {:unknown_transition, _from_step, :error}} ->
         append_run_entries(
@@ -816,6 +817,74 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     end
   end
 
+  defp retry_runnable_for_failure(
+         definition,
+         step_name,
+         %ActionAttempt{} = attempt,
+         retry_opts,
+         attempt_number,
+         queue,
+         retry_visible_at
+       ) do
+    retry_runnable_key = Keyword.fetch!(retry_opts, :retry_runnable_key)
+
+    case Keyword.fetch(retry_opts, :retry_runnable) do
+      {:ok, retry_runnable} ->
+        {:ok, retry_runnable}
+
+      :error ->
+        with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
+          {:ok,
+           %{
+             run_id: attempt.run_id,
+             runnable_key: retry_runnable_key,
+             idempotency_key: retry_runnable_key,
+             attempt_number: attempt_number,
+             queue: queue,
+             step: Definition.serialize_step(step_name),
+             input: attempt.input || %{},
+             recovery: recovery,
+             visible_at: retry_visible_at
+           }}
+        end
+    end
+  end
+
+  defp append_failure_successor_progression(
+         %{storage: storage, queue: queue, now: now},
+         workflow_agent,
+         %ActionAttempt{} = attempt,
+         definition,
+         transition,
+         next_step
+       ) do
+    with {:ok, runnable} <-
+           successor_runnable(
+             attempt,
+             definition,
+             next_step,
+             journal_context(workflow_agent, attempt, %{}),
+             queue,
+             now
+           ) do
+      append_failure_run_entries(
+        storage,
+        workflow_agent,
+        attempt,
+        [
+          runnable_applied_entry!(
+            attempt,
+            %{},
+            Definition.serialize_transition_decision(transition),
+            now
+          ),
+          runnables_planned_entry!(attempt.run_id, [runnable], now)
+        ],
+        @run_append_retries
+      )
+    end
+  end
+
   defp append_failure_run_entries(
          storage,
          workflow_agent,
@@ -834,6 +903,16 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         retries_left
       )
     end
+  end
+
+  defp apply_step_output_mapping(definition, step_name, output)
+       when is_atom(step_name) and is_map(output) do
+    Definition.apply_output_mapping(definition, step_name, output)
+  end
+
+  defp apply_step_output_mapping(_definition, step_name, output)
+       when is_binary(step_name) and is_map(output) do
+    {:ok, output}
   end
 
   defp append_failure_run_entries_with_pending_progression(
@@ -867,17 +946,19 @@ defmodule SquidMesh.Runtime.Journal.Executor do
        ),
        do: {:error, :conflict}
 
-  defp success_progression_entries(
+  defp success_target_progression_entries(
+         workflow_agent,
          %ActionAttempt{} = attempt,
          _definition,
          :complete,
          _result,
          %{now: now}
        ) do
-    {:ok, [run_terminal_entry!(attempt.run_id, :completed, now)]}
+    {:ok, terminal_completion_entries(workflow_agent, attempt, now)}
   end
 
-  defp success_progression_entries(
+  defp success_target_progression_entries(
+         _workflow_agent,
          %ActionAttempt{} = attempt,
          definition,
          next_step,
@@ -898,6 +979,59 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     end
   end
 
+  defp terminal_completion_entries(workflow_agent, %ActionAttempt{} = attempt, %DateTime{} = now) do
+    if planned_runnables_complete_after?(workflow_agent, attempt) do
+      [run_terminal_entry!(attempt.run_id, :completed, now)]
+    else
+      []
+    end
+  end
+
+  defp planned_runnables_complete_after?(workflow_agent, %ActionAttempt{} = attempt) do
+    planned_keys =
+      workflow_agent
+      |> WorkflowAgent.planned_runnables()
+      |> latest_planned_runnable_keys()
+      |> MapSet.new()
+
+    applied_keys =
+      workflow_agent
+      |> WorkflowAgent.applied_runnable_keys()
+      |> MapSet.put(attempt.runnable_key)
+
+    MapSet.subset?(planned_keys, applied_keys)
+  end
+
+  defp latest_planned_runnable_keys(runnables) when is_list(runnables) do
+    runnables
+    |> Enum.reduce(%{}, &put_latest_planned_runnable/2)
+    |> Map.values()
+    |> Enum.map(& &1.runnable_key)
+  end
+
+  defp put_latest_planned_runnable(runnable, latest_by_step) do
+    with step when is_binary(step) <- Map.get(runnable, :step) || Map.get(runnable, "step"),
+         key when is_binary(key) <-
+           Map.get(runnable, :runnable_key) || Map.get(runnable, "runnable_key") do
+      attempt_number =
+        Map.get(runnable, :attempt_number) || Map.get(runnable, "attempt_number") || 1
+
+      put_latest_planned_runnable(latest_by_step, step, key, attempt_number)
+    else
+      _missing -> latest_by_step
+    end
+  end
+
+  defp put_latest_planned_runnable(latest_by_step, step, key, attempt_number) do
+    current = Map.get(latest_by_step, step)
+
+    if is_nil(current) or attempt_number >= current.attempt_number do
+      Map.put(latest_by_step, step, %{attempt_number: attempt_number, runnable_key: key})
+    else
+      latest_by_step
+    end
+  end
+
   defp dependency_success_progression_entries(
          workflow_agent,
          %ActionAttempt{} = attempt,
@@ -910,7 +1044,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
 
     case Definition.dependency_progress(definition, step_statuses) do
       :complete ->
-        {:ok, [run_terminal_entry!(attempt.run_id, :completed, now)]}
+        {:ok, terminal_completion_entries(workflow_agent, attempt, now)}
 
       {:dispatch, next_steps} ->
         context = dependency_context(workflow_agent, result)
@@ -1339,23 +1473,95 @@ defmodule SquidMesh.Runtime.Journal.Executor do
   defp fail_current_claim(_storage, _agent, _key, _claim_id, _claim_token, _error, _opts, 0),
     do: {:error, :conflict}
 
-  defp retry_options(workflow, step_name, %ActionAttempt{} = attempt, error, %DateTime{} = now) do
-    if Map.get(error, :retryable?) == false do
-      []
-    else
-      case RetryPolicy.resolve(workflow, step_name, attempt.attempt_number) do
-        {:retry, next_attempt, delay_ms} ->
-          retry_visible_at = DateTime.add(now, retry_delay_ms(error, delay_ms), :millisecond)
+  defp retry_options(
+         workflow_agent,
+         workflow,
+         step_name,
+         %ActionAttempt{} = attempt,
+         error,
+         %DateTime{} = now
+       ) do
+    cond do
+      Map.get(error, :retryable?) == false ->
+        []
 
-          [
-            retry_runnable_key: runnable_key(attempt.run_id, step_name, next_attempt),
-            retry_visible_at: retry_visible_at
-          ]
+      is_binary(step_name) ->
+        dynamic_retry_options(workflow_agent, attempt, error, now)
 
-        _no_retry ->
-          []
-      end
+      not is_atom(step_name) ->
+        []
+
+      true ->
+        case RetryPolicy.resolve(workflow, step_name, attempt.attempt_number) do
+          {:retry, next_attempt, delay_ms} ->
+            retry_visible_at = DateTime.add(now, retry_delay_ms(error, delay_ms), :millisecond)
+
+            [
+              retry_runnable_key: runnable_key(attempt.run_id, step_name, next_attempt),
+              retry_visible_at: retry_visible_at
+            ]
+
+          _no_retry ->
+            []
+        end
     end
+  end
+
+  defp dynamic_retry_options(workflow_agent, %ActionAttempt{} = attempt, error, %DateTime{} = now) do
+    with {:ok, runnable} <- dynamic_planned_runnable(workflow_agent, attempt),
+         {:ok, max_attempts} <- dynamic_retry_max_attempts(runnable),
+         true <- attempt.attempt_number < max_attempts do
+      next_attempt = attempt.attempt_number + 1
+      retry_visible_at = DateTime.add(now, retry_delay_ms(error, 0), :millisecond)
+      retry_runnable_key = "#{attempt.run_id}:#{attempt.step}:#{next_attempt}"
+
+      [
+        retry_runnable_key: retry_runnable_key,
+        retry_visible_at: retry_visible_at,
+        retry_runnable:
+          dynamic_retry_runnable(
+            runnable,
+            attempt,
+            next_attempt,
+            retry_runnable_key,
+            retry_visible_at
+          )
+      ]
+    else
+      _no_retry -> []
+    end
+  end
+
+  defp dynamic_retry_max_attempts(runnable) do
+    dynamic_work = Map.get(runnable, :dynamic_work) || Map.get(runnable, "dynamic_work") || %{}
+    retry = Map.get(dynamic_work, :retry) || Map.get(dynamic_work, "retry") || %{}
+
+    case Map.get(retry, :max_attempts) || Map.get(retry, "max_attempts") do
+      max_attempts when is_integer(max_attempts) and max_attempts > 0 -> {:ok, max_attempts}
+      _missing -> :error
+    end
+  end
+
+  defp dynamic_retry_runnable(
+         runnable,
+         attempt,
+         attempt_number,
+         retry_runnable_key,
+         retry_visible_at
+       ) do
+    %{
+      run_id: attempt.run_id,
+      runnable_key: retry_runnable_key,
+      idempotency_key: retry_runnable_key,
+      attempt_number: attempt_number,
+      queue: Map.get(runnable, :queue) || Map.get(runnable, "queue"),
+      step: attempt.step,
+      input: attempt.input || %{},
+      recovery: Map.get(runnable, :recovery) || Map.get(runnable, "recovery"),
+      visible_at: retry_visible_at,
+      dynamic?: true,
+      dynamic_work: Map.get(runnable, :dynamic_work) || Map.get(runnable, "dynamic_work")
+    }
   end
 
   defp retry_delay_ms(%{retry_after: retry_after}, _policy_delay_ms)
@@ -1704,7 +1910,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
          step_name,
          now
        ) do
-    retry_opts = durable_retry_options(dispatch_agent, attempt)
+    retry_opts = durable_retry_options(dispatch_agent, workflow_agent, attempt)
     runtime = %{storage: storage, queue: queue, now: now}
 
     with {:ok, workflow_agent} <-
@@ -1783,7 +1989,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
       workflow_agent.state.projection.terminal_status in [:completed, :failed, :cancelled]
   end
 
-  defp durable_retry_options(dispatch_agent, %ActionAttempt{} = failed_attempt) do
+  defp durable_retry_options(dispatch_agent, workflow_agent, %ActionAttempt{} = failed_attempt) do
     dispatch_agent.state.projection.attempts
     |> Map.values()
     |> Enum.find(fn %ActionAttempt{} = attempt ->
@@ -1794,10 +2000,28 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     end)
     |> case do
       %ActionAttempt{} = retry_attempt ->
-        [
+        retry_opts = [
           retry_runnable_key: retry_attempt.runnable_key,
           retry_visible_at: retry_attempt.visible_at
         ]
+
+        case dynamic_planned_runnable(workflow_agent, failed_attempt) do
+          {:ok, runnable} ->
+            Keyword.put(
+              retry_opts,
+              :retry_runnable,
+              dynamic_retry_runnable(
+                runnable,
+                failed_attempt,
+                retry_attempt.attempt_number,
+                retry_attempt.runnable_key,
+                retry_attempt.visible_at
+              )
+            )
+
+          {:error, _reason} ->
+            retry_opts
+        end
 
       nil ->
         []
@@ -1812,8 +2036,50 @@ defmodule SquidMesh.Runtime.Journal.Executor do
          {:ok, step} <- Definition.step(definition, step_name) do
       {:ok, workflow, definition, step_name, step}
     else
-      step_name when is_binary(step_name) -> {:error, {:unknown_step, step_name}}
+      step_name when is_binary(step_name) ->
+        executable_dynamic_step(storage, workflow_agent, attempt, step_name)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp executable_dynamic_step(storage, workflow_agent, %ActionAttempt{} = attempt, step_name) do
+    with {:ok, workflow, definition} <-
+           WorkflowDefinitionLoader.load(storage, attempt.run_id, workflow_agent.state.workflow),
+         {:ok, runnable} <- dynamic_planned_runnable(workflow_agent, attempt),
+         {:ok, module} <- dynamic_runnable_module(runnable) do
+      {:ok, workflow, definition, step_name, %{module: module, opts: [], dynamic?: true}}
+    else
       {:error, _reason} = error -> error
+    end
+  end
+
+  defp dynamic_attempt?(workflow_agent, %ActionAttempt{} = attempt) do
+    match?({:ok, _runnable}, dynamic_planned_runnable(workflow_agent, attempt))
+  end
+
+  defp dynamic_planned_runnable(workflow_agent, %ActionAttempt{} = attempt) do
+    case Projection.planned_runnable(workflow_agent.state.projection, attempt.runnable_key) do
+      {:ok, runnable} ->
+        if dynamic_runnable?(runnable), do: {:ok, runnable}, else: {:error, :not_dynamic}
+
+      :error ->
+        {:error, :unknown_dynamic_runnable}
+    end
+  end
+
+  defp dynamic_runnable?(runnable) when is_map(runnable) do
+    Map.get(runnable, :dynamic?) == true or Map.get(runnable, "dynamic?") == true or
+      is_map(Map.get(runnable, :dynamic_work)) or is_map(Map.get(runnable, "dynamic_work"))
+  end
+
+  defp dynamic_runnable_module(runnable) when is_map(runnable) do
+    dynamic_work = Map.get(runnable, :dynamic_work) || Map.get(runnable, "dynamic_work") || %{}
+
+    case Map.get(dynamic_work, :module) || Map.get(dynamic_work, "module") do
+      module when is_atom(module) -> {:ok, module}
+      _missing -> {:error, {:invalid_dynamic_runnable, :missing_module}}
     end
   end
 

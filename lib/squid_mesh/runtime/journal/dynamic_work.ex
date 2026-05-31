@@ -16,7 +16,8 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
               | :missing_runnable_key
               | :missing_step
               | :missing_attempt
-              | :unknown_runnable}
+              | :unknown_runnable
+              | :unapplied_runnable}
            | {:nodes,
               :invalid
               | :empty
@@ -31,6 +32,7 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
            | {:metadata, :invalid}
            | {:reason, :invalid}
            | {:status, :invalid}
+           | {:action_registry, :required}
            | {:definition, term()}}
 
   @type validation_context :: %{
@@ -181,6 +183,7 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
     compact(%{
       id: Map.fetch!(node, :id),
       action: Map.get(node, :action),
+      input: Map.get(node, :input),
       status: Map.get(node, :status, :recorded),
       metadata: Map.get(node, :metadata, %{})
     })
@@ -362,6 +365,8 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
   defp node(node, index) when is_map(node) do
     with {:ok, id} <- node_binary(node, :id, index),
          {:ok, action} <- optional_node_value(node, :action, index),
+         {:ok, input} <- node_input(node, index),
+         {:ok, retry} <- node_retry(node, index),
          {:ok, status} <- optional_node_value(node, :status, index),
          {:ok, metadata} <-
            metadata(value(node, :metadata, %{}), {:nodes, {:node, index, :metadata}}) do
@@ -369,6 +374,8 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
        compact(%{
          id: id,
          action: action,
+         input: input,
+         retry: retry,
          status: status,
          metadata: metadata
        })}
@@ -485,6 +492,46 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
 
       {:error, {:invalid_dynamic_work, {^field, :invalid}}} ->
         invalid(:nodes, {:node, index, field})
+    end
+  end
+
+  defp node_input(node, index) do
+    case value(node, :input, :__missing_input__) do
+      :__missing_input__ -> {:ok, nil}
+      input when is_map(input) -> {:ok, input}
+      _invalid -> invalid(:nodes, {:node, index, :input})
+    end
+  end
+
+  defp node_retry(node, index) do
+    case value(node, :retry, nil) do
+      nil ->
+        {:ok, nil}
+
+      retry when is_map(retry) ->
+        validate_node_retry(Map.new(retry), index)
+
+      retry when is_list(retry) ->
+        if Keyword.keyword?(retry) do
+          retry
+          |> Map.new()
+          |> validate_node_retry(index)
+        else
+          invalid(:nodes, {:node, index, :retry})
+        end
+
+      _invalid ->
+        invalid(:nodes, {:node, index, :retry})
+    end
+  end
+
+  defp validate_node_retry(retry, index) do
+    case value(retry, :max_attempts) do
+      max_attempts when is_integer(max_attempts) and max_attempts > 0 ->
+        {:ok, %{max_attempts: max_attempts}}
+
+      _invalid ->
+        invalid(:nodes, {:node, index, {:retry, :invalid_max_attempts}})
     end
   end
 

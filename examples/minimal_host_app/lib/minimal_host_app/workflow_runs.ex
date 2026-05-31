@@ -171,6 +171,12 @@ defmodule MinimalHostApp.WorkflowRuns do
     SquidMesh.inspect_run(run_id, opts)
   end
 
+  @spec schedule_dynamic_work(Ecto.UUID.t(), map(), keyword()) ::
+          {:ok, run_result()} | {:error, term()}
+  def schedule_dynamic_work(run_id, attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
+    SquidMesh.schedule_dynamic_work(run_id, attrs, opts)
+  end
+
   @spec explain_run(Ecto.UUID.t()) :: {:ok, explanation_result()} | {:error, term()}
   def explain_run(run_id) do
     SquidMesh.explain_run(run_id)

@@ -276,6 +276,22 @@ defmodule SquidMeshTest do
     end
   end
 
+  defmodule ChildDigestWorkflow.FlakyDeliverDigest do
+    use SquidMesh.Step,
+      name: :flaky_deliver_digest,
+      input_schema: [subscription_id: [type: :string, required: true]],
+      output_schema: [delivered: [type: :map, required: true]]
+
+    @impl SquidMesh.Step
+    def run(%{subscription_id: subscription_id}, %SquidMesh.Step.Context{attempt: 1}) do
+      {:retry, %{message: "temporary digest failure", subscription_id: subscription_id}}
+    end
+
+    def run(%{subscription_id: subscription_id}, %SquidMesh.Step.Context{attempt: 2}) do
+      {:ok, %{delivered: %{subscription_id: subscription_id}}}
+    end
+  end
+
   defmodule JournalConditionalWorkflow do
     use SquidMesh.Workflow
 
@@ -411,6 +427,23 @@ defmodule SquidMeshTest do
       end
 
       step :retry_gateway, JournalRetryWorkflow.RetryGateway, retry: [max_attempts: 2]
+      transition :retry_gateway, on: :ok, to: :complete
+    end
+  end
+
+  defmodule JournalRetryThenCompleteWorkflow do
+    use SquidMesh.Workflow
+
+    workflow do
+      trigger :manual_retry_then_complete do
+        manual()
+
+        payload do
+          field :account_id, :string
+        end
+      end
+
+      step :retry_gateway, JournalRetryThenCompleteWorkflow.RetryGateway, retry: [max_attempts: 2]
       transition :retry_gateway, on: :ok, to: :complete
     end
   end
@@ -850,6 +883,27 @@ defmodule SquidMeshTest do
          retryable?: true,
          account_id: account_id
        }}
+    end
+  end
+
+  defmodule JournalRetryThenCompleteWorkflow.RetryGateway do
+    use SquidMesh.Step,
+      name: :retry_gateway_then_complete,
+      description: "Fails once before completing",
+      input_schema: [
+        account_id: [type: :string, required: true]
+      ],
+      output_schema: [
+        gateway: [type: :string, required: true]
+      ]
+
+    @impl SquidMesh.Step
+    def run(%{account_id: _account_id}, %SquidMesh.Step.Context{attempt: 1}) do
+      {:retry, %{message: "gateway timeout"}}
+    end
+
+    def run(%{account_id: _account_id}, %SquidMesh.Step.Context{attempt: 2}) do
+      {:ok, %{gateway: "ok"}}
     end
   end
 
@@ -2449,6 +2503,418 @@ defmodule SquidMeshTest do
              ] = snapshot.dynamic_work
     end
 
+    test "schedule_dynamic_work/3 records dynamic work and dispatches executable nodes" do
+      assert {:ok, %Snapshot{} = started} =
+               SquidMesh.start(
+                 BillingWorkflow,
+                 %{payment_id: "pay_123"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert [%{runnable_key: charge_key, step: "charge_card", attempt_number: 1}] =
+               started.visible_attempts
+
+      assert {:ok, %Snapshot{terminal?: false} = after_charge} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_charge",
+                 claim_id: "claim_charge",
+                 claim_token: "token_charge",
+                 now: @read_model_visible_at
+               )
+
+      assert charge_key in after_charge.applied_runnable_keys
+
+      assert {:ok, %Snapshot{} = scheduled} =
+               SquidMesh.schedule_dynamic_work(
+                 started.run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: charge_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   reason: :runtime_fanout,
+                   nodes: [
+                     %{
+                       id: "deliver_digest:chat_1",
+                       action: "digest.deliver",
+                       input: %{subscription_id: "sub_123"},
+                       metadata: %{chat_id: "chat_1"}
+                     }
+                   ]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{"digest.deliver" => ChildDigestWorkflow.DeliverDigest}
+               )
+
+      assert scheduled.terminal? == false
+
+      assert [
+               %{
+                 step: "deliver_digest:chat_1",
+                 status: :available,
+                 input: %{subscription_id: "sub_123"}
+               },
+               %{step: "send_receipt", status: :available}
+             ] = scheduled.visible_attempts
+
+      assert [
+               %{
+                 dynamic_key: "subscription_digest_fanout",
+                 status: :scheduled,
+                 nodes: [%{id: "deliver_digest:chat_1", input: %{subscription_id: "sub_123"}}]
+               }
+             ] = scheduled.dynamic_work
+
+      assert {:ok, %Snapshot{} = duplicate_schedule} =
+               SquidMesh.schedule_dynamic_work(
+                 started.run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: charge_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   reason: :runtime_fanout,
+                   nodes: [
+                     %{
+                       id: "deliver_digest:chat_1",
+                       action: "digest.deliver",
+                       input: %{subscription_id: "sub_123"},
+                       metadata: %{chat_id: "chat_1"}
+                     }
+                   ]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{"digest.deliver" => ChildDigestWorkflow.DeliverDigest}
+               )
+
+      assert Enum.any?(
+               duplicate_schedule.visible_attempts,
+               &match?(%{step: "deliver_digest:chat_1", status: :available}, &1)
+             )
+
+      assert {:ok, %Snapshot{terminal?: false} = after_dynamic} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_dynamic",
+                 claim_id: "claim_dynamic",
+                 claim_token: "token_dynamic",
+                 now: DateTime.add(@read_model_visible_at, 1, :second)
+               )
+
+      assert after_dynamic.context.delivered == %{subscription_id: "sub_123"}
+
+      assert {:ok, %Snapshot{terminal?: true, status: :completed} = completed} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_receipt",
+                 claim_id: "claim_receipt",
+                 claim_token: "token_receipt",
+                 now: DateTime.add(@read_model_visible_at, 2, :second)
+               )
+
+      assert completed.context.receipt == %{payment_id: "pay_123", status: "sent"}
+
+      assert Enum.map(completed.attempts, &{&1.step, &1.status, &1.applied?}) == [
+               {"charge_card", :completed, true},
+               {"deliver_digest:chat_1", :completed, true},
+               {"send_receipt", :completed, true}
+             ]
+
+      assert {:ok, %SquidMesh.Runs.GraphInspection{} = graph} =
+               SquidMesh.inspect_run_graph(started.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert %{status: :completed, dynamic?: true} =
+               graph.nodes
+               |> Map.new(&{&1.id, &1})
+               |> Map.fetch!("deliver_digest:chat_1")
+
+      assert Enum.count(graph.nodes, &(&1.id == "deliver_digest:chat_1")) == 1
+
+      assert {:error, {:unsafe_replay, %{steps: [%{step: "deliver_digest:chat_1"}]}}} =
+               SquidMesh.replay(started.run_id,
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue
+               )
+    end
+
+    test "schedule_dynamic_work/3 retries dynamic nodes with persisted retry metadata" do
+      dynamic_queue = "dynamic-work-retry"
+
+      assert {:ok, %Snapshot{} = started} =
+               SquidMesh.start(
+                 BillingWorkflow,
+                 %{payment_id: "pay_123"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert [%{runnable_key: charge_key}] = started.visible_attempts
+
+      assert {:ok, %Snapshot{terminal?: false}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_charge",
+                 claim_id: "claim_charge",
+                 claim_token: "token_charge",
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %Snapshot{} = scheduled} =
+               SquidMesh.schedule_dynamic_work(
+                 started.run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: charge_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   reason: :runtime_fanout,
+                   nodes: [
+                     %{
+                       id: "deliver_digest:chat_1",
+                       action: "digest.flaky_deliver",
+                       input: %{subscription_id: "sub_123"},
+                       retry: [max_attempts: 2]
+                     }
+                   ]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: dynamic_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{
+                   "digest.flaky_deliver" => ChildDigestWorkflow.FlakyDeliverDigest
+                 }
+               )
+
+      assert [%{step: "deliver_digest:chat_1", attempt_number: 1, status: :available}] =
+               scheduled.visible_attempts
+
+      assert {:ok, %Snapshot{terminal?: false} = retry_scheduled} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: dynamic_queue,
+                 owner_id: "worker_dynamic_1",
+                 claim_id: "claim_dynamic_1",
+                 claim_token: "token_dynamic_1",
+                 now: DateTime.add(@read_model_visible_at, 1, :second)
+               )
+
+      assert Enum.any?(
+               retry_scheduled.visible_attempts,
+               &match?(
+                 %{step: "deliver_digest:chat_1", attempt_number: 2, status: :retry_scheduled},
+                 &1
+               )
+             )
+
+      assert {:ok, %Snapshot{terminal?: false} = after_dynamic_retry} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: dynamic_queue,
+                 owner_id: "worker_dynamic_2",
+                 claim_id: "claim_dynamic_2",
+                 claim_token: "token_dynamic_2",
+                 now: DateTime.add(@read_model_visible_at, 2, :second)
+               )
+
+      assert after_dynamic_retry.context.delivered == %{subscription_id: "sub_123"}
+
+      assert Enum.map(
+               after_dynamic_retry.attempts,
+               &{&1.step, &1.status, &1.applied?, &1.attempt_number}
+             ) == [
+               {"deliver_digest:chat_1", :failed, false, 1},
+               {"deliver_digest:chat_1", :completed, true, 2}
+             ]
+
+      assert {:ok, %Snapshot{terminal?: true, status: :completed} = completed} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_receipt",
+                 claim_id: "claim_receipt",
+                 claim_token: "token_receipt",
+                 now: DateTime.add(@read_model_visible_at, 3, :second)
+               )
+
+      assert completed.context.delivered == %{subscription_id: "sub_123"}
+      assert completed.context.receipt == %{payment_id: "pay_123", status: "sent"}
+
+      assert Enum.map(completed.attempts, &{&1.step, &1.status, &1.applied?, &1.attempt_number}) ==
+               [
+                 {"charge_card", :completed, true, 1},
+                 {"send_receipt", :completed, true, 1}
+               ]
+
+      assert {:ok, %SquidMesh.Runs.GraphInspection{} = graph} =
+               SquidMesh.inspect_run_graph(started.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: DateTime.add(@read_model_visible_at, 3, :second)
+               )
+
+      assert %{status: :completed, dynamic?: true} =
+               graph.nodes
+               |> Map.new(&{&1.id, &1})
+               |> Map.fetch!("deliver_digest:chat_1")
+    end
+
+    test "execute_next/1 recovers dynamic retry progression after durable dispatch failure" do
+      dynamic_queue = "dynamic-work-retry-recovery"
+
+      assert {:ok, %Snapshot{} = started} =
+               SquidMesh.start(
+                 BillingWorkflow,
+                 %{payment_id: "pay_123"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert [%{runnable_key: charge_key}] = started.visible_attempts
+
+      assert {:ok, %Snapshot{terminal?: false}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_charge",
+                 claim_id: "claim_charge",
+                 claim_token: "token_charge",
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %Snapshot{} = scheduled} =
+               SquidMesh.schedule_dynamic_work(
+                 started.run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: charge_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   reason: :runtime_fanout,
+                   nodes: [
+                     %{
+                       id: "deliver_digest:chat_1",
+                       action: "digest.flaky_deliver",
+                       input: %{subscription_id: "sub_123"},
+                       retry: [max_attempts: 2]
+                     }
+                   ]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: dynamic_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{
+                   "digest.flaky_deliver" => ChildDigestWorkflow.FlakyDeliverDigest
+                 }
+               )
+
+      assert [%{step: "deliver_digest:chat_1", attempt_number: 1, status: :available}] =
+               scheduled.visible_attempts
+
+      conflict_storage =
+        {FaultInjectingStorage,
+         delegate: @read_model_storage,
+         conflict_thread_id: Journal.thread_id({:run, started.run_id})}
+
+      assert {:error, :conflict} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: conflict_storage,
+                 queue: dynamic_queue,
+                 owner_id: "worker_dynamic_1",
+                 claim_id: "claim_dynamic_1",
+                 claim_token: "token_dynamic_1",
+                 now: DateTime.add(@read_model_visible_at, 1, :second)
+               )
+
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, dynamic_queue})
+
+      retry_key = "#{started.run_id}:deliver_digest:chat_1:2"
+
+      assert Enum.any?(
+               dispatch_entries,
+               &match?(
+                 %{type: :attempt_failed, data: %{retry_runnable_key: ^retry_key}},
+                 &1
+               )
+             )
+
+      assert {:ok, %Snapshot{terminal?: false} = recovered} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: dynamic_queue,
+                 owner_id: "worker_recovery",
+                 claim_id: "claim_recovery",
+                 claim_token: "token_recovery",
+                 now: DateTime.add(@read_model_visible_at, 2, :second)
+               )
+
+      assert Enum.any?(
+               recovered.visible_attempts,
+               &match?(
+                 %{step: "deliver_digest:chat_1", attempt_number: 2, status: :retry_scheduled},
+                 &1
+               )
+             )
+
+      assert {:ok, %Snapshot{terminal?: false} = after_dynamic_retry} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: dynamic_queue,
+                 owner_id: "worker_dynamic_2",
+                 claim_id: "claim_dynamic_2",
+                 claim_token: "token_dynamic_2",
+                 now: DateTime.add(@read_model_visible_at, 3, :second)
+               )
+
+      assert after_dynamic_retry.context.delivered == %{subscription_id: "sub_123"}
+    end
+
     test "preview and record dynamic work validate node actions through an action registry" do
       append_read_model_run_entries([
         read_model_run_started(),
@@ -2554,6 +3020,226 @@ defmodule SquidMeshTest do
                  now: @read_model_visible_at,
                  action_registry: %{}
                )
+    end
+
+    test "schedule_dynamic_work/3 requires an action registry" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned()
+      ])
+
+      assert {:error, {:invalid_dynamic_work, {:action_registry, :required}}} =
+               SquidMesh.schedule_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [%{id: "deliver_digest:chat_1", action: "digest.deliver"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %Snapshot{dynamic_work: [], planned_runnable_keys: [@read_model_runnable_key]}} =
+               SquidMesh.inspect_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
+    test "schedule_dynamic_work/3 requires an applied origin attempt" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned()
+      ])
+
+      assert {:error, {:invalid_dynamic_work, {:origin, :unapplied_runnable}}} =
+               SquidMesh.schedule_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [%{id: "deliver_digest:chat_1", action: "digest.deliver"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{"digest.deliver" => ChildDigestWorkflow.DeliverDigest}
+               )
+    end
+
+    test "schedule_dynamic_work/3 schedules dispatch after committed run-thread conflicts" do
+      dynamic_queue = "dynamic-work-conflict"
+
+      assert {:ok, %Snapshot{} = started} =
+               SquidMesh.start(
+                 BillingWorkflow,
+                 %{payment_id: "pay_123"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert [%{runnable_key: charge_key}] = started.visible_attempts
+
+      assert {:ok, %Snapshot{terminal?: false}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_charge",
+                 claim_id: "claim_charge",
+                 claim_token: "token_charge",
+                 now: @read_model_visible_at
+               )
+
+      conflict_storage =
+        {FaultInjectingStorage,
+         delegate: @read_model_storage,
+         conflict_thread_id: Journal.thread_id({:run, started.run_id}),
+         commit_before_conflict?: true}
+
+      assert {:ok, %Snapshot{} = scheduled} =
+               SquidMesh.schedule_dynamic_work(
+                 started.run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: charge_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [
+                     %{
+                       id: "deliver_digest:chat_1",
+                       action: "digest.deliver",
+                       input: %{subscription_id: "sub_123"}
+                     }
+                   ]
+                 },
+                 read_model: :read_model,
+                 journal_storage: conflict_storage,
+                 queue: dynamic_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{"digest.deliver" => ChildDigestWorkflow.DeliverDigest}
+               )
+
+      assert Enum.any?(
+               scheduled.visible_attempts,
+               &match?(
+                 %{step: "deliver_digest:chat_1", input: %{subscription_id: "sub_123"}},
+                 &1
+               )
+             )
+
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, dynamic_queue})
+
+      assert Enum.any?(
+               dispatch_entries,
+               &match?(
+                 %{type: :run_queued, data: %{run_id: run_id}} when run_id == started.run_id,
+                 &1
+               )
+             )
+
+      assert Enum.any?(
+               dispatch_entries,
+               &match?(
+                 %{type: :attempt_scheduled, data: %{step: "deliver_digest:chat_1"}},
+                 &1
+               )
+             )
+    end
+
+    test "schedule_dynamic_work/3 records the dispatch queue before appending run work" do
+      dynamic_queue = "dynamic-work-queue-marker"
+
+      assert {:ok, %Snapshot{} = started} =
+               SquidMesh.start(
+                 BillingWorkflow,
+                 %{payment_id: "pay_123"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert [%{runnable_key: charge_key}] = started.visible_attempts
+
+      assert {:ok, %Snapshot{terminal?: false}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_charge",
+                 claim_id: "claim_charge",
+                 claim_token: "token_charge",
+                 now: @read_model_visible_at
+               )
+
+      failing_storage =
+        {FaultInjectingStorage,
+         delegate: @read_model_storage,
+         fail_append_thread_id: Journal.thread_id({:run, started.run_id})}
+
+      assert {:error, :append_failed} =
+               SquidMesh.schedule_dynamic_work(
+                 started.run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: charge_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [
+                     %{
+                       id: "deliver_digest:chat_1",
+                       action: "digest.deliver",
+                       input: %{subscription_id: "sub_123"}
+                     }
+                   ]
+                 },
+                 read_model: :read_model,
+                 journal_storage: failing_storage,
+                 queue: dynamic_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{"digest.deliver" => ChildDigestWorkflow.DeliverDigest}
+               )
+
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, dynamic_queue})
+
+      assert Enum.any?(
+               dispatch_entries,
+               &match?(
+                 %{type: :run_queued, data: %{run_id: run_id}} when run_id == started.run_id,
+                 &1
+               )
+             )
+
+      refute Enum.any?(
+               dispatch_entries,
+               &match?(
+                 %{type: :attempt_scheduled, data: %{step: "deliver_digest:chat_1"}},
+                 &1
+               )
+             )
     end
 
     test "preview_dynamic_work/3 validates inspectable dynamic work without appending" do
@@ -11153,6 +11839,52 @@ defmodule SquidMeshTest do
                :attempt_claimed,
                :attempt_failed
              ]
+    end
+
+    test "execute_next/1 completes a run after a successful retry" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               SquidMesh.start(
+                 JournalRetryThenCompleteWorkflow,
+                 %{account_id: "acct_retry_success"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, %Snapshot{status: :running, terminal?: false} = retry_scheduled} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 claim_id: "claim_1",
+                 claim_token: "token_1",
+                 now: @read_model_visible_at
+               )
+
+      assert [%{status: :retry_scheduled, attempt_number: 2}] =
+               retry_scheduled.visible_attempts
+
+      assert {:ok, %Snapshot{status: :completed, terminal?: true} = completed} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_2",
+                 claim_id: "claim_2",
+                 claim_token: "token_2",
+                 now: DateTime.add(@read_model_visible_at, 1, :second)
+               )
+
+      assert completed.run_id == started_snapshot.run_id
+      assert completed.context.gateway == "ok"
+
+      assert Enum.map(completed.attempts, &{&1.step, &1.status, &1.applied?, &1.attempt_number}) ==
+               [
+                 {"retry_gateway", :failed, false, 1},
+                 {"retry_gateway", :completed, true, 2}
+               ]
     end
 
     test "execute_next/1 does not duplicate retry progression after a run-thread conflict" do

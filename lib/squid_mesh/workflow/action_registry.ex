@@ -89,6 +89,17 @@ defmodule SquidMesh.Workflow.ActionRegistry do
     end
   end
 
+  @doc false
+  @spec resolve_action(action_key() | term(), registry()) ::
+          {:ok, module()} | {:error, action_validation_error()}
+  def resolve_action(action, registry) do
+    with :ok <- validate_action(action, registry),
+         {:ok, entry} <- fetch_registry_entry(registry, action) do
+      {module, _enabled?} = registry_entry_module(entry)
+      {:ok, module}
+    end
+  end
+
   defp resolve_spec_map(spec, registry) do
     case spec_steps(spec) do
       {steps_key, steps} when is_list(steps) ->

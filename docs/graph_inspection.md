@@ -128,9 +128,10 @@ through `SquidMesh.preview_dynamic_work/3` when a UI or visual editor needs to
 validate a candidate payload and render the graph overlay before writing. Record
 them through `SquidMesh.record_dynamic_work/3` so the runtime validates the
 stable dynamic key, producer origin, node ids, and optional dynamic edges
-against an active run snapshot before appending durable metadata. Graph
-projections mark those nodes with `dynamic?: true` so graph UIs can distinguish
-them from declared workflow steps:
+against an active run snapshot before appending durable metadata. Schedule them
+through `SquidMesh.schedule_dynamic_work/3` when the dynamic nodes should also
+become executable runnable intents. Graph projections mark dynamic nodes with
+`dynamic?: true` so graph UIs can distinguish them from declared workflow steps:
 
 ```elixir
 %{
@@ -193,15 +194,21 @@ state, added ids, and warnings.
 
 When a dynamic-work overlay represents future executable work, pass the
 host-owned `:action_registry` option to `preview_dynamic_work/3` and
-`record_dynamic_work/3`. Squid Mesh then requires each dynamic node action key
-to be present, enabled, and compatible before returning or appending the overlay.
+`record_dynamic_work/3`. Pass it to every `schedule_dynamic_work/3` call.
+Squid Mesh then requires each dynamic node action key to be present, enabled,
+and compatible before returning, recording, or scheduling the overlay.
 
-The current dynamic-work support is inspection-only. It lets dashboards and
-visual editors show bounded runtime-generated structure before Squid Mesh adds
-execution semantics for dynamic in-run graph expansion. Previewing or recording
-dynamic work does not schedule dispatch attempts, alter dependency readiness, or
-change terminal-state decisions. Terminal runs reject new dynamic-work previews
-and records.
+Previewing or recording dynamic work remains inspection-only: it does not
+schedule dispatch attempts, alter dependency readiness, or change
+terminal-state decisions. Scheduling dynamic work appends the dynamic-work fact
+and planned runnable intents together, then uses the normal `execute_next/1`
+path for claim, execution, completion, failure, and graph status. Terminal runs
+reject new dynamic-work previews, records, and schedules. Scheduling also
+requires an already-applied origin runnable. Dynamic nodes may persist retry
+intent with `retry: [max_attempts: n]`; dynamic edges remain graph metadata and
+do not impose dependency ordering between scheduled dynamic nodes. Scheduled
+dynamic nodes are replay-unsafe by default so operators must explicitly review
+irreversible replay.
 
 ## Child Run Links
 

@@ -123,6 +123,13 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
   end
 
   @doc false
+  @spec planned_runnable(t(), String.t()) :: {:ok, map()} | :error
+  def planned_runnable(%__MODULE__{planned_runnables: planned_runnables}, runnable_key)
+      when is_binary(runnable_key) do
+    Map.fetch(planned_runnables, runnable_key)
+  end
+
+  @doc false
   @spec planned_runnable_key?(t(), String.t()) :: boolean()
   def planned_runnable_key?(%__MODULE__{planned_runnables: planned_runnables}, runnable_key)
       when is_binary(runnable_key) do
@@ -507,6 +514,8 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
         compact(%{
           id: id,
           action: Map.get(node, :action),
+          input: Map.get(node, :input),
+          retry: Map.get(node, :retry),
           status: Map.get(node, :status, :recorded),
           metadata: Map.get(node, :metadata, %{})
         })
