@@ -2433,6 +2433,113 @@ defmodule SquidMeshTest do
              ] = snapshot.dynamic_work
     end
 
+    test "preview and record dynamic work validate node actions through an action registry" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned()
+      ])
+
+      attrs = %{
+        dynamic_key: "subscription_digest_fanout",
+        origin: %{
+          runnable_key: @read_model_runnable_key,
+          step: "charge_card",
+          attempt: 1
+        },
+        nodes: [%{id: "deliver_digest:chat_1", action: "digest.deliver"}]
+      }
+
+      registry = %{"digest.deliver" => ChildDigestWorkflow.DeliverDigest}
+
+      assert {:ok, %SquidMesh.Runs.DynamicWorkPreview{}} =
+               SquidMesh.preview_dynamic_work(
+                 @read_model_run_id,
+                 attrs,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: registry
+               )
+
+      assert {:error,
+              {:invalid_dynamic_work, {:nodes, {:node, 0, {:action, :unknown_action_key}}}}} =
+               SquidMesh.preview_dynamic_work(
+                 @read_model_run_id,
+                 attrs,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{}
+               )
+
+      assert {:error,
+              {:invalid_dynamic_work, {:nodes, {:node, 0, {:action, :disabled_action_key}}}}} =
+               SquidMesh.preview_dynamic_work(
+                 @read_model_run_id,
+                 attrs,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{
+                   "digest.deliver" => %{
+                     module: ChildDigestWorkflow.DeliverDigest,
+                     enabled?: false
+                   }
+                 }
+               )
+
+      assert {:error,
+              {:invalid_dynamic_work,
+               {:nodes, {:node, 0, {:action, :incompatible_action_module}}}}} =
+               SquidMesh.preview_dynamic_work(
+                 @read_model_run_id,
+                 attrs,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{"digest.deliver" => String}
+               )
+
+      assert {:error,
+              {:invalid_dynamic_work, {:nodes, {:node, 0, {:action, :missing_action_key}}}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{attrs | nodes: [%{id: "deliver_digest:chat_1"}]},
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: registry
+               )
+
+      assert {:ok, %Snapshot{dynamic_work: [%{dynamic_key: "subscription_digest_fanout"}]}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 attrs,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: registry
+               )
+
+      assert {:error,
+              {:invalid_dynamic_work, {:nodes, {:node, 0, {:action, :unknown_action_key}}}}} =
+               SquidMesh.preview_dynamic_work(
+                 @read_model_run_id,
+                 attrs,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: %{}
+               )
+    end
+
     test "preview_dynamic_work/3 validates inspectable dynamic work without appending" do
       append_read_model_run_entries([
         read_model_run_started(),

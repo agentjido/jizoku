@@ -354,19 +354,25 @@ Host code can also preview and record bounded dynamic work metadata for an
 active run without making those nodes executable yet:
 
 ```elixir
+registry = %{"digest.deliver" => MyApp.Steps.DeliverDigest}
+
 {:ok, preview} =
-  SquidMesh.preview_dynamic_work(run.run_id, %{
-    dynamic_key: "subscription_digest_fanout",
-    origin: %{
-      runnable_key: "run_123:schedule_digest:1",
-      step: "schedule_digest",
-      attempt: 1
+  SquidMesh.preview_dynamic_work(
+    run.run_id,
+    %{
+      dynamic_key: "subscription_digest_fanout",
+      origin: %{
+        runnable_key: "run_123:schedule_digest:1",
+        step: "schedule_digest",
+        attempt: 1
+      },
+      reason: :runtime_fanout,
+      nodes: [
+        %{id: "deliver_digest:chat_1", action: "digest.deliver"}
+      ]
     },
-    reason: :runtime_fanout,
-    nodes: [
-      %{id: "deliver_digest:chat_1", action: "digest.deliver"}
-    ]
-  })
+    action_registry: registry
+  )
 
 preview.origin_node_id
 preview.added_node_ids
@@ -375,22 +381,28 @@ preview.recordable?
 preview.graph.nodes
 
 {:ok, snapshot} =
-  SquidMesh.record_dynamic_work(run.run_id, %{
-    dynamic_key: "subscription_digest_fanout",
-    origin: %{
-      runnable_key: "run_123:schedule_digest:1",
-      step: "schedule_digest",
-      attempt: 1
+  SquidMesh.record_dynamic_work(
+    run.run_id,
+    %{
+      dynamic_key: "subscription_digest_fanout",
+      origin: %{
+        runnable_key: "run_123:schedule_digest:1",
+        step: "schedule_digest",
+        attempt: 1
+      },
+      reason: :runtime_fanout,
+      nodes: [
+        %{id: "deliver_digest:chat_1", action: "digest.deliver"}
+      ]
     },
-    reason: :runtime_fanout,
-    nodes: [
-      %{id: "deliver_digest:chat_1", action: "digest.deliver"}
-    ]
-  })
+    action_registry: registry
+  )
 ```
 
 `preview_dynamic_work/3` and `record_dynamic_work/3` share validation for stable
 ids, origin metadata, nodes, and optional edges against the current run snapshot.
+When `:action_registry` is supplied, each dynamic node must include an approved
+action key before Squid Mesh returns or records the overlay.
 Preview returns the normalized dynamic work plus a graph overlay without
 appending a journal fact. It also exposes stable overlay metadata for visual
 editors: the producer node id, added node ids, added edge ids, whether recording

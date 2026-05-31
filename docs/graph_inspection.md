@@ -165,6 +165,11 @@ Exact duplicate previews are still valid but return `duplicate?: true`,
 `recordable?: false`, empty added id lists, and
 `warnings: [:duplicate_dynamic_work]`.
 
+When a dynamic-work overlay represents future executable work, pass the
+host-owned `:action_registry` option to `preview_dynamic_work/3` and
+`record_dynamic_work/3`. Squid Mesh then requires each dynamic node action key
+to be present, enabled, and compatible before returning or appending the overlay.
+
 The current dynamic-work support is inspection-only. It lets dashboards and
 visual editors show bounded runtime-generated structure before Squid Mesh adds
 execution semantics for dynamic in-run graph expansion. Previewing or recording

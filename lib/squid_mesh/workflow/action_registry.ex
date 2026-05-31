@@ -14,6 +14,12 @@ defmodule SquidMesh.Workflow.ActionRegistry do
   @built_in_step_kinds [:wait, :log, :pause, :approval]
 
   @type action_key :: atom() | String.t()
+  @type action_validation_error ::
+          :missing_action_key
+          | :invalid_action_key
+          | :unknown_action_key
+          | :disabled_action_key
+          | :incompatible_action_module
   @type registry_entry ::
           module()
           | keyword()
@@ -59,6 +65,27 @@ defmodule SquidMesh.Workflow.ActionRegistry do
   def validate_spec(spec, registry) do
     with {:ok, resolved} <- resolve_spec(spec, registry) do
       Spec.validate(resolved)
+    end
+  end
+
+  @doc false
+  @spec validate_action(action_key() | term(), registry()) ::
+          :ok | {:error, action_validation_error()}
+  def validate_action(action, registry) do
+    cond do
+      is_nil(action) ->
+        {:error, :missing_action_key}
+
+      not valid_action_key?(action) ->
+        {:error, :invalid_action_key}
+
+      not has_registry_key?(registry, action) ->
+        {:error, :unknown_action_key}
+
+      true ->
+        registry
+        |> fetch_registry_entry(action)
+        |> validate_action_entry()
     end
   end
 
@@ -180,6 +207,16 @@ defmodule SquidMesh.Workflow.ActionRegistry do
          |> normalize_step_action(action_key, action)
          |> Map.put(:module, module)
          |> put_action_metadata(action)}
+    end
+  end
+
+  defp validate_action_entry({:ok, entry}) do
+    {module, enabled?} = registry_entry_module(entry)
+
+    cond do
+      enabled? == false -> {:error, :disabled_action_key}
+      not executable_action_module?(module) -> {:error, :incompatible_action_module}
+      true -> :ok
     end
   end
 

@@ -1211,7 +1211,8 @@ defmodule MinimalHostApp.Smoke do
     with {:ok, _snapshot} <-
            SquidMesh.record_dynamic_work(
              inspected_run.run_id,
-             dynamic_work_attrs(runnable)
+             dynamic_work_attrs(runnable),
+             action_registry: dynamic_work_action_registry()
            ) do
       :ok
     end
@@ -1228,7 +1229,8 @@ defmodule MinimalHostApp.Smoke do
     with {:ok, preview} <-
            SquidMesh.preview_dynamic_work(
              inspected_run.run_id,
-             dynamic_work_attrs(runnable)
+             dynamic_work_attrs(runnable),
+             action_registry: dynamic_work_action_registry()
            ) do
       preview_payload = SquidMesh.Runs.DynamicWorkPreview.to_map(preview)
 
@@ -1261,11 +1263,17 @@ defmodule MinimalHostApp.Smoke do
       nodes: [
         %{
           id: "notify_invoice:inv_dynamic_demo",
-          action: "invoice.notify",
+          action: "payment.notify_customer",
           metadata: %{invoice_id: "inv_dynamic_demo", channel: "email"}
         }
       ],
       metadata: %{source: "minimal_host_app_smoke"}
+    }
+  end
+
+  defp dynamic_work_action_registry do
+    %{
+      "payment.notify_customer" => Steps.NotifyCustomer
     }
   end
 

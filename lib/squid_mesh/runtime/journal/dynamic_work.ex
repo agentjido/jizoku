@@ -3,6 +3,7 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
 
   alias SquidMesh.Runtime.DispatchProtocol
   alias SquidMesh.Runtime.DispatchProtocol.Entry
+  alias SquidMesh.Workflow.ActionRegistry
   alias SquidMesh.Workflow.Definition
 
   @type dynamic_work_error ::
@@ -33,10 +34,11 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
            | {:definition, term()}}
 
   @type validation_context :: %{
-          terminal?: boolean(),
-          planned_runnables: [map()],
-          dynamic_work: [map()],
-          definition: Definition.t() | nil
+          required(:terminal?) => boolean(),
+          required(:planned_runnables) => [map()],
+          required(:dynamic_work) => [map()],
+          required(:definition) => Definition.t() | nil,
+          optional(:action_registry) => ActionRegistry.registry()
         }
 
   @spec new_entry(String.t(), map() | keyword(), DateTime.t(), validation_context()) ::
@@ -114,14 +116,16 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
   end
 
   defp validate_preview(%Entry{data: data} = entry, context) do
-    duplicate? = duplicate_dynamic_work?(data, context)
+    with :ok <- allowed_node_actions(data.nodes, context) do
+      validate_non_duplicate_preview(entry, context, duplicate_dynamic_work?(data, context))
+    end
+  end
 
-    if duplicate? do
-      {:ok, true}
-    else
-      with {:ok, _entry} <- validate_new_dynamic_work(entry, context) do
-        {:ok, false}
-      end
+  defp validate_non_duplicate_preview(_entry, _context, true), do: {:ok, true}
+
+  defp validate_non_duplicate_preview(entry, context, false) do
+    with {:ok, _entry} <- validate_new_dynamic_work(entry, context) do
+      {:ok, false}
     end
   end
 
@@ -233,6 +237,19 @@ defmodule SquidMesh.Runtime.Journal.DynamicWork do
       id -> invalid(:nodes, {:duplicate_existing_id, id})
     end
   end
+
+  defp allowed_node_actions(nodes, %{action_registry: registry}) do
+    nodes
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {node, index}, :ok ->
+      case ActionRegistry.validate_action(Map.get(node, :action), registry) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, invalid(:nodes, {:node, index, {:action, reason}})}
+      end
+    end)
+  end
+
+  defp allowed_node_actions(_nodes, _context), do: :ok
 
   defp existing_node_id(node, existing_ids) when is_map(node) do
     id = Map.fetch!(node, :id)
