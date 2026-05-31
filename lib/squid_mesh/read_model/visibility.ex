@@ -35,6 +35,10 @@ defmodule SquidMesh.ReadModel.Visibility do
     :applied?
   ]
   @anomaly_fields [:source, :reason, :entry_type, :run_id, :step, :runnable_key]
+  @dynamic_work_fields [:dynamic_key, :status, :reason, :origin, :nodes, :edges, :recorded_at]
+  @dynamic_origin_fields [:runnable_key, :step, :attempt]
+  @dynamic_node_fields [:id, :action, :status]
+  @dynamic_edge_fields [:id, :from, :to, :type, :status]
 
   @type scope :: :external | :operator | :auditor
   @type policy ::
@@ -113,6 +117,7 @@ defmodule SquidMesh.ReadModel.Visibility do
         context: %{},
         parent_run: summarize_run(snapshot.parent_run),
         child_runs: Enum.map(snapshot.child_runs, &summarize_run/1),
+        dynamic_work: Enum.map(snapshot.dynamic_work, &summarize_dynamic_work/1),
         command_history: [],
         manual_state: summarize_manual_state(snapshot.manual_state),
         planned_runnables: Enum.map(snapshot.planned_runnables, &summarize_runnable/1),
@@ -131,6 +136,7 @@ defmodule SquidMesh.ReadModel.Visibility do
       graph
       | nodes: Enum.map(graph.nodes, &summarize_node/1),
         child_runs: Enum.map(graph.child_runs, &summarize_run/1),
+        dynamic_work: Enum.map(graph.dynamic_work, &summarize_dynamic_work/1),
         anomalies: Enum.map(graph.anomalies, &summarize_anomaly/1)
     }
   end
@@ -155,6 +161,8 @@ defmodule SquidMesh.ReadModel.Visibility do
       | input: nil,
         output: nil,
         error: nil,
+        metadata: %{},
+        origin: summarize_dynamic_origin(node.origin),
         manual_state: summarize_manual_state(node.manual_state),
         attempts: []
     }
@@ -203,6 +211,53 @@ defmodule SquidMesh.ReadModel.Visibility do
   end
 
   defp summarize_anomaly(_anomaly), do: %{}
+
+  defp summarize_dynamic_work(dynamic_work) when is_map(dynamic_work) do
+    dynamic_work
+    |> take_dual_keys(@dynamic_work_fields)
+    |> Map.update(:origin, nil, &summarize_dynamic_origin/1)
+    |> Map.update(:nodes, [], &summarize_dynamic_nodes/1)
+    |> Map.update(:edges, [], &summarize_dynamic_edges/1)
+    |> compact()
+  end
+
+  defp summarize_dynamic_work(_dynamic_work), do: %{}
+
+  defp summarize_dynamic_origin(origin) when is_map(origin) do
+    origin
+    |> take_dual_keys(@dynamic_origin_fields)
+    |> compact()
+  end
+
+  defp summarize_dynamic_origin(_origin), do: nil
+
+  defp summarize_dynamic_nodes(nodes) when is_list(nodes) do
+    Enum.map(nodes, &summarize_dynamic_node/1)
+  end
+
+  defp summarize_dynamic_nodes(_nodes), do: []
+
+  defp summarize_dynamic_node(node) when is_map(node) do
+    node
+    |> take_dual_keys(@dynamic_node_fields)
+    |> compact()
+  end
+
+  defp summarize_dynamic_node(_node), do: %{}
+
+  defp summarize_dynamic_edges(edges) when is_list(edges) do
+    Enum.map(edges, &summarize_dynamic_edge/1)
+  end
+
+  defp summarize_dynamic_edges(_edges), do: []
+
+  defp summarize_dynamic_edge(edge) when is_map(edge) do
+    edge
+    |> take_dual_keys(@dynamic_edge_fields)
+    |> compact()
+  end
+
+  defp summarize_dynamic_edge(_edge), do: %{}
 
   defp summarize_details(details) when is_map(details) do
     if manual_details?(details) do

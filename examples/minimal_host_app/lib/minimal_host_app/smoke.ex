@@ -14,6 +14,7 @@ defmodule MinimalHostApp.Smoke do
   alias SquidMesh.Executor.Payload
   alias SquidMesh.Runtime.Journal
   alias SquidMesh.Runtime.Journal.Storage.Ecto, as: JournalStorage
+  alias SquidMesh.Runtime.DispatchProtocol
   alias SquidMesh.Runtime.Runner
   alias SquidMesh.Runtime.Signal
   alias SquidMesh.Runtime.Signal.JidoAdapter
@@ -104,6 +105,7 @@ defmodule MinimalHostApp.Smoke do
             start: SquidMesh.ReadModel.Inspection.Snapshot.t(),
             replay: SquidMesh.ReadModel.Inspection.Snapshot.t()
           },
+          dynamic_work_inspection: map(),
           journal_cron_digest: SquidMesh.ReadModel.Inspection.Snapshot.t(),
           command_signals: map(),
           jido_command_signals: map(),
@@ -126,6 +128,7 @@ defmodule MinimalHostApp.Smoke do
     journal_cancellation = run_journal_cancellation!()
     journal_replay = run_journal_replay!()
     journal_command_signals = run_journal_command_signals!()
+    dynamic_work_inspection = run_dynamic_work_inspection!()
     journal_cron_digest = run_journal_cron_digest!()
     command_signals = run_signal_construction!()
     jido_command_signals = run_jido_signal_adapter!(command_signals)
@@ -153,6 +156,7 @@ defmodule MinimalHostApp.Smoke do
         journal_cancellation: journal_cancellation,
         journal_replay: journal_replay,
         journal_command_signals: journal_command_signals,
+        dynamic_work_inspection: dynamic_work_inspection,
         journal_cron_digest: journal_cron_digest,
         command_signals: command_signals,
         jido_command_signals: jido_command_signals,
@@ -477,6 +481,49 @@ defmodule MinimalHostApp.Smoke do
       else
         {:error, reason} ->
           raise "journal run smoke test failed: #{inspect(reason)}"
+      end
+    end)
+  end
+
+  @doc """
+  Records dynamic work metadata in the host example journal and verifies the
+  graph/explanation read models expose it.
+  """
+  @spec run_dynamic_work_inspection!() :: map()
+  def run_dynamic_work_inspection! do
+    RuntimeHarness.ensure_runtime_started()
+    queue = journal_run_queue()
+
+    with_journal_runtime_config(queue, fn ->
+      with {:ok, started_run} <-
+             SquidMesh.start(
+               MinimalHostApp.Workflows.DependencyRecovery,
+               :dependency_recovery,
+               %{
+                 account_id: "acct_dynamic_demo",
+                 invoice_id: "inv_dynamic_demo",
+                 attempt_id: "attempt_dynamic_demo"
+               }
+             ),
+           {:ok, inspected_run} <- drain_journal_run(started_run.run_id, @journal_run_attempts),
+           :ok <- record_dynamic_work!(inspected_run),
+           {:ok, graph} <- SquidMesh.inspect_run_graph(inspected_run.run_id),
+           {:ok, explanation} <- SquidMesh.explain_run(inspected_run.run_id) do
+        graph_payload = SquidMesh.Runs.GraphInspection.to_map(graph)
+
+        unless Enum.any?(
+                 graph_payload.dynamic_work,
+                 &(&1.dynamic_key == "dynamic_invoice_fanout")
+               ) and
+                 Enum.any?(graph_payload.nodes, &(&1.id == "notify_invoice:inv_dynamic_demo")) and
+                 explanation.details.dynamic_work_count == 1 do
+          raise "unexpected dynamic work inspection smoke result"
+        end
+
+        graph_payload
+      else
+        {:error, reason} ->
+          raise "dynamic work inspection smoke test failed: #{inspect(reason)}"
       end
     end)
   end
@@ -1151,6 +1198,40 @@ defmodule MinimalHostApp.Smoke do
     [
       owner_id: "minimal-host-app-smoke"
     ]
+  end
+
+  defp record_dynamic_work!(%SquidMesh.ReadModel.Inspection.Snapshot{} = inspected_run) do
+    case inspected_run.planned_runnables do
+      [runnable | _rest] -> record_dynamic_work_for_runnable(inspected_run, runnable)
+      _missing -> {:error, :missing_planned_runnable}
+    end
+  end
+
+  defp record_dynamic_work_for_runnable(inspected_run, runnable) do
+    attrs = %{
+      run_id: inspected_run.run_id,
+      dynamic_key: "dynamic_invoice_fanout",
+      origin: %{
+        runnable_key: Map.fetch!(runnable, :runnable_key),
+        step: Map.fetch!(runnable, :step),
+        attempt: Map.get(runnable, :attempt_number, 1)
+      },
+      reason: :host_fanout_preview,
+      nodes: [
+        %{
+          id: "notify_invoice:inv_dynamic_demo",
+          action: "invoice.notify",
+          metadata: %{invoice_id: "inv_dynamic_demo", channel: "email"}
+        }
+      ],
+      metadata: %{source: "minimal_host_app_smoke"},
+      occurred_at: DateTime.utc_now(:second)
+    }
+
+    with {:ok, entry} <- DispatchProtocol.new_entry(:dynamic_work_recorded, attrs),
+         {:ok, _thread} <- Journal.append_entries(@journal_run_storage, [entry]) do
+      :ok
+    end
   end
 
   defp journal_run_queue do

@@ -127,6 +127,73 @@ defmodule SquidMesh.Runtime.DispatchProtocolTest do
     assert legacy_origin_entry.data.origin == "legacy-origin"
   end
 
+  test "normalizes dynamic work records on the run thread" do
+    assert {:ok, entry} =
+             DispatchProtocol.new_entry(:dynamic_work_recorded, %{
+               run_id: @run_id,
+               dynamic_key: :fanout,
+               origin: %{runnable_key: @runnable_key, step: :charge_card, attempt: 1},
+               reason: :host_fanout,
+               status: :recorded,
+               nodes: [
+                 %{
+                   id: :deliver_digest,
+                   action: :deliver,
+                   metadata: %{access_token: "secret", channel: "email"}
+                 },
+                 :stale_node
+               ],
+               edges: [
+                 %{id: :edge_1, from: :charge_card, to: :deliver_digest, type: :dynamic},
+                 :stale_edge
+               ],
+               metadata: %{secret: "internal", source: "test"},
+               occurred_at: @started_at
+             })
+
+    assert entry.thread == {:run, @run_id}
+    assert entry.data.dynamic_key == "fanout"
+    assert entry.data.reason == :host_fanout
+    assert entry.data.status == :recorded
+    assert entry.data.origin.step == "charge_card"
+
+    assert entry.data.nodes == [
+             %{
+               id: "deliver_digest",
+               action: :deliver,
+               status: :recorded,
+               metadata: %{access_token: "[REDACTED]", channel: "email"}
+             },
+             :stale_node
+           ]
+
+    assert entry.data.edges == [
+             %{
+               id: "edge_1",
+               from: "charge_card",
+               to: "deliver_digest",
+               type: :dynamic,
+               status: :pending
+             },
+             :stale_edge
+           ]
+
+    assert entry.data.metadata == %{secret: "[REDACTED]", source: "test"}
+
+    assert {:ok, legacy_entry} =
+             DispatchProtocol.new_entry(:dynamic_work_recorded, %{
+               run_id: @run_id,
+               dynamic_key: "legacy",
+               origin: "legacy-origin",
+               nodes: :legacy_nodes,
+               edges: :legacy_edges,
+               occurred_at: @started_at
+             })
+
+    assert legacy_entry.data.nodes == []
+    assert legacy_entry.data.edges == []
+  end
+
   test "normalizes manual step lifecycle entries on the run thread" do
     assert {:ok, paused_entry} =
              DispatchProtocol.new_entry(:manual_step_paused, %{

@@ -36,6 +36,7 @@ The map shape is:
   terminal?: false,
   nodes: [...],
   edges: [...],
+  dynamic_work: [],
   anomalies: []
 }
 ```
@@ -119,6 +120,26 @@ Host apps should still authorize and redact this payload before exposing it
 outside trusted operator surfaces. For field-selection guidance, see
 [Observability: redaction and field selection](observability.md#redaction-and-field-selection).
 
+Dynamic work nodes are inspectable runtime-authored structure. They are recorded
+as durable metadata and marked with `dynamic?: true` so graph UIs can distinguish
+them from declared workflow steps:
+
+```elixir
+%{
+  id: "deliver_digest:chat_1",
+  action: "digest.deliver",
+  status: :recorded,
+  current?: false,
+  dynamic?: true,
+  origin: %{step: "schedule_digest", runnable_key: "run_123:schedule_digest:1"},
+  metadata: %{chat_id: "chat_1"}
+}
+```
+
+The current dynamic-work support is inspection-only. It lets dashboards and
+visual editors show bounded runtime-generated structure before Squid Mesh adds
+execution semantics for dynamic in-run graph expansion.
+
 ## Edge Shape
 
 Edges represent transitions or dependencies:
@@ -179,6 +200,35 @@ Dependency workflows use dependency edges:
   skipped?: false,
   pending?: true,
   blocked?: false
+}
+```
+
+Dynamic edges connect the producer step to recorded dynamic nodes:
+
+```elixir
+%{
+  id: "schedule_digest:dynamic:deliver_digest:chat_1",
+  from: "schedule_digest",
+  to: "deliver_digest:chat_1",
+  type: :dynamic,
+  status: :pending,
+  selected?: false,
+  skipped?: false,
+  pending?: true,
+  blocked?: false
+}
+```
+
+`dynamic_work` keeps the grouped durable facts behind those nodes and edges:
+
+```elixir
+%{
+  dynamic_key: "subscription_digest_fanout",
+  status: :recorded,
+  reason: :runtime_fanout,
+  origin: %{step: "schedule_digest", runnable_key: "run_123:schedule_digest:1"},
+  nodes: [%{id: "deliver_digest:chat_1", action: "digest.deliver"}],
+  edges: [%{type: :dynamic, from: "schedule_digest", to: "deliver_digest:chat_1"}]
 }
 ```
 

@@ -1263,6 +1263,11 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            }
   end
 
+  test "runs the dynamic work inspection smoke path" do
+    assert %{dynamic_work: [%{dynamic_key: "dynamic_invoice_fanout"}]} =
+             Smoke.run_dynamic_work_inspection!()
+  end
+
   test "recovers the journal run smoke path from persisted entries" do
     assert %SquidMesh.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_recovery!()
 

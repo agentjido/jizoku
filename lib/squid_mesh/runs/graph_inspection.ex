@@ -26,6 +26,7 @@ defmodule SquidMesh.Runs.GraphInspection do
           nodes: [Node.t()],
           edges: [Edge.t()],
           child_runs: [map()],
+          dynamic_work: [map()],
           anomalies: [map()]
         }
 
@@ -43,7 +44,8 @@ defmodule SquidMesh.Runs.GraphInspection do
     current_node_ids: [],
     nodes: [],
     edges: [],
-    anomalies: []
+    anomalies: [],
+    dynamic_work: []
   ]
 
   @doc false
@@ -67,8 +69,9 @@ defmodule SquidMesh.Runs.GraphInspection do
       current_node_ids: current_node_ids,
       terminal?: snapshot.terminal?,
       nodes: nodes,
-      edges: graph_edges(definition, nodes),
+      edges: graph_edges(definition, nodes) ++ dynamic_edges(snapshot.dynamic_work),
       child_runs: snapshot.child_runs,
+      dynamic_work: snapshot.dynamic_work,
       anomalies: sanitize_anomalies(snapshot.anomalies)
     }
   end
@@ -95,6 +98,7 @@ defmodule SquidMesh.Runs.GraphInspection do
       nodes: Enum.map(graph.nodes, &Node.to_map/1),
       edges: Enum.map(graph.edges, &Edge.to_map/1),
       child_runs: graph.child_runs,
+      dynamic_work: graph.dynamic_work,
       anomalies: graph.anomalies
     }
   end
@@ -108,25 +112,62 @@ defmodule SquidMesh.Runs.GraphInspection do
     step_sources_by_id = Enum.group_by(step_sources, &snapshot_step_id/1)
     node_ids = ordered_node_ids(definition, step_sources, &snapshot_step_id/1)
 
-    Enum.map(node_ids, fn node_id ->
-      attempts = Map.get(attempts_by_step, node_id, [])
+    declared_nodes =
+      Enum.map(node_ids, fn node_id ->
+        attempts = Map.get(attempts_by_step, node_id, [])
 
-      %Node{
-        id: node_id,
-        action: snapshot_node_action(Map.get(step_sources_by_id, node_id, [])),
-        status: snapshot_node_status(snapshot, node_id, attempts),
-        current?: false,
-        input: detail(include_details?, latest_attempt_value(attempts, :input)),
-        output: detail(include_details?, latest_attempt_value(attempts, :result)),
-        error: detail(include_details?, latest_attempt_value(attempts, :error)),
-        recovery: latest_attempt_value(attempts, :recovery),
-        transition:
-          Definition.deserialize_transition_decision(
-            definition,
-            latest_attempt_value(attempts, :transition)
-          ),
-        manual_state: detail(include_details?, snapshot_manual_state(snapshot, node_id)),
-        attempts: detail(include_details?, Enum.map(attempts, &snapshot_attempt/1), [])
+        %Node{
+          id: node_id,
+          action: snapshot_node_action(Map.get(step_sources_by_id, node_id, [])),
+          status: snapshot_node_status(snapshot, node_id, attempts),
+          current?: false,
+          input: detail(include_details?, latest_attempt_value(attempts, :input)),
+          output: detail(include_details?, latest_attempt_value(attempts, :result)),
+          error: detail(include_details?, latest_attempt_value(attempts, :error)),
+          recovery: latest_attempt_value(attempts, :recovery),
+          transition:
+            Definition.deserialize_transition_decision(
+              definition,
+              latest_attempt_value(attempts, :transition)
+            ),
+          manual_state: detail(include_details?, snapshot_manual_state(snapshot, node_id)),
+          attempts: detail(include_details?, Enum.map(attempts, &snapshot_attempt/1), [])
+        }
+      end)
+
+    declared_nodes ++ dynamic_nodes(snapshot.dynamic_work)
+  end
+
+  defp dynamic_nodes(dynamic_work) when is_list(dynamic_work) do
+    Enum.flat_map(dynamic_work, fn dynamic ->
+      origin = Map.get(dynamic, :origin)
+
+      dynamic
+      |> Map.get(:nodes, [])
+      |> Enum.map(fn node ->
+        %Node{
+          id: Map.fetch!(node, :id),
+          action: Map.get(node, :action),
+          status: Map.get(node, :status, :recorded),
+          current?: false,
+          dynamic?: true,
+          origin: origin,
+          metadata: Map.get(node, :metadata, %{})
+        }
+      end)
+    end)
+  end
+
+  defp dynamic_edges(dynamic_work) when is_list(dynamic_work) do
+    dynamic_work
+    |> Enum.flat_map(&Map.get(&1, :edges, []))
+    |> Enum.map(fn edge ->
+      %Edge{
+        id: Map.fetch!(edge, :id),
+        from: Map.fetch!(edge, :from),
+        to: Map.fetch!(edge, :to),
+        type: Map.get(edge, :type, :dynamic),
+        status: Map.get(edge, :status, :pending)
       }
     end)
   end

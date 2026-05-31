@@ -23,6 +23,7 @@ defmodule SquidMesh.Runtime.DispatchProtocol do
           | :runnables_planned
           | :runnable_applied
           | :child_run_started
+          | :dynamic_work_recorded
           | :manual_step_paused
           | :manual_step_resolved
           | :run_terminal
@@ -44,6 +45,7 @@ defmodule SquidMesh.Runtime.DispatchProtocol do
     :runnables_planned,
     :runnable_applied,
     :child_run_started,
+    :dynamic_work_recorded,
     :manual_step_paused,
     :manual_step_resolved,
     :run_terminal
@@ -76,6 +78,7 @@ defmodule SquidMesh.Runtime.DispatchProtocol do
       :origin,
       :occurred_at
     ],
+    dynamic_work_recorded: [:run_id, :dynamic_key, :origin, :nodes, :occurred_at],
     manual_step_paused: [:run_id, :step, :kind, :occurred_at],
     manual_step_resolved: [:run_id, :step, :action, :occurred_at],
     run_terminal: [:run_id, :status, :occurred_at],
@@ -188,6 +191,17 @@ defmodule SquidMesh.Runtime.DispatchProtocol do
     |> Map.put_new(:metadata, %{})
   end
 
+  defp normalize_attrs(attrs, :dynamic_work_recorded) do
+    attrs
+    |> Map.update(:dynamic_key, nil, &normalize_thread_id/1)
+    |> Map.update(:origin, nil, &normalize_origin/1)
+    |> Map.update(:nodes, [], &normalize_dynamic_nodes/1)
+    |> Map.update(:edges, [], &normalize_dynamic_edges/1)
+    |> Map.update(:metadata, %{}, &redact_metadata/1)
+    |> Map.update(:reason, nil, &normalize_dynamic_value/1)
+    |> Map.update(:status, :recorded, &normalize_dynamic_value/1)
+  end
+
   defp normalize_attrs(attrs, type) when type in @run_index_entry_types do
     attrs
     |> Map.update(:workflow, nil, &normalize_workflow/1)
@@ -248,6 +262,45 @@ defmodule SquidMesh.Runtime.DispatchProtocol do
   end
 
   defp normalize_origin(origin), do: origin
+
+  defp normalize_dynamic_nodes(nodes) when is_list(nodes) do
+    Enum.map(nodes, &normalize_dynamic_node/1)
+  end
+
+  defp normalize_dynamic_nodes(_nodes), do: []
+
+  defp normalize_dynamic_node(node) when is_map(node) do
+    node
+    |> Map.new()
+    |> Map.update(:id, nil, &normalize_thread_id/1)
+    |> Map.update(:action, nil, &normalize_dynamic_value/1)
+    |> Map.update(:status, :recorded, &normalize_dynamic_value/1)
+    |> Map.update(:metadata, %{}, &redact_metadata/1)
+  end
+
+  defp normalize_dynamic_node(node), do: node
+
+  defp normalize_dynamic_edges(edges) when is_list(edges) do
+    Enum.map(edges, &normalize_dynamic_edge/1)
+  end
+
+  defp normalize_dynamic_edges(_edges), do: []
+
+  defp normalize_dynamic_edge(edge) when is_map(edge) do
+    edge
+    |> Map.new()
+    |> Map.update(:id, nil, &normalize_thread_id/1)
+    |> Map.update(:from, nil, &normalize_thread_id/1)
+    |> Map.update(:to, nil, &normalize_thread_id/1)
+    |> Map.update(:type, :dynamic, &normalize_dynamic_value/1)
+    |> Map.update(:status, :pending, &normalize_dynamic_value/1)
+  end
+
+  defp normalize_dynamic_edge(edge), do: edge
+
+  defp normalize_dynamic_value(nil), do: nil
+  defp normalize_dynamic_value(value) when is_atom(value), do: value
+  defp normalize_dynamic_value(value), do: normalize_thread_id(value)
 
   defp redact_metadata(metadata) when is_map(metadata) do
     Map.new(metadata, fn {key, value} ->

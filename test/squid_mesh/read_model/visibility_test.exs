@@ -64,6 +64,30 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
     refute Map.has_key?(hd(redacted.visible_attempts), :idempotency_key)
     refute Map.has_key?(hd(redacted.visible_attempts), :claim_id)
     refute Map.has_key?(hd(redacted.visible_attempts), :owner_id)
+
+    assert [
+             %{
+               dynamic_key: "fanout",
+               status: :recorded,
+               reason: :runtime_fanout,
+               origin: %{runnable_key: "run_123:charge_card:1", step: "charge_card", attempt: 1},
+               nodes: [
+                 %{id: "deliver_digest:chat_1", action: "digest.deliver", status: :recorded}
+               ],
+               edges: [
+                 %{
+                   id: "charge_card:dynamic:deliver_digest:chat_1",
+                   from: "charge_card",
+                   to: "deliver_digest:chat_1",
+                   type: :dynamic,
+                   status: :pending
+                 }
+               ]
+             }
+           ] = redacted.dynamic_work
+
+    refute Map.has_key?(hd(redacted.dynamic_work), :metadata)
+    refute Map.has_key?(hd(hd(redacted.dynamic_work).nodes), :metadata)
   end
 
   test "defaults to external visibility when no policy is supplied" do
@@ -129,6 +153,8 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
                output: nil,
                error: nil,
                attempts: [],
+               origin: %{runnable_key: "run_123:charge_card:1", step: "charge_card", attempt: 1},
+               metadata: %{},
                manual_state: %{step: "review_payment", kind: "approval", paused_at: @now}
              }
            ] = redacted.nodes
@@ -136,6 +162,14 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
     assert redacted.child_runs == [
              %{run_id: "child_123", workflow: "ChildWorkflow", status: :running}
            ]
+
+    assert [
+             %{
+               dynamic_key: "fanout",
+               nodes: [%{id: "deliver_digest:chat_1"}],
+               edges: [%{type: :dynamic}]
+             }
+           ] = redacted.dynamic_work
   end
 
   test "redacts JSON-ready graph maps by default" do
@@ -153,6 +187,31 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
              redacted.child_runs
 
     refute Map.has_key?(child, :input)
+  end
+
+  test "redacts stale malformed dynamic work shapes" do
+    snapshot = %Snapshot{
+      snapshot()
+      | dynamic_work: [
+          %{
+            dynamic_key: "legacy_fanout",
+            origin: "legacy-origin",
+            nodes: [:legacy_node],
+            edges: [:legacy_edge],
+            metadata: %{secret: "internal"}
+          },
+          %{dynamic_key: "legacy_empty", nodes: :legacy_nodes, edges: :legacy_edges},
+          :legacy_dynamic_work
+        ]
+    }
+
+    assert {:ok, redacted} = Visibility.redact(snapshot, %{role: :external})
+
+    assert redacted.dynamic_work == [
+             %{dynamic_key: "legacy_fanout", nodes: [%{}], edges: [%{}]},
+             %{dynamic_key: "legacy_empty", nodes: [], edges: []},
+             %{}
+           ]
   end
 
   test "redacts sensitive binary-key fields in JSON-ready maps" do
@@ -291,6 +350,33 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
       context: %{payment: %{token: "tok_123"}},
       parent_run: %{run_id: "parent_123", input: %{secret: "parent-secret"}},
       child_runs: [%{run_id: "child_123", workflow: "ChildWorkflow", status: :running}],
+      dynamic_work: [
+        %{
+          dynamic_key: "fanout",
+          status: :recorded,
+          reason: :runtime_fanout,
+          origin: %{runnable_key: "run_123:charge_card:1", step: "charge_card", attempt: 1},
+          nodes: [
+            %{
+              id: "deliver_digest:chat_1",
+              action: "digest.deliver",
+              status: :recorded,
+              metadata: %{secret: "internal"}
+            }
+          ],
+          edges: [
+            %{
+              id: "charge_card:dynamic:deliver_digest:chat_1",
+              from: "charge_card",
+              to: "deliver_digest:chat_1",
+              type: :dynamic,
+              status: :pending
+            }
+          ],
+          metadata: %{secret: "internal"},
+          recorded_at: @now
+        }
+      ],
       queue: "default",
       status: :paused,
       reason: :manual_intervention_required,
@@ -356,6 +442,14 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
             paused_at: @now,
             metadata: %{secret: "yes"}
           },
+          dynamic?: true,
+          origin: %{
+            runnable_key: "run_123:charge_card:1",
+            step: "charge_card",
+            attempt: 1,
+            secret: "internal"
+          },
+          metadata: %{secret: "internal"},
           attempts: [%{attempt_number: 1, status: :available, error: %{message: "internal"}}]
         }
       ],
@@ -365,6 +459,33 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
           workflow: "ChildWorkflow",
           status: :running,
           input: %{secret: "child-secret"}
+        }
+      ],
+      dynamic_work: [
+        %{
+          dynamic_key: "fanout",
+          status: :recorded,
+          reason: :runtime_fanout,
+          origin: %{runnable_key: "run_123:charge_card:1", step: "charge_card", attempt: 1},
+          nodes: [
+            %{
+              id: "deliver_digest:chat_1",
+              action: "digest.deliver",
+              status: :recorded,
+              metadata: %{secret: "internal"}
+            }
+          ],
+          edges: [
+            %{
+              id: "charge_card:dynamic:deliver_digest:chat_1",
+              from: "charge_card",
+              to: "deliver_digest:chat_1",
+              type: :dynamic,
+              status: :pending
+            }
+          ],
+          metadata: %{secret: "internal"},
+          recorded_at: @now
         }
       ],
       anomalies: [%{source: :workflow, reason: :duplicate_command, payload: %{secret: true}}]

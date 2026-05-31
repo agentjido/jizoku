@@ -18,6 +18,9 @@ defmodule SquidMesh.Runs.GraphInspection.Node do
           recovery: map() | nil,
           transition: map() | nil,
           manual_state: map() | nil,
+          dynamic?: boolean(),
+          origin: map() | nil,
+          metadata: map(),
           attempts: [map()]
         }
 
@@ -34,6 +37,9 @@ defmodule SquidMesh.Runs.GraphInspection.Node do
     :recovery,
     :transition,
     :manual_state,
+    dynamic?: false,
+    origin: nil,
+    metadata: %{},
     attempts: []
   ]
 
@@ -53,6 +59,9 @@ defmodule SquidMesh.Runs.GraphInspection.Node do
       recovery: node.recovery,
       transition: node.transition,
       manual_state: node.manual_state,
+      dynamic?: node.dynamic?,
+      origin: node.origin,
+      metadata: node.metadata,
       attempts: node.attempts
     }
   end

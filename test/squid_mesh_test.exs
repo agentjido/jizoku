@@ -2223,6 +2223,196 @@ defmodule SquidMeshTest do
              }
     end
 
+    test "inspect, graph, and explanation expose recorded dynamic work metadata" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned(),
+        read_model_dynamic_work_recorded()
+      ])
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               SquidMesh.inspect_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert [
+               %{
+                 dynamic_key: "subscription_digest_fanout",
+                 status: :recorded,
+                 reason: :runtime_fanout,
+                 origin: %{
+                   runnable_key: @read_model_runnable_key,
+                   step: "charge_card",
+                   attempt: 1
+                 },
+                 nodes: [
+                   %{
+                     id: "deliver_digest:chat_1",
+                     action: "digest.deliver",
+                     status: :recorded,
+                     metadata: %{chat_id: "chat_1", secret: "[REDACTED]"}
+                   }
+                 ],
+                 edges: [
+                   %{
+                     id: "charge_card:dynamic:deliver_digest:chat_1",
+                     from: "charge_card",
+                     to: "deliver_digest:chat_1",
+                     type: :dynamic,
+                     status: :pending
+                   }
+                 ],
+                 metadata: %{source: "subscription_query"},
+                 recorded_at: @read_model_visible_at
+               }
+             ] = snapshot.dynamic_work
+
+      assert {:ok, %SquidMesh.Runs.GraphInspection{} = graph} =
+               SquidMesh.inspect_run_graph(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      nodes = Map.new(graph.nodes, &{&1.id, &1})
+      edges = Map.new(graph.edges, &{&1.id, &1})
+
+      assert nodes["deliver_digest:chat_1"].dynamic? == true
+      assert nodes["deliver_digest:chat_1"].origin.step == "charge_card"
+      assert nodes["deliver_digest:chat_1"].metadata == %{chat_id: "chat_1", secret: "[REDACTED]"}
+      assert edges["charge_card:dynamic:deliver_digest:chat_1"].type == :dynamic
+      assert graph.dynamic_work == snapshot.dynamic_work
+
+      graph_payload = SquidMesh.Runs.GraphInspection.to_map(graph)
+      assert [%{dynamic_key: "subscription_digest_fanout"}] = graph_payload.dynamic_work
+
+      assert Enum.any?(
+               graph_payload.nodes,
+               &match?(%{id: "deliver_digest:chat_1", dynamic?: true}, &1)
+             )
+
+      assert {:ok, %Diagnostic{} = diagnostic} =
+               SquidMesh.explain_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert diagnostic.evidence.dynamic_work == snapshot.dynamic_work
+      assert diagnostic.details.dynamic_work_count == 1
+    end
+
+    test "graph inspection tolerates stale malformed dynamic work facts" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned(),
+        read_model_dynamic_work_recorded(%{
+          nodes: [
+            %{action: "missing.id"},
+            %{id: "deliver_digest:chat_2", action: "digest.deliver"}
+          ],
+          edges: [
+            %{id: "missing_to", from: "charge_card", type: :dynamic},
+            %{id: "valid_edge", from: "charge_card", to: "deliver_digest:chat_2", type: :dynamic}
+          ]
+        })
+      ])
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               SquidMesh.inspect_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert [%{nodes: [%{id: "deliver_digest:chat_2"}], edges: [%{id: "valid_edge"}]}] =
+               snapshot.dynamic_work
+
+      assert {:ok, %SquidMesh.Runs.GraphInspection{} = graph} =
+               SquidMesh.inspect_run_graph(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert Enum.any?(graph.nodes, &(&1.id == "deliver_digest:chat_2"))
+      assert Enum.any?(graph.edges, &(&1.id == "valid_edge"))
+    end
+
+    test "graph inspection drops inferred dynamic edges when origin is incomplete" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned(),
+        read_model_dynamic_work_recorded(%{
+          origin: %{runnable_key: @read_model_runnable_key, attempt: 1}
+        })
+      ])
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               SquidMesh.inspect_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert [%{nodes: [%{id: "deliver_digest:chat_1"}], edges: []}] = snapshot.dynamic_work
+
+      assert {:ok, %SquidMesh.Runs.GraphInspection{} = graph} =
+               SquidMesh.inspect_run_graph(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert Enum.any?(graph.nodes, &(&1.id == "deliver_digest:chat_1"))
+      refute Enum.any?(graph.edges, &(&1.to == "deliver_digest:chat_1"))
+    end
+
+    test "dynamic work facts are idempotent and conflicting duplicates become anomalies" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned(),
+        read_model_dynamic_work_recorded(),
+        read_model_dynamic_work_recorded(),
+        read_model_dynamic_work_recorded(%{
+          nodes: [
+            %{
+              id: "deliver_digest:chat_99",
+              action: "digest.deliver",
+              metadata: %{chat_id: "chat_99"}
+            }
+          ]
+        })
+      ])
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               SquidMesh.inspect_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert [%{dynamic_key: "subscription_digest_fanout"}] = snapshot.dynamic_work
+
+      assert [
+               %{
+                 entry_type: :dynamic_work_recorded,
+                 reason: :conflicting_dynamic_work,
+                 run_id: @read_model_run_id
+               }
+             ] = snapshot.anomalies
+    end
+
     test "apply_signal/2 starts journal runs through a durable signal receipt" do
       assert {:ok, %Signal{} = signal} =
                Signal.start_run(
@@ -10800,6 +10990,37 @@ defmodule SquidMeshTest do
 
   defp read_model_attempt_scheduled do
     read_model_entry!(:attempt_scheduled, read_model_scheduled_attrs())
+  end
+
+  defp read_model_dynamic_work_recorded(overrides \\ %{}) do
+    attrs =
+      Map.merge(
+        %{
+          run_id: @read_model_run_id,
+          dynamic_key: "subscription_digest_fanout",
+          origin: %{
+            runnable_key: @read_model_runnable_key,
+            step: "charge_card",
+            attempt: 1
+          },
+          reason: :runtime_fanout,
+          nodes: [
+            %{
+              id: "deliver_digest:chat_1",
+              action: "digest.deliver",
+              metadata: %{chat_id: "chat_1", secret: "redacted"}
+            }
+          ],
+          metadata: %{source: "subscription_query"},
+          occurred_at: @read_model_visible_at
+        },
+        overrides
+      )
+
+    read_model_entry!(
+      :dynamic_work_recorded,
+      attrs
+    )
   end
 
   defp read_model_planned_runnable do

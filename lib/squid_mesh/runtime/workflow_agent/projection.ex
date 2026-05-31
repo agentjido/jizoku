@@ -44,6 +44,7 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
           applied_at: %{optional(String.t()) => DateTime.t()},
           command_history: [map()],
           child_runs: [map()],
+          dynamic_work: [map()],
           manual_state: manual_state() | nil,
           terminal_status: atom() | nil,
           anomalies: [anomaly()]
@@ -65,6 +66,7 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
             applied_at: %{},
             command_history: [],
             child_runs: [],
+            dynamic_work: [],
             manual_state: nil,
             terminal_status: nil,
             anomalies: []
@@ -195,6 +197,16 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
   end
 
   @doc false
+  @spec dynamic_work(t()) :: [map()]
+  def dynamic_work(%__MODULE__{} = projection) do
+    dynamic_work = Map.get(projection, :dynamic_work, [])
+
+    dynamic_work
+    |> Enum.reverse()
+    |> Enum.sort_by(&{Map.get(&1, :dynamic_key), Map.get(&1, :recorded_at)})
+  end
+
+  @doc false
   @spec command_history(t()) :: [map()]
   def command_history(%__MODULE__{} = projection) do
     projection
@@ -208,6 +220,7 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
     projection
     |> Map.put_new(:command_history, [])
     |> Map.put_new(:child_runs, [])
+    |> Map.put_new(:dynamic_work, [])
   end
 
   @doc false
@@ -277,6 +290,17 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
        ) do
     if child_run_data?(data) do
       put_child_run(projection, entry, data)
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :dynamic_work_recorded, data: data} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if dynamic_work_data?(data) do
+      put_dynamic_work(projection, entry, data)
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
@@ -429,6 +453,139 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
   defp child_started_at(data, entry) do
     case Map.get(data, :started_at) do
       %DateTime{} = started_at -> started_at
+      _missing -> entry.occurred_at
+    end
+  end
+
+  defp dynamic_work_data?(data) do
+    required_present?(data, [:run_id, :dynamic_key, :origin, :nodes]) and
+      is_map(Map.fetch!(data, :origin)) and is_list(Map.fetch!(data, :nodes)) and
+      is_map(Map.get(data, :metadata, %{})) and is_list(Map.get(data, :edges, []))
+  end
+
+  defp put_dynamic_work(%__MODULE__{} = projection, entry, data) do
+    dynamic_work = normalize_dynamic_work(data, entry)
+    existing_work = Map.get(projection, :dynamic_work, [])
+
+    cond do
+      Enum.any?(existing_work, &conflicting_dynamic_work?(&1, dynamic_work)) ->
+        add_anomaly(projection, entry, :conflicting_dynamic_work)
+
+      Enum.any?(existing_work, &same_dynamic_work?(&1, dynamic_work)) ->
+        projection
+
+      true ->
+        %__MODULE__{
+          projection
+          | run_id: projection.run_id || data.run_id,
+            dynamic_work: [dynamic_work | existing_work]
+        }
+    end
+  end
+
+  defp normalize_dynamic_work(data, entry) do
+    nodes =
+      data.nodes
+      |> Enum.map(&normalize_dynamic_node/1)
+      |> Enum.reject(&is_nil/1)
+
+    compact(%{
+      dynamic_key: data.dynamic_key,
+      status: Map.get(data, :status, :recorded),
+      reason: Map.get(data, :reason),
+      origin: data.origin,
+      nodes: nodes,
+      edges: dynamic_edges(data, nodes),
+      metadata: Map.get(data, :metadata, %{}),
+      recorded_at: dynamic_recorded_at(data, entry)
+    })
+  end
+
+  defp normalize_dynamic_node(node) when is_map(node) do
+    case Map.get(node, :id) do
+      id when is_binary(id) ->
+        compact(%{
+          id: id,
+          action: Map.get(node, :action),
+          status: Map.get(node, :status, :recorded),
+          metadata: Map.get(node, :metadata, %{})
+        })
+
+      _missing_id ->
+        nil
+    end
+  end
+
+  defp normalize_dynamic_node(_node), do: nil
+
+  defp dynamic_edges(data, nodes) do
+    case Map.get(data, :edges, []) do
+      [] ->
+        data.origin
+        |> inferred_dynamic_edges(nodes)
+        |> normalize_dynamic_edges()
+
+      edges ->
+        normalize_dynamic_edges(edges)
+    end
+  end
+
+  defp inferred_dynamic_edges(origin, nodes) when is_map(origin) do
+    origin_step = Map.get(origin, :step)
+
+    nodes
+    |> Enum.map(&Map.get(&1, :id))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(fn node_id ->
+      %{
+        id: Enum.join([origin_step, "dynamic", node_id], ":"),
+        from: origin_step,
+        to: node_id,
+        type: :dynamic,
+        status: :pending
+      }
+    end)
+  end
+
+  defp inferred_dynamic_edges(_origin, _nodes), do: []
+
+  defp normalize_dynamic_edge(edge) when is_map(edge) do
+    with id when is_binary(id) <- Map.get(edge, :id),
+         from when is_binary(from) <- Map.get(edge, :from),
+         to when is_binary(to) <- Map.get(edge, :to) do
+      compact(%{
+        id: id,
+        from: from,
+        to: to,
+        type: Map.get(edge, :type, :dynamic),
+        status: Map.get(edge, :status, :pending)
+      })
+    else
+      _missing_required_field -> nil
+    end
+  end
+
+  defp normalize_dynamic_edge(_edge), do: nil
+
+  defp normalize_dynamic_edges(edges) do
+    edges
+    |> Enum.map(&normalize_dynamic_edge/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp same_dynamic_work?(left, right) do
+    Map.take(left, [:dynamic_key, :status, :reason, :origin, :nodes, :edges, :metadata]) ==
+      Map.take(right, [:dynamic_key, :status, :reason, :origin, :nodes, :edges, :metadata])
+  end
+
+  defp conflicting_dynamic_work?(left, right) do
+    Map.get(left, :dynamic_key) == Map.get(right, :dynamic_key) and
+      not same_dynamic_work?(left, right)
+  end
+
+  defp dynamic_recorded_at(data, entry) do
+    case Map.get(data, :recorded_at) do
+      %DateTime{} = recorded_at -> recorded_at
       _missing -> entry.occurred_at
     end
   end
@@ -637,5 +794,9 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
 
   defp maybe_put_step(anomaly, step) do
     Map.put(anomaly, :step, step)
+  end
+
+  defp compact(map) do
+    Map.reject(map, fn {_key, value} -> is_nil(value) end)
   end
 end
