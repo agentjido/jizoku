@@ -9,6 +9,8 @@
 - Use `SquidMesh.explain_run/2` for operator-facing diagnosis and next actions.
 - Use `SquidMesh.record_dynamic_work/3` to persist validated dynamic nodes and
   edges that visual editors or dashboards should show on a run graph.
+- Use `SquidMesh.preview_dynamic_work/3` to validate candidate dynamic nodes and
+  render the graph overlay before committing them to the journal.
 - Keep list responses redacted by default; fetch detailed history only when the
   caller asks for it.
 - Use `definition_version` from list, inspection, graph, and explanation

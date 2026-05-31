@@ -29,6 +29,9 @@ itself.
   `SquidMesh.explain_run/2` for details.
 - Use `SquidMesh.record_dynamic_work/3` when host/runtime code needs to persist
   bounded, inspection-only dynamic work metadata for a run.
+- Use `SquidMesh.preview_dynamic_work/3` when dashboards or visual editors need
+  to validate candidate dynamic work and inspect the graph overlay before
+  appending.
 - Add idempotency keys or domain duplicate detection to side-effecting steps.
 - Treat external exactly-once behavior as out of scope for Squid Mesh.
 

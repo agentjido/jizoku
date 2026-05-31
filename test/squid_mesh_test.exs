@@ -2433,6 +2433,153 @@ defmodule SquidMeshTest do
              ] = snapshot.dynamic_work
     end
 
+    test "preview_dynamic_work/3 validates inspectable dynamic work without appending" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned()
+      ])
+
+      assert {:ok, %SquidMesh.Runs.DynamicWorkPreview{} = preview} =
+               SquidMesh.preview_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   reason: :runtime_fanout,
+                   nodes: [
+                     %{
+                       id: "deliver_digest:chat_1",
+                       action: "digest.deliver",
+                       metadata: %{chat_id: "chat_1", secret: "redacted"}
+                     }
+                   ],
+                   metadata: %{source: "subscription_query"}
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert %{
+               run_id: @read_model_run_id,
+               duplicate?: false,
+               dynamic_work: %{
+                 dynamic_key: "subscription_digest_fanout",
+                 recorded_at: @read_model_visible_at,
+                 status: :recorded,
+                 nodes: [
+                   %{
+                     id: "deliver_digest:chat_1",
+                     metadata: %{chat_id: "chat_1", secret: "[REDACTED]"}
+                   }
+                 ]
+               }
+             } = preview
+
+      assert Enum.any?(preview.graph.nodes, &(&1.id == "deliver_digest:chat_1" and &1.dynamic?))
+
+      assert [%{dynamic_key: "subscription_digest_fanout", recorded_at: @read_model_visible_at}] =
+               preview.graph.dynamic_work
+
+      assert {:ok, %Snapshot{dynamic_work: [], thread_revisions: %{run: 2}}} =
+               SquidMesh.inspect_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
+    test "preview_dynamic_work/3 orders graph overlay like durable dynamic work projection" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned(),
+        read_model_dynamic_work_recorded(%{
+          dynamic_key: "alpha_fanout",
+          nodes: [%{id: "deliver_digest:chat_alpha", action: "digest.deliver"}]
+        })
+      ])
+
+      assert {:ok, %SquidMesh.Runs.DynamicWorkPreview{} = preview} =
+               SquidMesh.preview_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "zulu_fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [%{id: "deliver_digest:chat_zulu", action: "digest.deliver"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert ["alpha_fanout", "zulu_fanout"] =
+               Enum.map(preview.graph.dynamic_work, & &1.dynamic_key)
+
+      assert {:ok, %Snapshot{thread_revisions: %{run: 3}, dynamic_work: [_existing]}} =
+               SquidMesh.inspect_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
+    test "preview_dynamic_work/3 marks exact duplicate dynamic work without appending" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned(),
+        read_model_dynamic_work_recorded()
+      ])
+
+      assert {:ok, %SquidMesh.Runs.DynamicWorkPreview{} = preview} =
+               SquidMesh.preview_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   reason: :runtime_fanout,
+                   nodes: [
+                     %{
+                       id: "deliver_digest:chat_1",
+                       action: "digest.deliver",
+                       metadata: %{chat_id: "chat_1", secret: "redacted"}
+                     }
+                   ],
+                   metadata: %{source: "subscription_query"}
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert %{duplicate?: true, dynamic_work: %{dynamic_key: "subscription_digest_fanout"}} =
+               preview
+
+      assert {:ok, %Snapshot{thread_revisions: %{run: 3}, dynamic_work: [_existing]}} =
+               SquidMesh.inspect_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
     test "record_dynamic_work/3 rejects malformed dynamic work before appending" do
       append_read_model_run_entries([
         read_model_run_started(),

@@ -34,9 +34,9 @@
 - Starting a child run must append parent lineage and start the child as one
   repairable journal operation; stale parent contexts and terminal parent runs
   must be rejected at the boundary.
-- Recording dynamic work must not schedule dispatch attempts, change dependency
-  readiness, or mutate terminal-state decisions.
-- Terminal runs must reject new dynamic-work records.
+- Previewing or recording dynamic work must not schedule dispatch attempts,
+  change dependency readiness, or mutate terminal-state decisions.
+- Terminal runs must reject new dynamic-work previews and records.
 
 ## Runtime Command Signals
 

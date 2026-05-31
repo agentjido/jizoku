@@ -495,15 +495,16 @@ defmodule MinimalHostApp.Smoke do
 
     with_journal_runtime_config(queue, fn ->
       with {:ok, started_run} <-
-             SquidMesh.start(
-               MinimalHostApp.Workflows.DependencyRecovery,
-               :dependency_recovery,
-               %{
+           SquidMesh.start(
+             MinimalHostApp.Workflows.DependencyRecovery,
+             :dependency_recovery,
+             %{
                  account_id: "acct_dynamic_demo",
-                 invoice_id: "inv_dynamic_demo",
-                 attempt_id: "attempt_dynamic_demo"
-               }
-             ),
+               invoice_id: "inv_dynamic_demo",
+               attempt_id: "attempt_dynamic_demo"
+             }
+           ),
+           :ok <- preview_dynamic_work!(started_run),
            :ok <- record_dynamic_work!(started_run),
            {:ok, inspected_run} <- drain_journal_run(started_run.run_id, @journal_run_attempts),
            {:ok, graph} <- SquidMesh.inspect_run_graph(inspected_run.run_id),
@@ -1207,7 +1208,41 @@ defmodule MinimalHostApp.Smoke do
   end
 
   defp record_dynamic_work_for_runnable(inspected_run, runnable) do
-    attrs = %{
+    with {:ok, _snapshot} <-
+           SquidMesh.record_dynamic_work(
+             inspected_run.run_id,
+             dynamic_work_attrs(runnable)
+           ) do
+      :ok
+    end
+  end
+
+  defp preview_dynamic_work!(%SquidMesh.ReadModel.Inspection.Snapshot{} = inspected_run) do
+    case inspected_run.planned_runnables do
+      [runnable | _rest] -> preview_dynamic_work_for_runnable(inspected_run, runnable)
+      _missing -> {:error, :missing_planned_runnable}
+    end
+  end
+
+  defp preview_dynamic_work_for_runnable(inspected_run, runnable) do
+    with {:ok, preview} <-
+           SquidMesh.preview_dynamic_work(
+             inspected_run.run_id,
+             dynamic_work_attrs(runnable)
+           ) do
+      preview_payload = SquidMesh.Runs.DynamicWorkPreview.to_map(preview)
+
+      if Map.fetch!(preview_payload, :duplicate?) or
+           not Enum.any?(preview_payload.graph.nodes, &(&1.id == "notify_invoice:inv_dynamic_demo")) do
+        {:error, :unexpected_dynamic_work_preview}
+      else
+        :ok
+      end
+    end
+  end
+
+  defp dynamic_work_attrs(runnable) do
+    %{
       dynamic_key: "dynamic_invoice_fanout",
       origin: %{
         runnable_key: Map.fetch!(runnable, :runnable_key),
@@ -1224,10 +1259,6 @@ defmodule MinimalHostApp.Smoke do
       ],
       metadata: %{source: "minimal_host_app_smoke"}
     }
-
-    with {:ok, _snapshot} <- SquidMesh.record_dynamic_work(inspected_run.run_id, attrs) do
-      :ok
-    end
   end
 
   defp journal_run_queue do
