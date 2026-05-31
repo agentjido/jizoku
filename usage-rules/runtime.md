@@ -17,6 +17,8 @@
 - Preserve child-run lineage as durable journal facts. Child starts must be
   idempotent for the parent run, parent step, child workflow, child trigger, and
   `child_key`.
+- Preserve dynamic-work records as validated, inspection-only journal facts
+  until executable dynamic graph expansion is explicitly supported.
 
 ## Execution
 
@@ -32,6 +34,9 @@
 - Starting a child run must append parent lineage and start the child as one
   repairable journal operation; stale parent contexts and terminal parent runs
   must be rejected at the boundary.
+- Recording dynamic work must not schedule dispatch attempts, change dependency
+  readiness, or mutate terminal-state decisions.
+- Terminal runs must reject new dynamic-work records.
 
 ## Runtime Command Signals
 

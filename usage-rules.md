@@ -27,6 +27,8 @@ itself.
 - Use `SquidMesh.list_runs/2` for index views and
   `SquidMesh.inspect_run/2`, `SquidMesh.inspect_run_graph/2`, or
   `SquidMesh.explain_run/2` for details.
+- Use `SquidMesh.record_dynamic_work/3` when host/runtime code needs to persist
+  bounded, inspection-only dynamic work metadata for a run.
 - Add idempotency keys or domain duplicate detection to side-effecting steps.
 - Treat external exactly-once behavior as out of scope for Squid Mesh.
 
@@ -37,6 +39,8 @@ itself.
 - Do not use or document `:runtime_tables`.
 - Do not deliver step or compensation payloads through
   `SquidMesh.Runtime.Runner.perform/2`.
+- Do not append `:dynamic_work_recorded` journal entries directly from host app
+  code; use the public recording API so validation stays centralized.
 - Do not make workflow modules depend on Bedrock, Oban, or another backend's
   APIs.
 - Do not use `String.to_atom/1` on external input or persisted untrusted data.

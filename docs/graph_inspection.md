@@ -120,9 +120,12 @@ Host apps should still authorize and redact this payload before exposing it
 outside trusted operator surfaces. For field-selection guidance, see
 [Observability: redaction and field selection](observability.md#redaction-and-field-selection).
 
-Dynamic work nodes are inspectable runtime-authored structure. They are recorded
-as durable metadata and marked with `dynamic?: true` so graph UIs can distinguish
-them from declared workflow steps:
+Dynamic work nodes are inspectable runtime-authored structure. Record them
+through `SquidMesh.record_dynamic_work/3` so the runtime validates the stable
+dynamic key, producer origin, node ids, and optional dynamic edges against an
+active run snapshot before appending durable metadata. Graph projections mark
+those nodes with
+`dynamic?: true` so graph UIs can distinguish them from declared workflow steps:
 
 ```elixir
 %{
@@ -131,14 +134,16 @@ them from declared workflow steps:
   status: :recorded,
   current?: false,
   dynamic?: true,
-  origin: %{step: "schedule_digest", runnable_key: "run_123:schedule_digest:1"},
+  origin: %{step: "schedule_digest", runnable_key: "run_123:schedule_digest:1", attempt: 1},
   metadata: %{chat_id: "chat_1"}
 }
 ```
 
 The current dynamic-work support is inspection-only. It lets dashboards and
 visual editors show bounded runtime-generated structure before Squid Mesh adds
-execution semantics for dynamic in-run graph expansion.
+execution semantics for dynamic in-run graph expansion. Recording dynamic work
+does not schedule dispatch attempts, alter dependency readiness, or change
+terminal-state decisions. Terminal runs reject new dynamic-work records.
 
 ## Edge Shape
 
@@ -226,7 +231,7 @@ Dynamic edges connect the producer step to recorded dynamic nodes:
   dynamic_key: "subscription_digest_fanout",
   status: :recorded,
   reason: :runtime_fanout,
-  origin: %{step: "schedule_digest", runnable_key: "run_123:schedule_digest:1"},
+  origin: %{step: "schedule_digest", runnable_key: "run_123:schedule_digest:1", attempt: 1},
   nodes: [%{id: "deliver_digest:chat_1", action: "digest.deliver"}],
   edges: [%{type: :dynamic, from: "schedule_digest", to: "deliver_digest:chat_1"}]
 }

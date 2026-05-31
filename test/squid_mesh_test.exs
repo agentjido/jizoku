@@ -82,6 +82,19 @@ defmodule SquidMeshTest do
     @impl Jido.Storage
     def append_thread(thread_id, entries, opts) do
       cond do
+        thread_id == Keyword.get(opts, :conflict_thread_id) and
+            Keyword.get(opts, :commit_before_conflict?) ->
+          {adapter, delegate_opts} = delegate(opts)
+
+          case adapter.append_thread(
+                 thread_id,
+                 entries,
+                 Keyword.merge(delegate_opts, append_opts(opts))
+               ) do
+            {:ok, _thread} -> {:error, :conflict}
+            {:error, _reason} = error -> error
+          end
+
         thread_id == Keyword.get(opts, :conflict_thread_id) ->
           {:error, :conflict}
 
@@ -150,6 +163,26 @@ defmodule SquidMeshTest do
 
       step :check_gateway, PaymentRecoveryWorkflow.CheckGateway, retry: [max_attempts: 2]
       transition :check_gateway, on: :ok, to: :complete
+    end
+  end
+
+  defmodule BillingWorkflow do
+    use SquidMesh.Workflow
+
+    workflow do
+      trigger :billing do
+        manual()
+
+        payload do
+          field :payment_id, :string
+        end
+      end
+
+      step :charge_card, BillingWorkflow.ChargeCard
+      step :send_receipt, BillingWorkflow.SendReceipt
+
+      transition :charge_card, on: :ok, to: :send_receipt
+      transition :send_receipt, on: :ok, to: :complete
     end
   end
 
@@ -616,6 +649,34 @@ defmodule SquidMeshTest do
       end
 
       {:ok, %{gateway_check: %{account_id: account_id, status: "healthy"}}}
+    end
+  end
+
+  defmodule BillingWorkflow.ChargeCard do
+    use Jido.Action,
+      name: "charge_card",
+      description: "Charges a stored card",
+      schema: [
+        payment_id: [type: :string, required: true]
+      ]
+
+    @impl Jido.Action
+    def run(%{payment_id: payment_id}, _context) do
+      {:ok, %{payment: %{id: payment_id, status: "charged"}}}
+    end
+  end
+
+  defmodule BillingWorkflow.SendReceipt do
+    use Jido.Action,
+      name: "send_receipt",
+      description: "Sends a payment receipt",
+      schema: [
+        payment: [type: :map, required: true]
+      ]
+
+    @impl Jido.Action
+    def run(%{payment: payment}, _context) do
+      {:ok, %{receipt: %{payment_id: payment.id, status: "sent"}}}
     end
   end
 
@@ -2052,7 +2113,7 @@ defmodule SquidMeshTest do
   describe "read model" do
     @read_model_storage {Jido.Storage.ETS, table: :squid_mesh_read_model_squid_mesh_test}
     @read_model_run_id "run_123"
-    @read_model_workflow "BillingWorkflow"
+    @read_model_workflow Atom.to_string(BillingWorkflow)
     @read_model_queue "default"
     @read_model_runnable_key "run_123:charge_card:1"
     @read_model_idempotency_key "run_123:charge_card:payment_456"
@@ -2305,6 +2366,513 @@ defmodule SquidMeshTest do
 
       assert diagnostic.evidence.dynamic_work == snapshot.dynamic_work
       assert diagnostic.details.dynamic_work_count == 1
+    end
+
+    test "record_dynamic_work/3 appends validated inspectable dynamic work" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned()
+      ])
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   reason: :runtime_fanout,
+                   nodes: [
+                     %{
+                       id: "deliver_digest:chat_1",
+                       action: "digest.deliver",
+                       metadata: %{chat_id: "chat_1", secret: "redacted"}
+                     }
+                   ],
+                   metadata: %{source: "subscription_query"}
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert [
+               %{
+                 dynamic_key: "subscription_digest_fanout",
+                 status: :recorded,
+                 reason: :runtime_fanout,
+                 origin: %{
+                   runnable_key: @read_model_runnable_key,
+                   step: "charge_card",
+                   attempt: 1
+                 },
+                 nodes: [
+                   %{
+                     id: "deliver_digest:chat_1",
+                     action: "digest.deliver",
+                     status: :recorded,
+                     metadata: %{chat_id: "chat_1", secret: "[REDACTED]"}
+                   }
+                 ],
+                 edges: [
+                   %{
+                     id: "charge_card:dynamic:deliver_digest:chat_1",
+                     from: "charge_card",
+                     to: "deliver_digest:chat_1",
+                     type: :dynamic,
+                     status: :pending
+                   }
+                 ],
+                 metadata: %{source: "subscription_query"},
+                 recorded_at: @read_model_visible_at
+               }
+             ] = snapshot.dynamic_work
+    end
+
+    test "record_dynamic_work/3 rejects malformed dynamic work before appending" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned()
+      ])
+
+      assert {:error, {:invalid_dynamic_work, {:dynamic_key, :invalid}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{dynamic_key: :fanout, origin: %{}, nodes: []},
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:error, {:invalid_dynamic_work, {:origin, :missing_step}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "fanout",
+                   origin: %{runnable_key: @read_model_runnable_key, attempt: 1},
+                   nodes: [%{id: "deliver_digest:chat_1"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:error, {:invalid_dynamic_work, {:nodes, :empty}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: []
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:error, {:invalid_dynamic_work, {:edges, {:unknown_node, "missing"}}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [%{id: "deliver_digest:chat_1"}],
+                   edges: [%{id: "edge_1", from: "charge_card", to: "missing"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:error, {:invalid_dynamic_work, {:origin, :unknown_runnable}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "fanout",
+                   origin: %{
+                     runnable_key: "run_123:missing:1",
+                     step: "missing",
+                     attempt: 1
+                   },
+                   nodes: [%{id: "deliver_digest:chat_1"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %Snapshot{dynamic_work: []}} =
+               SquidMesh.inspect_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
+    test "record_dynamic_work/3 rejects options and node id collisions" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned()
+      ])
+
+      attrs = %{
+        dynamic_key: "fanout",
+        origin: %{
+          runnable_key: @read_model_runnable_key,
+          step: "charge_card",
+          attempt: 1
+        },
+        nodes: [%{id: "deliver_digest:chat_1"}]
+      }
+
+      assert {:error, {:invalid_option, {:option, :journal_stroage}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 attrs,
+                 read_model: :read_model,
+                 journal_stroage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:error, {:invalid_dynamic_work, {:nodes, {:duplicate_existing_id, "charge_card"}}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{attrs | dynamic_key: "declared_collision", nodes: [%{id: "charge_card"}]},
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %Snapshot{dynamic_work: [%{dynamic_key: "fanout"}]} = first_recording} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 attrs,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 repo: Repo,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %Snapshot{dynamic_work: [%{dynamic_key: "fanout"}]} = second_recording} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 attrs,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert first_recording.thread_revisions.run == second_recording.thread_revisions.run
+
+      assert {:error,
+              {:invalid_dynamic_work, {:nodes, {:duplicate_existing_id, "deliver_digest:chat_1"}}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{attrs | dynamic_key: "second_fanout"},
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
+    test "record_dynamic_work/3 rejects stale workflow definitions" do
+      append_read_model_run_entries([
+        read_model_run_started(%{definition_fingerprint: "stale-definition"}),
+        read_model_runnables_planned()
+      ])
+
+      assert {:error,
+              {:invalid_dynamic_work,
+               {:definition,
+                %{
+                  code: "incompatible_workflow_definition",
+                  retryable?: false,
+                  persisted_definition_fingerprint: "stale-definition"
+                }}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [%{id: "deliver_digest:chat_1"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
+    test "record_dynamic_work/3 rejects terminal runs before definition validation" do
+      append_read_model_run_entries([
+        read_model_run_started(%{definition_fingerprint: "stale-definition"}),
+        read_model_runnables_planned(),
+        read_model_entry!(:run_terminal, %{
+          run_id: @read_model_run_id,
+          status: :completed,
+          occurred_at: @read_model_visible_at
+        })
+      ])
+
+      assert {:error, {:invalid_dynamic_work, {:run, :terminal}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [%{id: "deliver_digest:chat_1"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
+    test "record_dynamic_work/3 rejects node ids that collide with unplanned declared steps" do
+      assert {:ok, %Snapshot{} = snapshot} =
+               SquidMesh.start(
+                 JournalConditionalWorkflow,
+                 %{account_id: "acct_123", decision: "auto"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert [%{step: "classify"} = runnable] = snapshot.planned_runnables
+
+      assert {:error, {:invalid_dynamic_work, {:nodes, {:duplicate_existing_id, "auto_approve"}}}} =
+               SquidMesh.record_dynamic_work(
+                 snapshot.run_id,
+                 %{
+                   dynamic_key: "future_collision",
+                   origin: %{
+                     runnable_key: Map.fetch!(runnable, :runnable_key),
+                     step: "classify",
+                     attempt: Map.fetch!(runnable, :attempt_number)
+                   },
+                   nodes: [%{id: "auto_approve"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
+    test "record_dynamic_work/3 rejects terminal runs and append conflicts" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned(),
+        read_model_entry!(:run_terminal, %{
+          run_id: @read_model_run_id,
+          status: :completed,
+          occurred_at: @read_model_visible_at
+        })
+      ])
+
+      attrs = %{
+        dynamic_key: "fanout",
+        origin: %{
+          runnable_key: @read_model_runnable_key,
+          step: "charge_card",
+          attempt: 1
+        },
+        nodes: [%{id: "deliver_digest:chat_1"}]
+      }
+
+      assert {:error, {:invalid_dynamic_work, {:run, :terminal}}} =
+               SquidMesh.record_dynamic_work(@read_model_run_id, attrs,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %Snapshot{dynamic_work: []}} =
+               SquidMesh.inspect_run(@read_model_run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      {:ok, definition} = Definition.load(BillingWorkflow)
+
+      append_read_model_run_entries([
+        read_model_entry!(:run_started, %{
+          run_id: "run_conflict",
+          workflow: @read_model_workflow,
+          definition_version: definition.definition_version,
+          definition_fingerprint: Definition.fingerprint(definition),
+          occurred_at: @read_model_started_at
+        }),
+        read_model_entry!(:runnables_planned, %{
+          run_id: "run_conflict",
+          occurred_at: @read_model_visible_at,
+          runnables: [
+            Map.merge(read_model_planned_runnable(), %{
+              run_id: "run_conflict",
+              runnable_key: "run_conflict:charge_card:1"
+            })
+          ]
+        })
+      ])
+
+      conflict_storage =
+        {FaultInjectingStorage,
+         delegate: @read_model_storage,
+         conflict_thread_id: Journal.thread_id({:run, "run_conflict"})}
+
+      assert {:error, :conflict} =
+               SquidMesh.record_dynamic_work(
+                 "run_conflict",
+                 %{
+                   dynamic_key: "fanout",
+                   origin: %{
+                     runnable_key: "run_conflict:charge_card:1",
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [%{id: "deliver_digest:chat_1"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: conflict_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
+    test "record_dynamic_work/3 rejects terminal duplicate deliveries" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned(),
+        read_model_dynamic_work_recorded(),
+        read_model_entry!(:run_terminal, %{
+          run_id: @read_model_run_id,
+          status: :completed,
+          occurred_at: @read_model_visible_at
+        })
+      ])
+
+      assert {:error, {:invalid_dynamic_work, {:run, :terminal}}} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "subscription_digest_fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   reason: :runtime_fanout,
+                   nodes: [
+                     %{
+                       id: "deliver_digest:chat_1",
+                       action: "digest.deliver",
+                       metadata: %{chat_id: "chat_1", secret: "redacted"}
+                     }
+                   ],
+                   metadata: %{source: "subscription_query"}
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
+    test "record_dynamic_work/3 treats committed conflict retries as idempotent duplicates" do
+      append_read_model_run_entries([
+        read_model_run_started(),
+        read_model_runnables_planned()
+      ])
+
+      conflict_storage =
+        {FaultInjectingStorage,
+         delegate: @read_model_storage,
+         conflict_thread_id: Journal.thread_id({:run, @read_model_run_id}),
+         commit_before_conflict?: true}
+
+      assert {:ok, %Snapshot{dynamic_work: [%{dynamic_key: "fanout"}]} = snapshot} =
+               SquidMesh.record_dynamic_work(
+                 @read_model_run_id,
+                 %{
+                   dynamic_key: "fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [%{id: "deliver_digest:chat_1"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: conflict_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert snapshot.thread_revisions.run > 2
+    end
+
+    test "record_dynamic_work/3 rejects missing run ids without creating a run thread" do
+      assert {:error, :not_found} =
+               SquidMesh.record_dynamic_work(
+                 "missing_run",
+                 %{
+                   dynamic_key: "fanout",
+                   origin: %{
+                     runnable_key: @read_model_runnable_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   nodes: [%{id: "deliver_digest:chat_1"}]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:error, :not_found} =
+               SquidMesh.inspect_run("missing_run",
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
     end
 
     test "graph inspection tolerates stale malformed dynamic work facts" do
@@ -10972,12 +11540,22 @@ defmodule SquidMeshTest do
              )
   end
 
-  defp read_model_run_started do
-    read_model_entry!(:run_started, %{
-      run_id: @read_model_run_id,
-      workflow: @read_model_workflow,
-      occurred_at: @read_model_started_at
-    })
+  defp read_model_run_started(overrides \\ %{}) do
+    {:ok, definition} = Definition.load(BillingWorkflow)
+
+    attrs =
+      Map.merge(
+        %{
+          run_id: @read_model_run_id,
+          workflow: @read_model_workflow,
+          definition_version: definition.definition_version,
+          definition_fingerprint: Definition.fingerprint(definition),
+          occurred_at: @read_model_started_at
+        },
+        overrides
+      )
+
+    read_model_entry!(:run_started, attrs)
   end
 
   defp read_model_runnables_planned do

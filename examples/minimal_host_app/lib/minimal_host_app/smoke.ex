@@ -14,7 +14,6 @@ defmodule MinimalHostApp.Smoke do
   alias SquidMesh.Executor.Payload
   alias SquidMesh.Runtime.Journal
   alias SquidMesh.Runtime.Journal.Storage.Ecto, as: JournalStorage
-  alias SquidMesh.Runtime.DispatchProtocol
   alias SquidMesh.Runtime.Runner
   alias SquidMesh.Runtime.Signal
   alias SquidMesh.Runtime.Signal.JidoAdapter
@@ -505,8 +504,8 @@ defmodule MinimalHostApp.Smoke do
                  attempt_id: "attempt_dynamic_demo"
                }
              ),
+           :ok <- record_dynamic_work!(started_run),
            {:ok, inspected_run} <- drain_journal_run(started_run.run_id, @journal_run_attempts),
-           :ok <- record_dynamic_work!(inspected_run),
            {:ok, graph} <- SquidMesh.inspect_run_graph(inspected_run.run_id),
            {:ok, explanation} <- SquidMesh.explain_run(inspected_run.run_id) do
         graph_payload = SquidMesh.Runs.GraphInspection.to_map(graph)
@@ -1209,7 +1208,6 @@ defmodule MinimalHostApp.Smoke do
 
   defp record_dynamic_work_for_runnable(inspected_run, runnable) do
     attrs = %{
-      run_id: inspected_run.run_id,
       dynamic_key: "dynamic_invoice_fanout",
       origin: %{
         runnable_key: Map.fetch!(runnable, :runnable_key),
@@ -1224,12 +1222,10 @@ defmodule MinimalHostApp.Smoke do
           metadata: %{invoice_id: "inv_dynamic_demo", channel: "email"}
         }
       ],
-      metadata: %{source: "minimal_host_app_smoke"},
-      occurred_at: DateTime.utc_now(:second)
+      metadata: %{source: "minimal_host_app_smoke"}
     }
 
-    with {:ok, entry} <- DispatchProtocol.new_entry(:dynamic_work_recorded, attrs),
-         {:ok, _thread} <- Journal.append_entries(@journal_run_storage, [entry]) do
+    with {:ok, _snapshot} <- SquidMesh.record_dynamic_work(inspected_run.run_id, attrs) do
       :ok
     end
   end

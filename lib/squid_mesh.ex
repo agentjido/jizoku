@@ -13,6 +13,7 @@ defmodule SquidMesh do
   alias SquidMesh.Runs.GraphInspection
   alias SquidMesh.Runtime.Journal.Cancellation
   alias SquidMesh.Runtime.Journal.ChildStarter
+  alias SquidMesh.Runtime.Journal.DynamicWork
   alias SquidMesh.Runtime.Journal.Executor
   alias SquidMesh.Runtime.Journal.Options
   alias SquidMesh.Runtime.Journal.Replay
@@ -45,6 +46,7 @@ defmodule SquidMesh do
   ]
   @journal_control_options [:runtime, :journal_storage, :queue, :now]
   @journal_execute_options [:runtime, :journal_storage, :queue, :owner_id, :lease_for, :now]
+  @journal_dynamic_work_options [:runtime, :read_model, :journal_storage, :queue, :now, :repo]
 
   @typedoc """
   Structured validation errors returned by the public read-model APIs.
@@ -52,6 +54,7 @@ defmodule SquidMesh do
   @type read_option_error ::
           {:invalid_option,
            {:opts, term()}
+           | {:option, term()}
            | {:read_model, term()}
            | {:journal_storage, nil}
            | {:run_id, term()}}
@@ -344,6 +347,59 @@ defmodule SquidMesh do
   end
 
   @doc """
+  Records bounded dynamic work for one workflow run.
+
+  This API records inspection-only dynamic structure. It does not make dynamic
+  nodes executable, schedule dispatch attempts, or alter terminal-state
+  decisions. Use it when host code or a runtime step has already made a bounded
+  fanout or planning decision and dashboards need durable, validated metadata
+  about that decision.
+
+  The attribute payload must include:
+
+    * `:dynamic_key` - a stable non-empty string for this dynamic work group.
+    * `:origin` - a map with `:runnable_key`, `:step`, and positive `:attempt`
+      matching a planned runnable in the active run.
+    * `:nodes` - one or more dynamic node maps with unique non-empty `:id`
+      values that do not collide with declared workflow steps or previously
+      recorded dynamic nodes.
+
+  Optional `:edges`, `:metadata`, `:reason`, and `:status` values are normalized
+  and redacted like other journal metadata. Exact duplicate records are
+  idempotent while the run remains active. Terminal runs, stale workflow
+  definitions, invalid origins, node collisions, unknown options, and write
+  conflicts return structured `{:error, reason}` tuples.
+  """
+  @spec record_dynamic_work(String.t(), map() | keyword(), keyword()) ::
+          {:ok, SquidMesh.ReadModel.Inspection.Snapshot.t()}
+          | {:error,
+             :not_found
+             | Config.config_error()
+             | read_option_error()
+             | DynamicWork.dynamic_work_error()
+             | term()}
+  def record_dynamic_work(run_id, attrs, overrides \\ [])
+
+  def record_dynamic_work(run_id, attrs, overrides) when is_list(overrides) do
+    with :ok <- public_dynamic_work_options(overrides),
+         {:ok, :journal} <- runtime(overrides),
+         {:ok, :read_model} <- read_model(overrides),
+         {:ok, storage} <- journal_storage(overrides),
+         {:ok, run_id} <- Options.thread_part(run_id, :run_id),
+         {:ok, now} <- dynamic_work_time(overrides),
+         {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides),
+         {:ok, context} <- dynamic_work_context(snapshot, overrides),
+         {:ok, intent} <-
+           DynamicWork.new_entry(run_id, attrs, now, context) do
+      record_dynamic_work_intent(storage, run_id, overrides, snapshot, intent)
+    end
+  end
+
+  def record_dynamic_work(_run_id, _attrs, _overrides) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
+  end
+
+  @doc """
   Explains the current runtime state of one workflow run.
 
   The result is structured diagnostic data for host apps, CLIs, and dashboards.
@@ -411,6 +467,19 @@ defmodule SquidMesh do
         {:error, {:invalid_option, {:opts, :invalid}}}
 
       unsupported = Enum.find(Keyword.keys(opts), &(&1 not in @journal_child_start_options)) ->
+        {:error, {:invalid_option, {:option, unsupported}}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp public_dynamic_work_options(opts) do
+    cond do
+      not Keyword.keyword?(opts) ->
+        {:error, {:invalid_option, {:opts, :invalid}}}
+
+      unsupported = Enum.find(Keyword.keys(opts), &(&1 not in @journal_dynamic_work_options)) ->
         {:error, {:invalid_option, {:option, unsupported}}}
 
       true ->
@@ -820,6 +889,78 @@ defmodule SquidMesh do
     end
   end
 
+  defp dynamic_work_time(overrides) do
+    case Keyword.get(overrides, :now, DateTime.utc_now()) do
+      %DateTime{} = now -> {:ok, now}
+      _invalid -> {:error, {:invalid_option, {:now, :invalid}}}
+    end
+  end
+
+  defp record_dynamic_work_intent(
+         _storage,
+         _run_id,
+         _overrides,
+         %Inspection.Snapshot{} = snapshot,
+         :duplicate
+       ) do
+    {:ok, snapshot}
+  end
+
+  defp record_dynamic_work_intent(
+         storage,
+         run_id,
+         overrides,
+         %Inspection.Snapshot{} = snapshot,
+         entry
+       ) do
+    case SquidMesh.Runtime.Journal.append_entries(storage, [entry],
+           expected_rev: snapshot.thread_revisions.run
+         ) do
+      {:ok, _thread} ->
+        inspect_projected_run(run_id, overrides)
+
+      {:error, :conflict} ->
+        resolve_dynamic_work_conflict(run_id, overrides, entry)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp dynamic_work_context(%Inspection.Snapshot{terminal?: true} = snapshot, _overrides) do
+    {:ok,
+     %{
+       terminal?: snapshot.terminal?,
+       planned_runnables: snapshot.planned_runnables,
+       dynamic_work: snapshot.dynamic_work,
+       definition: nil
+     }}
+  end
+
+  defp dynamic_work_context(%Inspection.Snapshot{} = snapshot, overrides) do
+    with {:ok, definition} <- dynamic_work_definition(snapshot, overrides) do
+      {:ok,
+       %{
+         terminal?: snapshot.terminal?,
+         planned_runnables: snapshot.planned_runnables,
+         dynamic_work: snapshot.dynamic_work,
+         definition: definition
+       }}
+    end
+  end
+
+  defp resolve_dynamic_work_conflict(run_id, overrides, entry) do
+    with {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides),
+         {:ok, context} <- dynamic_work_context(snapshot, overrides) do
+      case DynamicWork.new_entry(run_id, entry.data, entry.occurred_at, context) do
+        {:ok, :duplicate} -> {:ok, snapshot}
+        {:error, {:invalid_dynamic_work, {:run, :terminal}}} = error -> error
+        {:error, _reason} -> {:error, :conflict}
+        {:ok, _entry} -> {:error, :conflict}
+      end
+    end
+  end
+
   defp inspect_projected_run(run_id, overrides) when is_binary(run_id) do
     with {:ok, storage} <- journal_storage(overrides) do
       Inspection.snapshot(storage, run_id, projected_snapshot_options(overrides))
@@ -860,6 +1001,23 @@ defmodule SquidMesh do
   end
 
   defp graph_definition(%Inspection.Snapshot{}, _overrides), do: nil
+
+  defp dynamic_work_definition(
+         %Inspection.Snapshot{run_id: run_id, workflow: workflow},
+         overrides
+       )
+       when is_binary(run_id) and is_binary(workflow) do
+    with {:ok, storage} <- journal_storage(overrides),
+         {:ok, _workflow, definition} <- WorkflowDefinitionLoader.load(storage, run_id, workflow) do
+      {:ok, definition}
+    else
+      {:error, reason} -> {:error, {:invalid_dynamic_work, {:definition, reason}}}
+    end
+  end
+
+  defp dynamic_work_definition(%Inspection.Snapshot{}, _overrides) do
+    {:error, {:invalid_dynamic_work, {:definition, :missing}}}
+  end
 
   defp explain_projected_run(run_id, overrides) do
     with {:ok, storage} <- journal_storage(overrides) do
