@@ -1089,6 +1089,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              jido_command_signals: jido_command_signals,
              action_registry: action_registry,
              editor_spec_graph: editor_spec_graph,
+             editor_action_registry_graph: editor_action_registry_graph,
              daily_digest: daily_digest
            } =
              Smoke.run_all!()
@@ -1224,6 +1225,11 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            ]
 
     assert Enum.any?(editor_spec_graph["edges"], &(&1["recovery"] == "compensation"))
+
+    assert Enum.map(editor_action_registry_graph["nodes"], &{&1["id"], &1["action"]}) == [
+             {"load_invoice", "payment.load_invoice"},
+             {"notify_customer", "payment.notify_customer"}
+           ]
 
     assert daily_digest.status == :completed
     assert daily_digest.trigger == "daily_digest"

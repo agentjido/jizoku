@@ -65,6 +65,8 @@ The smoke task:
 - validates a runtime-authored workflow spec through host-owned safe action keys
 - round-trips a compiled workflow spec through the visual-editor JSON contract
   and previews the draft graph
+- validates visual-editor action keys through the host action registry before
+  previewing the draft graph
 - starts a manual payment recovery workflow through
   `MinimalHostApp.WorkflowRuns.start_payment_recovery/1`
 - verifies the payment recovery graph selected the `greater_than` gateway

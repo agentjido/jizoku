@@ -196,6 +196,164 @@ defmodule SquidMesh.Workflow.EditorSpecTest do
       refute Map.has_key?(editor_map, "123")
     end
 
+    test "validates editor action keys against a host registry before previewing" do
+      editor_map =
+        EditorSpec.to_map(%{
+          workflow: :runtime_invoice_reminder,
+          definition_version: "draft",
+          triggers: [],
+          payload: [],
+          retries: [],
+          entry_steps: [:load_invoice],
+          initial_step: :load_invoice,
+          entry_step: :load_invoice,
+          steps: [
+            %{name: :load_invoice, action: "billing.load_invoice", opts: []},
+            %{
+              name: :send_reminder,
+              action: "billing.send_reminder",
+              opts: [after: [:load_invoice]]
+            }
+          ],
+          transitions: []
+        })
+
+      registry = %{
+        "billing.load_invoice" => LoadInvoice,
+        "billing.send_reminder" => SendReminder
+      }
+
+      assert :ok = EditorSpec.validate_map(editor_map, action_registry: registry)
+      assert {:ok, graph} = EditorSpec.preview_graph(editor_map, action_registry: registry)
+
+      assert [
+               %{"id" => "load_invoice", "action" => "billing.load_invoice"},
+               %{"id" => "send_reminder", "action" => "billing.send_reminder"}
+             ] = graph["nodes"]
+    end
+
+    test "validates JSON stringified atom action keys against trusted atom registry keys" do
+      editor_map =
+        EditorSpec.to_map(%{
+          workflow: :runtime_invoice_reminder,
+          definition_version: "draft",
+          triggers: [],
+          payload: [],
+          retries: [],
+          entry_steps: [:load_invoice],
+          initial_step: :load_invoice,
+          entry_step: :load_invoice,
+          steps: [
+            %{name: :load_invoice, action: :billing_load_invoice, opts: []}
+          ],
+          transitions: []
+        })
+
+      assert :ok =
+               EditorSpec.validate_map(editor_map,
+                 action_registry: [billing_load_invoice: LoadInvoice]
+               )
+
+      assert {:ok, graph} =
+               EditorSpec.preview_graph(editor_map,
+                 action_registry: [billing_load_invoice: LoadInvoice]
+               )
+
+      assert [%{"id" => "load_invoice", "action" => "billing_load_invoice"}] =
+               graph["nodes"]
+    end
+
+    test "previews spec structs with action registry validation" do
+      spec = %SquidMesh.Workflow.Spec{
+        workflow: __MODULE__.RuntimeInvoiceReminder,
+        definition_version: "draft",
+        triggers: [],
+        payload: [],
+        retries: [],
+        entry_steps: [:load_invoice],
+        initial_step: :load_invoice,
+        entry_step: :load_invoice,
+        steps: [
+          %{name: :load_invoice, action: "billing.load_invoice", opts: []}
+        ],
+        transitions: []
+      }
+
+      assert {:ok, graph} =
+               EditorSpec.preview_graph(spec,
+                 action_registry: %{"billing.load_invoice" => LoadInvoice}
+               )
+
+      assert [%{"id" => "load_invoice", "action" => "billing.load_invoice"}] =
+               graph["nodes"]
+    end
+
+    test "keeps metadata-only actions as preview display data with registry options" do
+      editor_map =
+        EditorSpec.to_map(%{
+          workflow: :demo_workflow,
+          definition_version: "draft",
+          triggers: [],
+          payload: [],
+          retries: [],
+          entry_steps: [:transform],
+          initial_step: :transform,
+          entry_step: :transform,
+          steps: [
+            %{name: :transform, metadata: %{action: :transform_invoice}, opts: []}
+          ],
+          transitions: []
+        })
+
+      assert :ok = EditorSpec.validate_map(editor_map, action_registry: %{})
+      assert {:ok, graph} = EditorSpec.preview_graph(editor_map, action_registry: %{})
+
+      assert [%{"id" => "transform", "action" => "transform_invoice"}] =
+               graph["nodes"]
+    end
+
+    test "reports registry validation errors at editor action paths" do
+      editor_map =
+        EditorSpec.to_map(%{
+          workflow: :runtime_invoice_reminder,
+          definition_version: "draft",
+          triggers: [],
+          payload: [],
+          retries: [],
+          entry_steps: [:load_invoice],
+          initial_step: :load_invoice,
+          entry_step: :load_invoice,
+          steps: [
+            %{name: :load_invoice, action: "billing.load_invoice", opts: []},
+            %{name: :send_reminder, action: "billing.send_reminder", opts: []},
+            %{name: :archive, action: "billing.archive", opts: []},
+            %{name: :load_receipt, action: "", opts: []}
+          ],
+          transitions: []
+        })
+
+      assert {:error, {:invalid_workflow_editor_spec, errors}} =
+               EditorSpec.validate_map(editor_map,
+                 action_registry: %{
+                   "billing.load_invoice" => [module: LoadInvoice, enabled?: false],
+                   "billing.send_reminder" => String
+                 }
+               )
+
+      assert_error(errors, [:steps, 0, :action], :disabled_action_key)
+      assert_error(errors, [:steps, 1, :action], :incompatible_action_module)
+      assert_error(errors, [:steps, 2, :action], :unknown_action_key)
+      assert_error(errors, [:steps, 3, :action], :invalid_action_key)
+
+      assert {:error, {:invalid_workflow_editor_spec, ^errors}} =
+               EditorSpec.preview_graph(editor_map,
+                 action_registry: %{
+                   "billing.load_invoice" => [module: LoadInvoice, enabled?: false],
+                   "billing.send_reminder" => String
+                 }
+               )
+    end
+
     test "keeps conditional transition edge ids unique with stable preview edge keys" do
       assert {:ok, spec} = SquidMesh.Workflow.to_spec(PaymentRecovery)
 

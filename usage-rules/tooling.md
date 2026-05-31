@@ -37,6 +37,9 @@
   `SquidMesh.Workflow.EditorSpec.validate_map/1`, and
   `SquidMesh.Workflow.EditorSpec.preview_graph/1` for JSON-safe visual editor
   round trips and draft graph previews that do not start runs.
+- Use `SquidMesh.Workflow.EditorSpec.validate_map/2` and
+  `SquidMesh.Workflow.EditorSpec.preview_graph/2` with `:action_registry` when
+  editor JSON carries runtime-authored top-level action keys.
 - Treat unresolved specs as data for editors, diagrams, and validation; only
   the host-owned action registry is the module ownership allowlist.
 - Do not offer replay controls for runtime-authored spec runs until Squid Mesh

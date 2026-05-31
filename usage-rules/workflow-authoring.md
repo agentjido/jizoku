@@ -18,6 +18,9 @@
 - Use `SquidMesh.Workflow.EditorSpec` for visual-editor JSON round trips and
   draft graph previews. Do not treat editor preview data as an execution
   boundary.
+- Pass `:action_registry` to `SquidMesh.Workflow.EditorSpec.validate_map/2` and
+  `SquidMesh.Workflow.EditorSpec.preview_graph/2` when editor-owned specs use
+  top-level action keys.
 - Do not activate runtime-authored workflows directly from request input; route
   them through the host registry and Squid Mesh start boundary.
 
