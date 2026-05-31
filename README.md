@@ -440,9 +440,10 @@ graph with top-level action keys is accepted:
 ```elixir
 :ok = SquidMesh.Workflow.EditorSpec.validate_map(editor_map, action_registry: registry)
 {:ok, graph} = SquidMesh.Workflow.EditorSpec.preview_graph(editor_map, action_registry: registry)
+{:ok, diff} = SquidMesh.Workflow.EditorSpec.diff(source_spec, editor_map, action_registry: registry)
 ```
 
-These editor APIs still validate and preview data only. Starting a
+These editor APIs still validate, preview, and compare data only. Starting a
 runtime-authored run remains the separate `start_spec/3` or `start_spec/4`
 boundary.
 

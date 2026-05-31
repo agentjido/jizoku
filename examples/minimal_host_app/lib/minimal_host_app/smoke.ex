@@ -111,12 +111,14 @@ defmodule MinimalHostApp.Smoke do
           action_registry: SquidMesh.Workflow.Spec.t(),
           editor_spec_graph: map(),
           editor_action_registry_graph: map(),
+          editor_spec_diff: map(),
           daily_digest: SquidMesh.ReadModel.Inspection.Snapshot.t()
         }
   def run_all! do
     action_registry = run_action_registry_validation!()
     editor_spec_graph = run_editor_spec_round_trip!()
     editor_action_registry_graph = run_editor_action_registry_preview!()
+    editor_spec_diff = run_editor_spec_diff!()
     payment_recovery = run!()
     dependency_recovery = run_dependency_recovery!()
     manual_approval = run_manual_approval!()
@@ -164,6 +166,7 @@ defmodule MinimalHostApp.Smoke do
         action_registry: action_registry,
         editor_spec_graph: editor_spec_graph,
         editor_action_registry_graph: editor_action_registry_graph,
+        editor_spec_diff: editor_spec_diff,
         daily_digest: cron_run
       }
     else
@@ -327,6 +330,58 @@ defmodule MinimalHostApp.Smoke do
   end
 
   @doc """
+  Compares a visual-editor draft against its source workflow spec.
+  """
+  @spec run_editor_spec_diff!() :: map()
+  def run_editor_spec_diff! do
+    with {:ok, spec} <- SquidMesh.Workflow.to_spec(MinimalHostApp.Workflows.PaymentRecovery),
+         editor_map <- SquidMesh.Workflow.EditorSpec.to_map(spec),
+         draft <- editor_diff_draft(editor_map),
+         {:ok, json} <- Jason.encode(draft),
+         {:ok, round_tripped} <- Jason.decode(json),
+         {:ok, diff} <-
+           SquidMesh.Workflow.EditorSpec.diff(spec, round_tripped,
+             action_registry: payment_action_registry()
+           ) do
+      unless diff["summary"]["nodes_added"] == 1 and
+               diff["summary"]["edges_added"] == 2 and
+               diff["summary"]["edges_removed"] == 1 and
+               match?([%{"id" => "archive_invoice"}], diff["nodes"]["added"]) do
+        raise "unexpected editor spec diff"
+      end
+
+      diff
+    else
+      {:error, reason} ->
+        raise "editor spec diff smoke test failed: #{inspect(reason)}"
+    end
+  end
+
+  defp editor_diff_draft(editor_map) do
+    editor_map
+    |> put_in(["steps"], editor_map["steps"] ++ [editor_archive_step()])
+    |> Map.update!("transitions", fn transitions ->
+      transitions
+      |> Enum.map(fn
+        %{"from" => "notify_customer", "on" => "ok"} = transition ->
+          %{transition | "to" => "archive_invoice"}
+
+        transition ->
+          transition
+      end)
+      |> Kernel.++([%{"from" => "archive_invoice", "on" => "ok", "to" => "complete"}])
+    end)
+  end
+
+  defp editor_archive_step do
+    %{
+      "name" => "archive_invoice",
+      "action" => "payment.archive_invoice",
+      "opts" => %{}
+    }
+  end
+
+  @doc """
   Validates visual-editor JSON action keys through the host registry.
   """
   @spec run_editor_action_registry_preview!() :: map()
@@ -388,7 +443,8 @@ defmodule MinimalHostApp.Smoke do
   defp payment_action_registry do
     %{
       "payment.load_invoice" => Steps.LoadInvoice,
-      "payment.notify_customer" => Steps.NotifyCustomer
+      "payment.notify_customer" => Steps.NotifyCustomer,
+      "payment.archive_invoice" => Steps.NotifyCustomer
     }
   end
 

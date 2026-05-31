@@ -67,6 +67,7 @@ The smoke task:
   and previews the draft graph
 - validates visual-editor action keys through the host action registry before
   previewing the draft graph
+- compares an edited visual-editor draft against its source workflow spec
 - starts a manual payment recovery workflow through
   `MinimalHostApp.WorkflowRuns.start_payment_recovery/1`
 - verifies the payment recovery graph selected the `greater_than` gateway

@@ -21,6 +21,11 @@
 - Pass `:action_registry` to `SquidMesh.Workflow.EditorSpec.validate_map/2` and
   `SquidMesh.Workflow.EditorSpec.preview_graph/2` when editor-owned specs use
   top-level action keys.
+- Use `SquidMesh.Workflow.EditorSpec.diff/2` or
+  `SquidMesh.Workflow.EditorSpec.diff/3` for visual-editor change inspection;
+  diff output is not an execution boundary.
+- Pass `:action_registry` to `SquidMesh.Workflow.EditorSpec.diff/3` when
+  comparing editor drafts that use top-level action keys.
 - Do not activate runtime-authored workflows directly from request input; route
   them through the host registry and Squid Mesh start boundary.
 

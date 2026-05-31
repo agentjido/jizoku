@@ -51,6 +51,7 @@ defmodule SquidMesh.Workflow.EditorSpec do
           details: map()
         }
   @type validation_opts :: [action_registry: ActionRegistry.registry()]
+  @type diff_map :: %{String.t() => term()}
 
   @doc """
   Converts a normalized workflow spec into a JSON-safe editor map.
@@ -83,6 +84,12 @@ defmodule SquidMesh.Workflow.EditorSpec do
           :ok | {:error, {:invalid_workflow_editor_spec, [validation_error()]}}
   def validate_map(value), do: validate_map(value, [])
 
+  @doc """
+  Validates an editor spec map with optional host-owned action validation.
+
+  Pass `:action_registry` when editor-owned top-level action keys should be
+  checked against the same allowlist used by runtime-authored spec activation.
+  """
   @spec validate_map(term(), validation_opts()) ::
           :ok | {:error, {:invalid_workflow_editor_spec, [validation_error()]}}
   def validate_map(map, opts) when is_map(map) and is_list(opts) do
@@ -93,8 +100,10 @@ defmodule SquidMesh.Workflow.EditorSpec do
       |> validate_runtime_owned_fields(map)
       |> validate_collections(map)
       |> validate_steps(map)
+      |> validate_unique_step_names(map)
       |> validate_step_actions(map, opts)
       |> validate_transitions(map)
+      |> validate_unique_edge_ids(map)
       |> validate_entry_metadata(map)
       |> Enum.reverse()
 
@@ -119,6 +128,12 @@ defmodule SquidMesh.Workflow.EditorSpec do
           {:ok, editor_map()} | {:error, {:invalid_workflow_editor_spec, [validation_error()]}}
   def preview_graph(spec), do: preview_graph(spec, [])
 
+  @doc """
+  Builds a draft graph preview after option-aware editor validation.
+
+  Pass `:action_registry` to reject unapproved top-level action keys before the
+  graph is returned.
+  """
   @spec preview_graph(Spec.t() | map(), validation_opts()) ::
           {:ok, editor_map()} | {:error, {:invalid_workflow_editor_spec, [validation_error()]}}
   def preview_graph(%Spec{} = spec, opts) when is_list(opts) do
@@ -147,6 +162,33 @@ defmodule SquidMesh.Workflow.EditorSpec do
   end
 
   def preview_graph(value, opts) when is_list(opts), do: validate_map(value, opts)
+
+  @doc """
+  Compares a source workflow spec with an edited JSON-safe draft.
+
+  The result is JSON-safe and reports added, removed, and changed preview nodes
+  and edges. Both inputs stay on the editor side of the boundary: this validates
+  and previews data, but does not resolve draft specs into runtime definitions
+  or start runs.
+  """
+  @spec diff(Spec.t() | map(), Spec.t() | map()) ::
+          {:ok, diff_map()} | {:error, {:invalid_workflow_editor_spec, [validation_error()]}}
+  def diff(source, draft), do: diff(source, draft, [])
+
+  @doc """
+  Compares a source workflow spec with an edited draft after option-aware validation.
+
+  Pass `:action_registry` when either side contains runtime-authored top-level
+  action keys that must stay inside the host allowlist.
+  """
+  @spec diff(Spec.t() | map(), Spec.t() | map(), validation_opts()) ::
+          {:ok, diff_map()} | {:error, {:invalid_workflow_editor_spec, [validation_error()]}}
+  def diff(source, draft, opts) when is_list(opts) do
+    with {:ok, source_graph} <- preview_graph(source, opts),
+         {:ok, draft_graph} <- preview_graph(draft, opts) do
+      {:ok, graph_diff(source_graph, draft_graph)}
+    end
+  end
 
   defp validate_runtime_owned_fields(errors, map) do
     Enum.reduce(@runtime_owned_fields, errors, fn field, acc ->
@@ -205,6 +247,40 @@ defmodule SquidMesh.Workflow.EditorSpec do
         ]
       end
     end)
+  end
+
+  defp validate_unique_step_names(errors, map) do
+    {_seen, duplicate_errors} =
+      map
+      |> list_field("steps")
+      |> Enum.with_index()
+      |> Enum.reduce({MapSet.new(), []}, fn {step, index}, {seen, acc} ->
+        name = field(step, "name")
+
+        cond do
+          not (is_binary(name) and name != "") ->
+            {seen, acc}
+
+          MapSet.member?(seen, name) ->
+            {
+              seen,
+              [
+                error(
+                  [:steps, index, :name],
+                  :duplicate_step_name,
+                  "duplicate step name: #{inspect_name(name)}",
+                  %{step: name}
+                )
+                | acc
+              ]
+            }
+
+          true ->
+            {MapSet.put(seen, name), acc}
+        end
+      end)
+
+    duplicate_errors ++ errors
   end
 
   defp validate_step_actions(errors, map, opts) do
@@ -312,6 +388,37 @@ defmodule SquidMesh.Workflow.EditorSpec do
       |> validate_transition_endpoint(transition, index, "to", step_names)
       |> validate_transition_outcome(transition, index)
     end)
+  end
+
+  defp validate_unique_edge_ids(errors, map) do
+    {_seen, duplicate_errors} =
+      map
+      |> edge_id_sources()
+      |> Enum.reduce({MapSet.new(), []}, fn {id, path}, {seen, acc} ->
+        cond do
+          not is_binary(id) ->
+            {seen, acc}
+
+          MapSet.member?(seen, id) ->
+            {
+              seen,
+              [
+                error(
+                  path,
+                  :duplicate_edge_id,
+                  "duplicate editor edge id: #{id}",
+                  %{edge_id: id}
+                )
+                | acc
+              ]
+            }
+
+          true ->
+            {MapSet.put(seen, id), acc}
+        end
+      end)
+
+    duplicate_errors ++ errors
   end
 
   defp validate_transition_endpoint(errors, transition, index, key, step_names) do
@@ -447,7 +554,7 @@ defmodule SquidMesh.Workflow.EditorSpec do
     end
   end
 
-  defp transition_edge(transition, index) do
+  defp transition_edge(transition, _index) do
     from = field(transition, "from")
     outcome = field(transition, "on")
     to = field(transition, "to")
@@ -468,8 +575,7 @@ defmodule SquidMesh.Workflow.EditorSpec do
         "condition" => condition,
         "recovery" => field(transition, "recovery")
       },
-      condition,
-      index
+      condition
     )
   end
 
@@ -506,10 +612,121 @@ defmodule SquidMesh.Workflow.EditorSpec do
     }
   end
 
-  defp put_conditional_edge_id(edge, nil, _index), do: edge
+  defp put_conditional_edge_id(edge, nil), do: edge
 
-  defp put_conditional_edge_id(edge, _condition, index) do
-    %{edge | "id" => edge["id"] <> ":condition:" <> Integer.to_string(index)}
+  defp put_conditional_edge_id(edge, condition) do
+    %{edge | "id" => edge["id"] <> ":condition:" <> condition_digest(condition)}
+  end
+
+  defp edge_id_sources(map) do
+    transitions = list_field(map, "transitions")
+
+    if transitions == [] do
+      dependency_edge_id_sources(map)
+    else
+      transitions
+      |> Enum.with_index()
+      |> Enum.map(fn {transition, index} ->
+        {transition_edge(transition, index)["id"], [:transitions, index]}
+      end)
+    end
+  end
+
+  defp dependency_edge_id_sources(map) do
+    map
+    |> list_field("steps")
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {step, step_index} ->
+      dependency_edge_id_sources_for_step(step, step_index)
+    end)
+  end
+
+  defp dependency_edge_id_sources_for_step(step, step_index) do
+    case nested_field(step, ["opts", "after"]) do
+      dependencies when is_list(dependencies) ->
+        dependencies
+        |> Enum.with_index()
+        |> Enum.map(fn {dependency, dependency_index} ->
+          {dependency_edge(dependency, step)["id"],
+           [:steps, step_index, :opts, :after, dependency_index]}
+        end)
+
+      _other ->
+        []
+    end
+  end
+
+  defp condition_digest(condition) do
+    condition
+    |> :erlang.term_to_binary()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 12)
+  end
+
+  defp graph_diff(source_graph, draft_graph) do
+    node_diff = collection_diff(source_graph["nodes"], draft_graph["nodes"])
+    edge_diff = collection_diff(source_graph["edges"], draft_graph["edges"])
+
+    %{
+      "source" => "workflow_spec",
+      "status" => "draft_diff",
+      "summary" => diff_summary(node_diff, edge_diff),
+      "nodes" => node_diff,
+      "edges" => edge_diff
+    }
+  end
+
+  defp collection_diff(source_items, draft_items)
+       when is_list(source_items) and is_list(draft_items) do
+    source_by_id = items_by_id(source_items)
+    draft_by_id = items_by_id(draft_items)
+
+    %{
+      "added" => added_items(draft_items, source_by_id),
+      "removed" => removed_items(source_items, draft_by_id),
+      "changed" => changed_items(source_items, source_by_id, draft_by_id)
+    }
+  end
+
+  defp added_items(items, previous_by_id) do
+    Enum.filter(items, fn item -> not Map.has_key?(previous_by_id, item["id"]) end)
+  end
+
+  defp removed_items(items, next_by_id) do
+    Enum.filter(items, fn item -> not Map.has_key?(next_by_id, item["id"]) end)
+  end
+
+  defp changed_items(items, source_by_id, draft_by_id) do
+    items
+    |> Enum.filter(fn item -> Map.has_key?(draft_by_id, item["id"]) end)
+    |> Enum.map(fn item ->
+      id = item["id"]
+      source = Map.fetch!(source_by_id, id)
+      draft = Map.fetch!(draft_by_id, id)
+
+      if source == draft do
+        nil
+      else
+        %{"id" => id, "before" => source, "after" => draft}
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp items_by_id(items) do
+    Map.new(items, fn item -> {item["id"], item} end)
+  end
+
+  defp diff_summary(node_diff, edge_diff) do
+    %{
+      "nodes_added" => length(node_diff["added"]),
+      "nodes_removed" => length(node_diff["removed"]),
+      "nodes_changed" => length(node_diff["changed"]),
+      "edges_added" => length(edge_diff["added"]),
+      "edges_removed" => length(edge_diff["removed"]),
+      "edges_changed" => length(edge_diff["changed"])
+    }
   end
 
   defp json_value(nil), do: nil

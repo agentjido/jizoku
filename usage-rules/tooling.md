@@ -40,6 +40,11 @@
 - Use `SquidMesh.Workflow.EditorSpec.validate_map/2` and
   `SquidMesh.Workflow.EditorSpec.preview_graph/2` with `:action_registry` when
   editor JSON carries runtime-authored top-level action keys.
+- Use `SquidMesh.Workflow.EditorSpec.diff/2` or
+  `SquidMesh.Workflow.EditorSpec.diff/3` to compare a source spec and an edited
+  draft without starting a run.
+- Pass `:action_registry` to `SquidMesh.Workflow.EditorSpec.diff/3` when either
+  side includes runtime-authored top-level action keys.
 - Treat unresolved specs as data for editors, diagrams, and validation; only
   the host-owned action registry is the module ownership allowlist.
 - Do not offer replay controls for runtime-authored spec runs until Squid Mesh

@@ -381,6 +381,8 @@ defmodule SquidMesh.Workflow.EditorSpecTest do
       edge_ids = Enum.map(graph["edges"], & &1["id"])
 
       assert edge_ids == Enum.uniq(edge_ids)
+      assert Enum.all?(edge_ids, &String.contains?(&1, ":condition:"))
+      refute Enum.any?(edge_ids, &String.ends_with?(&1, ":condition:0"))
 
       assert Enum.all?(graph["edges"], fn edge ->
                match?(
@@ -397,6 +399,133 @@ defmodule SquidMesh.Workflow.EditorSpecTest do
              end)
 
       assert Enum.all?(graph["edges"], &Map.has_key?(&1, "condition"))
+
+      reordered_editor_map =
+        Map.update!(editor_map, "transitions", &Enum.reverse/1)
+
+      assert {:ok, diff} = EditorSpec.diff(editor_map, reordered_editor_map)
+
+      assert diff["summary"] == %{
+               "nodes_added" => 0,
+               "nodes_removed" => 0,
+               "nodes_changed" => 0,
+               "edges_added" => 0,
+               "edges_removed" => 0,
+               "edges_changed" => 0
+             }
+    end
+
+    test "diffs editor drafts against a source workflow spec" do
+      assert {:ok, spec} = SquidMesh.Workflow.to_spec(PaymentRecovery)
+
+      editor_map =
+        spec
+        |> EditorSpec.to_map()
+        |> Map.update!("steps", fn steps ->
+          steps
+          |> Enum.map(fn
+            %{"name" => "send_reminder"} = step ->
+              Map.put(step, "action", "billing.send_updated_reminder")
+
+            step ->
+              step
+          end)
+          |> Kernel.++([
+            %{
+              "name" => "archive_invoice",
+              "action" => "billing.archive_invoice",
+              "opts" => %{"after" => ["send_reminder"]}
+            }
+          ])
+        end)
+        |> Map.update!("transitions", fn transitions ->
+          transitions
+          |> Enum.reject(&(&1["from"] == "send_reminder" and &1["on"] == "error"))
+          |> Kernel.++([
+            %{"from" => "archive_invoice", "on" => "ok", "to" => "complete"}
+          ])
+        end)
+
+      registry = %{
+        "billing.send_updated_reminder" => SendReminder,
+        "billing.archive_invoice" => SendReminder
+      }
+
+      assert {:ok, diff} = EditorSpec.diff(spec, editor_map, action_registry: registry)
+
+      assert %{
+               "source" => "workflow_spec",
+               "status" => "draft_diff",
+               "summary" => %{
+                 "nodes_added" => 1,
+                 "nodes_removed" => 0,
+                 "nodes_changed" => 1,
+                 "edges_added" => 1,
+                 "edges_removed" => 1,
+                 "edges_changed" => 0
+               },
+               "nodes" => %{
+                 "added" => [%{"id" => "archive_invoice"}],
+                 "removed" => [],
+                 "changed" => [
+                   %{
+                     "id" => "send_reminder",
+                     "before" => %{"id" => "send_reminder"},
+                     "after" => %{
+                       "id" => "send_reminder",
+                       "action" => "billing.send_updated_reminder"
+                     }
+                   }
+                 ]
+               },
+               "edges" => %{
+                 "added" => [%{"id" => "archive_invoice:ok:complete"}],
+                 "removed" => [%{"id" => "send_reminder:error:complete"}],
+                 "changed" => []
+               }
+             } = diff
+    end
+
+    test "diff validates editor drafts before comparing" do
+      assert {:ok, spec} = SquidMesh.Workflow.to_spec(PaymentRecovery)
+
+      editor_map =
+        spec
+        |> EditorSpec.to_map()
+        |> Map.put("transitions", [
+          %{"from" => "send_reminder", "on" => "ok", "to" => "missing_step"}
+        ])
+
+      assert {:error, {:invalid_workflow_editor_spec, errors}} =
+               EditorSpec.diff(spec, editor_map)
+
+      assert_error(errors, [:transitions, 0, :to], :unknown_transition_target)
+    end
+
+    test "rejects duplicate editor node and edge identities before diffing" do
+      assert {:ok, spec} = SquidMesh.Workflow.to_spec(PaymentRecovery)
+
+      duplicate_steps =
+        spec
+        |> EditorSpec.to_map()
+        |> Map.update!("steps", fn [first | _rest] = steps ->
+          Enum.reverse([first | Enum.reverse(steps)])
+        end)
+
+      assert {:error, {:invalid_workflow_editor_spec, errors}} =
+               EditorSpec.diff(spec, duplicate_steps)
+
+      assert_error(errors, [:steps, 2, :name], :duplicate_step_name)
+
+      duplicate_edges =
+        spec
+        |> EditorSpec.to_map()
+        |> Map.update!("transitions", fn [first | _rest] -> [first, first] end)
+
+      assert {:error, {:invalid_workflow_editor_spec, errors}} =
+               EditorSpec.diff(spec, duplicate_edges)
+
+      assert_error(errors, [:transitions, 1], :duplicate_edge_id)
     end
 
     test "rejects runtime-owned fields before previewing editor data" do
