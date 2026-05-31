@@ -45,6 +45,21 @@
 - Convert to raw `Jido.Signal` only through `SquidMesh.Runtime.Signal.JidoAdapter`
   when integrating with Jido agents, signal routers, or other Jido primitives.
 
+## Read-Model Visibility
+
+- Authorize run listing, inspection, graph, and explanation calls at the host
+  boundary.
+- Use `SquidMesh.ReadModel.Visibility.redact/2` for default external-safe views
+  or `SquidMesh.ReadModel.Visibility.redact/3` with a host policy when exposing
+  read-model data to actor-scoped UI, API, or CLI surfaces.
+- Treat `:auditor` visibility as privileged; it preserves full snapshots and
+  diagnostics.
+- Use `:external` or `:operator` visibility for surfaces that need status,
+  current/manual task state, and safe next actions without payloads, command
+  history, claim metadata, attempt inputs/results/errors, or manual metadata.
+- Keep durable history immutable. Visibility policy derives read-side
+  projections only and must not be treated as deletion or retention policy.
+
 ## Bedrock
 
 - Use Bedrock when the host needs durable backend delivery, delayed visibility,
