@@ -2468,6 +2468,11 @@ defmodule SquidMeshTest do
       assert %{
                run_id: @read_model_run_id,
                duplicate?: false,
+               recordable?: true,
+               origin_node_id: "charge_card",
+               added_node_ids: ["deliver_digest:chat_1"],
+               added_edge_ids: ["charge_card:dynamic:deliver_digest:chat_1"],
+               warnings: [],
                dynamic_work: %{
                  dynamic_key: "subscription_digest_fanout",
                  recorded_at: @read_model_visible_at,
@@ -2570,6 +2575,24 @@ defmodule SquidMeshTest do
 
       assert %{duplicate?: true, dynamic_work: %{dynamic_key: "subscription_digest_fanout"}} =
                preview
+
+      assert %{
+               duplicate?: true,
+               recordable?: false,
+               origin_node_id: "charge_card",
+               added_node_ids: [],
+               added_edge_ids: [],
+               warnings: [:duplicate_dynamic_work]
+             } = preview
+
+      assert %{
+               duplicate?: true,
+               recordable?: false,
+               origin_node_id: "charge_card",
+               added_node_ids: [],
+               added_edge_ids: [],
+               warnings: [:duplicate_dynamic_work]
+             } = SquidMesh.Runs.DynamicWorkPreview.to_map(preview)
 
       assert {:ok, %Snapshot{thread_revisions: %{run: 3}, dynamic_work: [_existing]}} =
                SquidMesh.inspect_run(@read_model_run_id,

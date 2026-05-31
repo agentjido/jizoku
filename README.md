@@ -368,6 +368,10 @@ active run without making those nodes executable yet:
     ]
   })
 
+preview.origin_node_id
+preview.added_node_ids
+preview.added_edge_ids
+preview.recordable?
 preview.graph.nodes
 
 {:ok, snapshot} =
@@ -388,8 +392,11 @@ preview.graph.nodes
 `preview_dynamic_work/3` and `record_dynamic_work/3` share validation for stable
 ids, origin metadata, nodes, and optional edges against the current run snapshot.
 Preview returns the normalized dynamic work plus a graph overlay without
-appending a journal fact. Recording appends the durable fact. Terminal runs
-reject new dynamic work. The recorded structure is visible through
+appending a journal fact. It also exposes stable overlay metadata for visual
+editors: the producer node id, added node ids, added edge ids, whether recording
+would append a new durable fact, and warnings such as duplicate dynamic work.
+Recording appends the durable fact. Terminal runs reject new dynamic work. The
+recorded structure is visible through
 `inspect_run/2`, `inspect_run_graph/2`, and `explain_run/2`, but it remains
 inspection-only until executable dynamic graph expansion is added.
 

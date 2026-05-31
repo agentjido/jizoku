@@ -67,6 +67,7 @@
 - Use `SquidMesh.record_dynamic_work/3` for bounded dynamic work that should be
   visible to operators but is not executable planner work yet.
 - Use `SquidMesh.preview_dynamic_work/3` before recording when tooling needs to
-  validate and render the candidate graph overlay without appending.
+  validate and render the candidate graph overlay without appending. Use the
+  preview's added id lists and warnings instead of client-side graph diffing.
 - Do not rely on "this step should only run once" as the side-effect safety
   model.
