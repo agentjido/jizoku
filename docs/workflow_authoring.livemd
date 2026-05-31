@@ -226,6 +226,26 @@ without parsing source code.
 Notice that dependency workflows do not need success transitions. `entry_steps`
 shows the root step, and later work is declared with `after: [...]`.
 
+Visual-editor clients can use the JSON-safe editor projection when they need to
+inspect or preview a draft workflow without starting it:
+
+```elixir
+editor_map =
+  spec
+  |> SquidMesh.Workflow.EditorSpec.to_map()
+  |> Jason.encode!()
+  |> Jason.decode!()
+
+:ok = SquidMesh.Workflow.EditorSpec.validate_map(editor_map)
+{:ok, draft_graph} = SquidMesh.Workflow.EditorSpec.preview_graph(editor_map)
+
+Map.take(draft_graph, ["source", "status", "workflow"])
+```
+
+If the editor map uses runtime-authored top-level action keys, pass the host
+registry to `validate_map/2` and `preview_graph/2` before accepting the draft
+graph.
+
 ## Start A Run
 
 Manual triggers can start through `SquidMesh.start/3` when the workflow has

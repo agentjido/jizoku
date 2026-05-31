@@ -157,6 +157,23 @@ editor_map =
 {:ok, graph} = SquidMesh.Workflow.EditorSpec.preview_graph(editor_map)
 ```
 
+When editor JSON uses runtime-authored top-level action keys, pass the same
+host-owned registry used by the start boundary:
+
+```elixir
+registry = %{"billing.load_invoice" => Billing.Steps.LoadInvoice}
+
+:ok =
+  SquidMesh.Workflow.EditorSpec.validate_map(editor_map,
+    action_registry: registry
+  )
+
+{:ok, draft_graph} =
+  SquidMesh.Workflow.EditorSpec.preview_graph(editor_map,
+    action_registry: registry
+  )
+```
+
 The round-trip boundary is intentionally data-only:
 
 ```mermaid
@@ -172,7 +189,7 @@ sequenceDiagram
   Editor->>JSON: JSON encode/decode
   JSON-->>Editor: decoded map
   Editor->>Validate: submit decoded map
-  Validate->>Validate: reject runtime-owned fields, validate steps/transitions/entry metadata
+  Validate->>Validate: reject runtime-owned fields, validate steps/transitions/entry metadata/action keys
   Validate-->>Editor: :ok or {:error, {:invalid_workflow_editor_spec, errors}}
   Editor->>Preview: validated map
   Preview->>Preview: generate nodes and edges (explicit or inferred)

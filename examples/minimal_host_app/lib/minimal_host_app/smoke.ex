@@ -110,11 +110,13 @@ defmodule MinimalHostApp.Smoke do
           jido_command_signals: map(),
           action_registry: SquidMesh.Workflow.Spec.t(),
           editor_spec_graph: map(),
+          editor_action_registry_graph: map(),
           daily_digest: SquidMesh.ReadModel.Inspection.Snapshot.t()
         }
   def run_all! do
     action_registry = run_action_registry_validation!()
     editor_spec_graph = run_editor_spec_round_trip!()
+    editor_action_registry_graph = run_editor_action_registry_preview!()
     payment_recovery = run!()
     dependency_recovery = run_dependency_recovery!()
     manual_approval = run_manual_approval!()
@@ -161,6 +163,7 @@ defmodule MinimalHostApp.Smoke do
         jido_command_signals: jido_command_signals,
         action_registry: action_registry,
         editor_spec_graph: editor_spec_graph,
+        editor_action_registry_graph: editor_action_registry_graph,
         daily_digest: cron_run
       }
     else
@@ -324,14 +327,43 @@ defmodule MinimalHostApp.Smoke do
   end
 
   @doc """
+  Validates visual-editor JSON action keys through the host registry.
+  """
+  @spec run_editor_action_registry_preview!() :: map()
+  def run_editor_action_registry_preview! do
+    registry = payment_action_registry()
+
+    with editor_map <- SquidMesh.Workflow.EditorSpec.to_map(action_registry_spec()),
+         {:ok, json} <- Jason.encode(editor_map),
+         {:ok, round_tripped} <- Jason.decode(json),
+         :ok <-
+           SquidMesh.Workflow.EditorSpec.validate_map(round_tripped,
+             action_registry: registry
+           ),
+         {:ok, graph} <-
+           SquidMesh.Workflow.EditorSpec.preview_graph(round_tripped,
+             action_registry: registry
+           ) do
+      unless Enum.map(graph["nodes"], &{&1["id"], &1["action"]}) == [
+               {"load_invoice", "payment.load_invoice"},
+               {"notify_customer", "payment.notify_customer"}
+             ] do
+        raise "unexpected editor action registry graph"
+      end
+
+      graph
+    else
+      {:error, reason} ->
+        raise "editor action registry smoke test failed: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
   Validates a runtime-authored spec through host-owned action keys.
   """
   @spec run_action_registry_validation!() :: SquidMesh.Workflow.Spec.t()
   def run_action_registry_validation! do
-    registry = %{
-      "payment.load_invoice" => Steps.LoadInvoice,
-      "payment.notify_customer" => Steps.NotifyCustomer
-    }
+    registry = payment_action_registry()
 
     with :ok <-
            SquidMesh.Workflow.validate_spec(action_registry_spec(), action_registry: registry),
@@ -351,6 +383,13 @@ defmodule MinimalHostApp.Smoke do
       {:error, reason} ->
         raise "action registry smoke test failed: #{inspect(reason)}"
     end
+  end
+
+  defp payment_action_registry do
+    %{
+      "payment.load_invoice" => Steps.LoadInvoice,
+      "payment.notify_customer" => Steps.NotifyCustomer
+    }
   end
 
   defp action_registry_spec do

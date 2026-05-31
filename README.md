@@ -434,6 +434,18 @@ Squid Mesh persists the resolved definition with the run so workers and
 runtime-authored spec runs is intentionally rejected until that lifecycle is
 supported.
 
+Visual-editor JSON can use the same host-owned action allowlist before a draft
+graph with top-level action keys is accepted:
+
+```elixir
+:ok = SquidMesh.Workflow.EditorSpec.validate_map(editor_map, action_registry: registry)
+{:ok, graph} = SquidMesh.Workflow.EditorSpec.preview_graph(editor_map, action_registry: registry)
+```
+
+These editor APIs still validate and preview data only. Starting a
+runtime-authored run remains the separate `start_spec/3` or `start_spec/4`
+boundary.
+
 ## Cancellation, Replay, and Listing
 
 ```elixir

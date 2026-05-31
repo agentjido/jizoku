@@ -3,10 +3,12 @@ defmodule SquidMesh.Workflow.EditorSpec do
   JSON-safe workflow spec projection for visual editors.
 
   This module keeps editor round-trips on the data side of the boundary. It does
-  not load workflow modules, create atoms from input, resolve action keys, or
-  start runs. Runtime execution of validated specs remains a separate boundary.
+  not load workflow modules, create atoms from input, resolve editor input into
+  modules, or start runs. Runtime execution of validated specs remains a
+  separate boundary.
   """
 
+  alias SquidMesh.Workflow.ActionRegistry
   alias SquidMesh.Workflow.Spec
 
   @editor_fields [
@@ -48,6 +50,7 @@ defmodule SquidMesh.Workflow.EditorSpec do
           message: String.t(),
           details: map()
         }
+  @type validation_opts :: [action_registry: ActionRegistry.registry()]
 
   @doc """
   Converts a normalized workflow spec into a JSON-safe editor map.
@@ -69,11 +72,20 @@ defmodule SquidMesh.Workflow.EditorSpec do
   end
 
   @doc """
-  Validates an editor spec map without loading code or starting a run.
+  Validates an editor spec map without starting a run.
+
+  Without `:action_registry`, validation stays structural and does not load
+  workflow modules. When `:action_registry` is supplied, editor-owned top-level
+  action keys are checked against the host allowlist before the draft can be
+  previewed or accepted.
   """
   @spec validate_map(term()) ::
           :ok | {:error, {:invalid_workflow_editor_spec, [validation_error()]}}
-  def validate_map(map) when is_map(map) do
+  def validate_map(value), do: validate_map(value, [])
+
+  @spec validate_map(term(), validation_opts()) ::
+          :ok | {:error, {:invalid_workflow_editor_spec, [validation_error()]}}
+  def validate_map(map, opts) when is_map(map) and is_list(opts) do
     map = stringify_map(map)
 
     errors =
@@ -81,6 +93,7 @@ defmodule SquidMesh.Workflow.EditorSpec do
       |> validate_runtime_owned_fields(map)
       |> validate_collections(map)
       |> validate_steps(map)
+      |> validate_step_actions(map, opts)
       |> validate_transitions(map)
       |> validate_entry_metadata(map)
       |> Enum.reverse()
@@ -91,7 +104,7 @@ defmodule SquidMesh.Workflow.EditorSpec do
     end
   end
 
-  def validate_map(value) do
+  def validate_map(value, opts) when is_list(opts) do
     {:error,
      {:invalid_workflow_editor_spec,
       [
@@ -104,16 +117,20 @@ defmodule SquidMesh.Workflow.EditorSpec do
   """
   @spec preview_graph(Spec.t() | map()) ::
           {:ok, editor_map()} | {:error, {:invalid_workflow_editor_spec, [validation_error()]}}
-  def preview_graph(%Spec{} = spec) do
+  def preview_graph(spec), do: preview_graph(spec, [])
+
+  @spec preview_graph(Spec.t() | map(), validation_opts()) ::
+          {:ok, editor_map()} | {:error, {:invalid_workflow_editor_spec, [validation_error()]}}
+  def preview_graph(%Spec{} = spec, opts) when is_list(opts) do
     spec
     |> to_map()
-    |> preview_graph()
+    |> preview_graph(opts)
   end
 
-  def preview_graph(map) when is_map(map) do
+  def preview_graph(map, opts) when is_map(map) and is_list(opts) do
     map = stringify_map(map)
 
-    with :ok <- validate_map(map) do
+    with :ok <- validate_map(map, opts) do
       {:ok,
        %{
          "source" => "workflow_spec",
@@ -129,7 +146,7 @@ defmodule SquidMesh.Workflow.EditorSpec do
     end
   end
 
-  def preview_graph(value), do: validate_map(value)
+  def preview_graph(value, opts) when is_list(opts), do: validate_map(value, opts)
 
   defp validate_runtime_owned_fields(errors, map) do
     Enum.reduce(@runtime_owned_fields, errors, fn field, acc ->
@@ -188,6 +205,99 @@ defmodule SquidMesh.Workflow.EditorSpec do
         ]
       end
     end)
+  end
+
+  defp validate_step_actions(errors, map, opts) do
+    case Keyword.fetch(opts, :action_registry) do
+      {:ok, registry} ->
+        registry = editor_action_registry(registry)
+
+        map
+        |> list_field("steps")
+        |> Enum.with_index()
+        |> Enum.reduce(errors, fn {step, index}, acc ->
+          validate_step_action(acc, step, index, registry)
+        end)
+
+      :error ->
+        errors
+    end
+  end
+
+  defp validate_step_action(errors, step, index, registry) when is_map(step) do
+    case step_action(step) do
+      {:ok, action} ->
+        case ActionRegistry.validate_action(action, registry) do
+          :ok ->
+            errors
+
+          {:error, reason} ->
+            [
+              error(
+                [:steps, index, :action],
+                reason,
+                action_error_message(step, reason),
+                %{step: field(step, "name"), action: action}
+              )
+              | errors
+            ]
+        end
+
+      :missing ->
+        errors
+    end
+  end
+
+  defp validate_step_action(errors, _step, _index, _registry), do: errors
+
+  defp step_action(step) when is_map(step) do
+    if Map.has_key?(step, "action") do
+      {:ok, field(step, "action")}
+    else
+      :missing
+    end
+  end
+
+  defp editor_action_registry(registry) when is_map(registry) do
+    Enum.reduce(registry, %{}, fn {key, entry}, acc ->
+      acc
+      |> Map.put(key, entry)
+      |> Map.put(json_value(key), entry)
+    end)
+  end
+
+  defp editor_action_registry(registry) when is_list(registry) do
+    if Keyword.keyword?(registry) do
+      Enum.reduce(registry, %{}, fn {key, entry}, acc ->
+        acc
+        |> Map.put(key, entry)
+        |> Map.put(json_value(key), entry)
+      end)
+    else
+      registry
+    end
+  end
+
+  defp editor_action_registry(registry), do: registry
+
+  defp action_error_message(step, :invalid_action_key) do
+    "step #{inspect_name(field(step, "name"))} must reference an atom or non-empty string action key"
+  end
+
+  defp action_error_message(step, :unknown_action_key) do
+    "step #{inspect_name(field(step, "name"))} references unknown action key"
+  end
+
+  defp action_error_message(step, :disabled_action_key) do
+    "step #{inspect_name(field(step, "name"))} references disabled action key"
+  end
+
+  defp action_error_message(step, :incompatible_action_module) do
+    "step #{inspect_name(field(step, "name"))} references an incompatible action module"
+  end
+
+  defp action_error_message(step, :missing_action_key) do
+    "step #{inspect_name(field(step, "name"))} must reference an action key"
   end
 
   defp validate_transitions(errors, map) do
