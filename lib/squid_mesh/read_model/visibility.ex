@@ -36,6 +36,18 @@ defmodule SquidMesh.ReadModel.Visibility do
   ]
   @anomaly_fields [:source, :reason, :entry_type, :run_id, :step, :runnable_key]
   @dynamic_work_fields [:dynamic_key, :status, :reason, :origin, :nodes, :edges, :recorded_at]
+  @dynamic_work_overlay_fields [
+    :dynamic_key,
+    :status,
+    :reason,
+    :origin,
+    :origin_node_id,
+    :added_node_ids,
+    :added_edge_ids,
+    :node_count,
+    :edge_count,
+    :recorded_at
+  ]
   @dynamic_origin_fields [:runnable_key, :step, :attempt]
   @dynamic_node_fields [:id, :action, :status]
   @dynamic_edge_fields [:id, :from, :to, :type, :status]
@@ -150,6 +162,8 @@ defmodule SquidMesh.ReadModel.Visibility do
         child_runs: Enum.map(graph.child_runs, &summarize_run/1),
         child_links: Enum.map(graph.child_links, &summarize_child_link/1),
         dynamic_work: Enum.map(graph.dynamic_work, &summarize_dynamic_work/1),
+        dynamic_work_overlays:
+          Enum.map(graph.dynamic_work_overlays, &summarize_dynamic_work_overlay/1),
         anomalies: Enum.map(graph.anomalies, &summarize_anomaly/1)
     }
   end
@@ -169,6 +183,7 @@ defmodule SquidMesh.ReadModel.Visibility do
       |> update_dual_list(:child_runs, &summarize_run/1)
       |> update_dual_list(:child_links, &summarize_child_link/1)
       |> update_dual_list(:dynamic_work, &summarize_dynamic_work/1)
+      |> update_dual_list(:dynamic_work_overlays, &summarize_dynamic_work_overlay/1)
       |> update_dual_list(:anomalies, &summarize_anomaly/1)
     else
       remove_sensitive_nested(view)
@@ -269,6 +284,15 @@ defmodule SquidMesh.ReadModel.Visibility do
   end
 
   defp summarize_dynamic_work(_dynamic_work), do: %{}
+
+  defp summarize_dynamic_work_overlay(overlay) when is_map(overlay) do
+    overlay
+    |> take_dual_keys(@dynamic_work_overlay_fields)
+    |> Map.update(:origin, nil, &summarize_dynamic_origin/1)
+    |> compact()
+  end
+
+  defp summarize_dynamic_work_overlay(_overlay), do: %{}
 
   defp summarize_dynamic_origin(origin) when is_map(origin) do
     origin

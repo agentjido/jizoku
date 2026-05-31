@@ -28,6 +28,7 @@ defmodule SquidMesh.Runs.GraphInspection do
           child_runs: [map()],
           child_links: [map()],
           dynamic_work: [map()],
+          dynamic_work_overlays: [map()],
           anomalies: [map()]
         }
 
@@ -47,7 +48,8 @@ defmodule SquidMesh.Runs.GraphInspection do
     nodes: [],
     edges: [],
     anomalies: [],
-    dynamic_work: []
+    dynamic_work: [],
+    dynamic_work_overlays: []
   ]
 
   @doc false
@@ -75,6 +77,7 @@ defmodule SquidMesh.Runs.GraphInspection do
       child_runs: snapshot.child_runs,
       child_links: child_links(snapshot.child_runs),
       dynamic_work: snapshot.dynamic_work,
+      dynamic_work_overlays: dynamic_work_overlays(snapshot.dynamic_work),
       anomalies: sanitize_anomalies(snapshot.anomalies)
     }
   end
@@ -103,9 +106,61 @@ defmodule SquidMesh.Runs.GraphInspection do
       child_runs: graph.child_runs,
       child_links: graph.child_links,
       dynamic_work: graph.dynamic_work,
+      dynamic_work_overlays: graph.dynamic_work_overlays,
       anomalies: graph.anomalies
     }
   end
+
+  defp dynamic_work_overlays(dynamic_work) when is_list(dynamic_work) do
+    Enum.map(dynamic_work, &dynamic_work_overlay/1)
+  end
+
+  defp dynamic_work_overlays(_dynamic_work), do: []
+
+  defp dynamic_work_overlay(dynamic_work) when is_map(dynamic_work) do
+    nodes = field(dynamic_work, :nodes, [])
+    edges = field(dynamic_work, :edges, [])
+    origin = field(dynamic_work, :origin)
+    added_node_ids = dynamic_ids(nodes)
+    added_edge_ids = dynamic_edge_ids(edges)
+
+    compact(%{
+      dynamic_key: field(dynamic_work, :dynamic_key),
+      status: normalize_dynamic_work_status(field(dynamic_work, :status)),
+      reason: field(dynamic_work, :reason),
+      origin: origin,
+      origin_node_id: origin_step(origin),
+      added_node_ids: added_node_ids,
+      added_edge_ids: added_edge_ids,
+      node_count: length(added_node_ids),
+      edge_count: length(added_edge_ids),
+      recorded_at: field(dynamic_work, :recorded_at)
+    })
+  end
+
+  defp dynamic_work_overlay(_dynamic_work), do: %{}
+
+  defp dynamic_ids(items) when is_list(items) do
+    Enum.flat_map(items, fn item ->
+      case field(item, :id) do
+        id when is_binary(id) -> [id]
+        _invalid -> []
+      end
+    end)
+  end
+
+  defp dynamic_ids(_items), do: []
+
+  defp dynamic_edge_ids(items) when is_list(items) do
+    Enum.flat_map(items, fn item ->
+      case {field(item, :id), field(item, :from), field(item, :to)} do
+        {id, from, to} when is_binary(id) and is_binary(from) and is_binary(to) -> [id]
+        _invalid -> []
+      end
+    end)
+  end
+
+  defp dynamic_edge_ids(_items), do: []
 
   defp child_links(child_runs) when is_list(child_runs) do
     Enum.flat_map(child_runs, &child_link/1)
@@ -186,38 +241,103 @@ defmodule SquidMesh.Runs.GraphInspection do
   end
 
   defp dynamic_nodes(dynamic_work) when is_list(dynamic_work) do
-    Enum.flat_map(dynamic_work, fn dynamic ->
-      origin = Map.get(dynamic, :origin)
+    Enum.flat_map(dynamic_work, &dynamic_work_nodes/1)
+  end
 
-      dynamic
-      |> Map.get(:nodes, [])
-      |> Enum.map(fn node ->
-        %Node{
-          id: Map.fetch!(node, :id),
-          action: Map.get(node, :action),
-          status: Map.get(node, :status, :recorded),
-          current?: false,
-          dynamic?: true,
-          origin: origin,
-          metadata: Map.get(node, :metadata, %{})
-        }
-      end)
+  defp dynamic_nodes(_dynamic_work), do: []
+
+  defp dynamic_work_nodes(dynamic_work) when is_map(dynamic_work) do
+    origin = field(dynamic_work, :origin)
+
+    dynamic_work
+    |> field(:nodes, [])
+    |> dynamic_items()
+    |> Enum.flat_map(fn node ->
+      case field(node, :id) do
+        id when is_binary(id) ->
+          [
+            %Node{
+              id: id,
+              action: field(node, :action),
+              status: normalize_node_status(field(node, :status, :recorded)),
+              current?: false,
+              dynamic?: true,
+              origin: origin,
+              metadata: field(node, :metadata, %{})
+            }
+          ]
+
+        _invalid ->
+          []
+      end
     end)
   end
+
+  defp dynamic_work_nodes(_dynamic_work), do: []
 
   defp dynamic_edges(dynamic_work) when is_list(dynamic_work) do
+    Enum.flat_map(dynamic_work, &dynamic_work_edges/1)
+  end
+
+  defp dynamic_edges(_dynamic_work), do: []
+
+  defp dynamic_work_edges(dynamic_work) when is_map(dynamic_work) do
     dynamic_work
-    |> Enum.flat_map(&Map.get(&1, :edges, []))
-    |> Enum.map(fn edge ->
-      %Edge{
-        id: Map.fetch!(edge, :id),
-        from: Map.fetch!(edge, :from),
-        to: Map.fetch!(edge, :to),
-        type: Map.get(edge, :type, :dynamic),
-        status: Map.get(edge, :status, :pending)
-      }
+    |> field(:edges, [])
+    |> dynamic_items()
+    |> Enum.flat_map(fn edge ->
+      with id when is_binary(id) <- field(edge, :id),
+           from when is_binary(from) <- field(edge, :from),
+           to when is_binary(to) <- field(edge, :to) do
+        [
+          %Edge{
+            id: id,
+            from: from,
+            to: to,
+            type: normalize_dynamic_edge_type(field(edge, :type, :dynamic)),
+            status: normalize_dynamic_edge_status(field(edge, :status, :pending))
+          }
+        ]
+      else
+        _invalid ->
+          []
+      end
     end)
   end
+
+  defp dynamic_work_edges(_dynamic_work), do: []
+
+  defp dynamic_items(items) when is_list(items), do: items
+  defp dynamic_items(_items), do: []
+
+  defp normalize_dynamic_work_status(nil), do: nil
+  defp normalize_dynamic_work_status(status) when is_atom(status), do: status
+  defp normalize_dynamic_work_status("recorded"), do: :recorded
+  defp normalize_dynamic_work_status("preview"), do: :preview
+  defp normalize_dynamic_work_status(_status), do: :recorded
+
+  defp normalize_node_status(status) when is_atom(status), do: status
+  defp normalize_node_status("recorded"), do: :recorded
+  defp normalize_node_status("waiting"), do: :waiting
+  defp normalize_node_status("pending"), do: :pending
+  defp normalize_node_status("running"), do: :running
+  defp normalize_node_status("completed"), do: :completed
+  defp normalize_node_status("failed"), do: :failed
+  defp normalize_node_status(_status), do: :recorded
+
+  defp normalize_dynamic_edge_type(:dynamic), do: :dynamic
+  defp normalize_dynamic_edge_type("dynamic"), do: :dynamic
+  defp normalize_dynamic_edge_type(_type), do: :dynamic
+
+  defp normalize_dynamic_edge_status(status)
+       when status in [:selected, :skipped, :pending, :blocked],
+       do: status
+
+  defp normalize_dynamic_edge_status("selected"), do: :selected
+  defp normalize_dynamic_edge_status("skipped"), do: :skipped
+  defp normalize_dynamic_edge_status("pending"), do: :pending
+  defp normalize_dynamic_edge_status("blocked"), do: :blocked
+  defp normalize_dynamic_edge_status(_status), do: :pending
 
   defp snapshot_node_status(%Snapshot{} = snapshot, node_id, attempts) do
     cond do
@@ -476,9 +596,13 @@ defmodule SquidMesh.Runs.GraphInspection do
   defp workflow_name(workflow) when is_atom(workflow), do: Atom.to_string(workflow)
   defp workflow_name(workflow), do: workflow
 
-  defp field(map, key, default \\ nil) when is_map(map) and is_atom(key) do
+  defp field(value, key, default \\ nil)
+
+  defp field(map, key, default) when is_map(map) and is_atom(key) do
     Map.get(map, key, Map.get(map, Atom.to_string(key), default))
   end
+
+  defp field(_value, key, default) when is_atom(key), do: default
 
   defp normalize_id(nil), do: nil
   defp normalize_id(step) when is_atom(step), do: Atom.to_string(step)

@@ -411,6 +411,9 @@ Recording appends the durable fact. Terminal runs reject new dynamic work. The
 recorded structure is visible through
 `inspect_run/2`, `inspect_run_graph/2`, and `explain_run/2`, but it remains
 inspection-only until executable dynamic graph expansion is added.
+`inspect_run_graph/2` also exposes `dynamic_work_overlays` so dashboards and
+visual editors can show producer nodes, added node ids, and added edge ids
+without reconstructing them from raw dynamic-work records.
 
 ## Runtime-Authored Specs
 

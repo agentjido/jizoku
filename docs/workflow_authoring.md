@@ -680,6 +680,8 @@ Preview results include the normalized dynamic work, a graph overlay, and
 editor-friendly metadata such as `origin_node_id`, `added_node_ids`,
 `added_edge_ids`, `recordable?`, and `warnings`. Use those fields to drive visual
 editor affordances instead of recomputing graph diffs in the host UI.
+Recorded dynamic work exposes the same inspection-friendly ids through
+`dynamic_work_overlays` on `inspect_run_graph/2`.
 When `:action_registry` is supplied, every dynamic node must include a
 host-approved action key before Squid Mesh previews or records the overlay.
 

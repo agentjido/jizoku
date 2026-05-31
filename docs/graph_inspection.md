@@ -39,6 +39,7 @@ The map shape is:
   child_runs: [],
   child_links: [],
   dynamic_work: [],
+  dynamic_work_overlays: [],
   anomalies: []
 }
 ```
@@ -164,6 +165,31 @@ editor controls without requiring clients to diff graphs themselves:
 Exact duplicate previews are still valid but return `duplicate?: true`,
 `recordable?: false`, empty added id lists, and
 `warnings: [:duplicate_dynamic_work]`.
+
+Recorded dynamic work also appears on `inspect_run_graph/2` and
+`SquidMesh.Runs.GraphInspection.to_map/1` as `dynamic_work_overlays`. Each
+overlay summarizes one durable dynamic-work record with the producer node,
+stable added node ids, stable added edge ids, counts, and recorded status:
+
+```elixir
+%{
+  dynamic_key: "subscription_digest_fanout",
+  status: :recorded,
+  origin_node_id: "schedule_digest",
+  added_node_ids: ["deliver_digest:chat_1"],
+  added_edge_ids: ["schedule_digest:dynamic:deliver_digest:chat_1"],
+  node_count: 1,
+  edge_count: 1
+}
+```
+
+Use `dynamic_work_overlays` for graph controls, expandable run-detail panels,
+and change summaries. Use `dynamic_work` when the caller needs the full
+normalized durable fact.
+Preview graphs returned inside `SquidMesh.Runs.DynamicWorkPreview.to_map/1`
+may include a candidate overlay for the unrecorded dynamic-work payload. The
+top-level preview fields remain authoritative for `recordable?`, duplicate
+state, added ids, and warnings.
 
 When a dynamic-work overlay represents future executable work, pass the
 host-owned `:action_registry` option to `preview_dynamic_work/3` and
