@@ -615,6 +615,13 @@ Keep child workflows backend-neutral. Starting children is a workflow runtime
 operation; delivery backends such as Bedrock or Oban should remain behind host
 adapter boundaries.
 
+Dynamic in-run graph expansion is tracked separately from child workflows. The
+current runtime can persist and inspect dynamic-work metadata so dashboards and
+visual editors can show bounded runtime-generated nodes, producer origins, and
+dynamic edges. Those recorded dynamic nodes are inspection-only in this slice:
+they do not become executable planner work until the later dynamic graph
+execution semantics are added.
+
 Built-in steps:
 
 ```elixir

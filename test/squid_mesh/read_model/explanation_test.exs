@@ -362,6 +362,29 @@ defmodule SquidMesh.ReadModel.ExplanationTest do
     end
   end
 
+  test "tolerates stale malformed dynamic work when deriving an explanation from a snapshot" do
+    snapshot = %Snapshot{
+      run_id: @run_id,
+      workflow: @workflow,
+      queue: @queue,
+      status: :running,
+      reason: :idle,
+      terminal?: false,
+      terminal_status: nil,
+      thread_revisions: %{run: 2, dispatch: 0},
+      dynamic_work: [
+        %{"dynamic_key" => "legacy_fanout"},
+        :legacy_dynamic_work
+      ]
+    }
+
+    explanation = Explanation.from_snapshot(snapshot)
+
+    assert explanation.details.dynamic_work_count == 2
+    assert explanation.details.dynamic_work_keys == ["legacy_fanout", nil]
+    assert explanation.evidence.dynamic_work == snapshot.dynamic_work
+  end
+
   test "does not mark sparse commands as duplicates when payload identity is missing" do
     snapshot = %Snapshot{
       run_id: @run_id,

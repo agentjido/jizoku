@@ -51,6 +51,7 @@ defmodule SquidMesh.ReadModel.Explanation do
   def from_snapshot(%Snapshot{} = snapshot) do
     {summary, details, next_actions, step} = explanation_parts(snapshot)
     command_details = command_details(snapshot.command_history)
+    dynamic_work_details = dynamic_work_details(snapshot.dynamic_work)
 
     %Diagnostic{
       run_id: snapshot.run_id,
@@ -61,7 +62,10 @@ defmodule SquidMesh.ReadModel.Explanation do
       reason: snapshot.reason,
       step: step,
       summary: summary,
-      details: Map.merge(details, command_details),
+      details:
+        details
+        |> Map.merge(command_details)
+        |> Map.merge(dynamic_work_details),
       next_actions: next_actions,
       evidence: evidence(snapshot)
     }
@@ -213,6 +217,7 @@ defmodule SquidMesh.ReadModel.Explanation do
       manual_state: snapshot.manual_state,
       parent_run: snapshot.parent_run,
       child_runs: snapshot.child_runs,
+      dynamic_work: snapshot.dynamic_work,
       command_history: snapshot.command_history,
       command_counts: command_counts(snapshot.command_history),
       duplicate_commands: duplicate_commands(snapshot.command_history),
@@ -238,6 +243,23 @@ defmodule SquidMesh.ReadModel.Explanation do
   end
 
   defp command_details(_commands), do: %{}
+
+  defp dynamic_work_details([]), do: %{}
+
+  defp dynamic_work_details(dynamic_work) when is_list(dynamic_work) do
+    %{
+      dynamic_work_count: length(dynamic_work),
+      dynamic_work_keys: Enum.map(dynamic_work, &dynamic_work_key/1)
+    }
+  end
+
+  defp dynamic_work_details(_dynamic_work), do: %{}
+
+  defp dynamic_work_key(dynamic_work) when is_map(dynamic_work) do
+    Map.get(dynamic_work, :dynamic_key) || Map.get(dynamic_work, "dynamic_key")
+  end
+
+  defp dynamic_work_key(_dynamic_work), do: nil
 
   defp command_counts(commands) when is_list(commands) do
     Enum.reduce(commands, %{}, fn command, counts ->

@@ -7,7 +7,7 @@ defmodule SquidMesh.Runs.GraphInspection.Edge do
   the node shape.
   """
 
-  @type edge_type :: :transition | :dependency
+  @type edge_type :: :transition | :dependency | :dynamic
   @type edge_status :: :selected | :skipped | :pending | :blocked
 
   @type t :: %__MODULE__{

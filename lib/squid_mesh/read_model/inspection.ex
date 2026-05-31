@@ -124,6 +124,7 @@ defmodule SquidMesh.ReadModel.Inspection do
       context: snapshot_context(workflow_projection),
       parent_run: parent_run(workflow_projection),
       child_runs: WorkflowAgent.Projection.child_runs(workflow_projection),
+      dynamic_work: WorkflowAgent.Projection.dynamic_work(workflow_projection),
       replayed_from_run_id: workflow_projection.replayed_from_run_id,
       queue: queue,
       status: WorkflowAgent.status(workflow_agent),

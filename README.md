@@ -395,6 +395,27 @@ graph
 
 The graph includes nodes, edges, and the selected transition path for conditional routing.
 
+### Node Visibility and Redaction
+
+Graph nodes can include host-domain inputs, outputs, errors, manual metadata,
+and dynamic-work metadata. By default, `inspect_run_graph/2` omits detailed
+payload fields; request `include_history: true` only for trusted operator
+surfaces.
+
+Before exposing graph payloads outside a trusted boundary, apply a host-owned
+visibility policy:
+
+```elixir
+{:ok, graph} = SquidMesh.inspect_run_graph(run.run_id, include_history: true)
+
+{:ok, visible_graph} =
+  SquidMesh.ReadModel.Visibility.redact(graph, current_actor, MyApp.VisibilityPolicy)
+```
+
+External/operator views preserve node ids, status, current state, recovery
+availability, dynamic-work shape, and safe edge topology while removing node
+payloads, errors, attempt internals, command history, and sensitive metadata.
+
 ## Optional Dashboard
 
 [SquidSonar](https://github.com/dark-trench/squid_sonar) is the optional read-only Phoenix LiveView dashboard for Squid Mesh. Mount it inside a Phoenix host application to inspect recent runs, filter by status, search runtime metadata, and view run detail pages with diagnosis, history counts, last error information, and workflow graph visualization.
