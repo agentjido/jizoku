@@ -1232,8 +1232,16 @@ defmodule MinimalHostApp.Smoke do
            ) do
       preview_payload = SquidMesh.Runs.DynamicWorkPreview.to_map(preview)
 
+      expected_node_id = "notify_invoice:inv_dynamic_demo"
+      expected_edge_id = "#{runnable.step}:dynamic:#{expected_node_id}"
+
       if Map.fetch!(preview_payload, :duplicate?) or
-           not Enum.any?(preview_payload.graph.nodes, &(&1.id == "notify_invoice:inv_dynamic_demo")) do
+           not Map.fetch!(preview_payload, :recordable?) or
+           Map.fetch!(preview_payload, :origin_node_id) != runnable.step or
+           Map.fetch!(preview_payload, :added_node_ids) != [expected_node_id] or
+           Map.fetch!(preview_payload, :added_edge_ids) != [expected_edge_id] or
+           not Enum.empty?(Map.fetch!(preview_payload, :warnings)) or
+           not Enum.any?(preview_payload.graph.nodes, &(&1.id == expected_node_id)) do
         {:error, :unexpected_dynamic_work_preview}
       else
         :ok

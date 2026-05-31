@@ -10,7 +10,9 @@
 - Use `SquidMesh.record_dynamic_work/3` to persist validated dynamic nodes and
   edges that visual editors or dashboards should show on a run graph.
 - Use `SquidMesh.preview_dynamic_work/3` to validate candidate dynamic nodes and
-  render the graph overlay before committing them to the journal.
+  render the graph overlay before committing them to the journal. Prefer its
+  `origin_node_id`, `added_node_ids`, `added_edge_ids`, `recordable?`, and
+  `warnings` fields over ad hoc graph diffing in visual editor clients.
 - Keep list responses redacted by default; fetch detailed history only when the
   caller asks for it.
 - Use `definition_version` from list, inspection, graph, and explanation

@@ -141,6 +141,28 @@ them from declared workflow steps:
 }
 ```
 
+`SquidMesh.Runs.DynamicWorkPreview.to_map/1` exposes stable overlay metadata for
+editor controls without requiring clients to diff graphs themselves:
+
+```elixir
+%{
+  run_id: "run_123",
+  duplicate?: false,
+  recordable?: true,
+  origin_node_id: "schedule_digest",
+  added_node_ids: ["deliver_digest:chat_1"],
+  added_edge_ids: ["schedule_digest:dynamic:deliver_digest:chat_1"],
+  warnings: [],
+  dynamic_work: %{dynamic_key: "subscription_digest_fanout"},
+  graph: %{nodes: [...], edges: [...]}
+}
+```
+
+`recordable?` means recording would append a new durable dynamic-work fact.
+Exact duplicate previews are still valid but return `duplicate?: true`,
+`recordable?: false`, empty added id lists, and
+`warnings: [:duplicate_dynamic_work]`.
+
 The current dynamic-work support is inspection-only. It lets dashboards and
 visual editors show bounded runtime-generated structure before Squid Mesh adds
 execution semantics for dynamic in-run graph expansion. Previewing or recording

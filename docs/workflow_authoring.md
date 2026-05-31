@@ -642,6 +642,11 @@ still active; terminal runs reject new dynamic-work previews and records.
   })
 ```
 
+Preview results include the normalized dynamic work, a graph overlay, and
+editor-friendly metadata such as `origin_node_id`, `added_node_ids`,
+`added_edge_ids`, `recordable?`, and `warnings`. Use those fields to drive visual
+editor affordances instead of recomputing graph diffs in the host UI.
+
 Those recorded dynamic nodes are inspection-only in this slice: they do not
 become executable planner work until the later dynamic graph execution semantics
 are added.
