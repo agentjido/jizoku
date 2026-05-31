@@ -2348,8 +2348,24 @@ defmodule SquidMeshTest do
       assert edges["charge_card:dynamic:deliver_digest:chat_1"].type == :dynamic
       assert graph.dynamic_work == snapshot.dynamic_work
 
+      assert [
+               %{
+                 dynamic_key: "subscription_digest_fanout",
+                 status: :recorded,
+                 reason: :runtime_fanout,
+                 origin: %{step: "charge_card"},
+                 origin_node_id: "charge_card",
+                 added_node_ids: ["deliver_digest:chat_1"],
+                 added_edge_ids: ["charge_card:dynamic:deliver_digest:chat_1"],
+                 node_count: 1,
+                 edge_count: 1,
+                 recorded_at: @read_model_visible_at
+               }
+             ] = graph.dynamic_work_overlays
+
       graph_payload = SquidMesh.Runs.GraphInspection.to_map(graph)
       assert [%{dynamic_key: "subscription_digest_fanout"}] = graph_payload.dynamic_work
+      assert [%{origin_node_id: "charge_card"}] = graph_payload.dynamic_work_overlays
 
       assert Enum.any?(
                graph_payload.nodes,

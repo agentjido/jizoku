@@ -131,6 +131,213 @@ defmodule SquidMesh.Runs.GraphInspectionTest do
              GraphInspection.to_map(graph)
   end
 
+  test "dynamic work overlays stay consistent with stale string-keyed graph records" do
+    snapshot = %Snapshot{
+      run_id: @run_id,
+      workflow: "MissingWorkflow",
+      queue: "default",
+      status: :running,
+      reason: :run_started,
+      terminal?: false,
+      terminal_status: nil,
+      thread_revisions: %{run: 2, dispatch: 0},
+      dynamic_work: [
+        :legacy_dynamic_work,
+        %{
+          "dynamic_key" => "string_fanout",
+          "status" => "recorded",
+          "origin" => %{"step" => "fanout", "secret" => "internal"},
+          "nodes" => [
+            %{"action" => "missing.id"},
+            %{"id" => "deliver_digest:chat_1", "action" => "digest.deliver"}
+          ],
+          "edges" => [
+            %{"id" => "missing_to", "from" => "fanout"},
+            %{
+              "id" => "fanout:dynamic:deliver_digest:chat_1",
+              "from" => "fanout",
+              "to" => "deliver_digest:chat_1",
+              "type" => "dynamic"
+            }
+          ],
+          "metadata" => %{"secret" => "internal"}
+        }
+      ]
+    }
+
+    graph = GraphInspection.from_snapshot(snapshot, source: :read_model)
+
+    assert ["deliver_digest:chat_1"] = Enum.map(graph.nodes, & &1.id)
+    assert ["fanout:dynamic:deliver_digest:chat_1"] = Enum.map(graph.edges, & &1.id)
+
+    assert [
+             %{},
+             %{
+               dynamic_key: "string_fanout",
+               origin_node_id: "fanout",
+               added_node_ids: ["deliver_digest:chat_1"],
+               added_edge_ids: ["fanout:dynamic:deliver_digest:chat_1"],
+               node_count: 1,
+               edge_count: 1
+             } = overlay
+           ] = graph.dynamic_work_overlays
+
+    refute Map.has_key?(overlay, :metadata)
+  end
+
+  test "dynamic work graph inspection tolerates non-list dynamic work shapes" do
+    snapshot = %Snapshot{
+      run_id: @run_id,
+      workflow: "MissingWorkflow",
+      queue: "default",
+      status: :running,
+      reason: :run_started,
+      terminal?: false,
+      terminal_status: nil,
+      thread_revisions: %{run: 2, dispatch: 0},
+      dynamic_work: :legacy_dynamic_work
+    }
+
+    graph = GraphInspection.from_snapshot(snapshot, source: :read_model)
+
+    assert graph.nodes == []
+    assert graph.edges == []
+    assert graph.dynamic_work_overlays == []
+  end
+
+  test "dynamic work overlays tolerate non-list node and edge fields" do
+    snapshot = %Snapshot{
+      run_id: @run_id,
+      workflow: "MissingWorkflow",
+      queue: "default",
+      status: :running,
+      reason: :run_started,
+      terminal?: false,
+      terminal_status: nil,
+      thread_revisions: %{run: 2, dispatch: 0},
+      dynamic_work: [
+        %{
+          dynamic_key: "legacy_shape",
+          nodes: :legacy_nodes,
+          edges: :legacy_edges
+        }
+      ]
+    }
+
+    graph = GraphInspection.from_snapshot(snapshot, source: :read_model)
+
+    assert graph.nodes == []
+    assert graph.edges == []
+
+    assert [
+             %{
+               dynamic_key: "legacy_shape",
+               added_node_ids: [],
+               added_edge_ids: [],
+               node_count: 0,
+               edge_count: 0
+             }
+           ] = graph.dynamic_work_overlays
+  end
+
+  test "normalizes dynamic node and edge status strings" do
+    dynamic_nodes =
+      Enum.map(
+        ["recorded", "waiting", "pending", "running", "completed", "failed", "unknown"],
+        fn status ->
+          %{"id" => "node_#{status}", "status" => status}
+        end
+      )
+
+    dynamic_edges = [
+      %{
+        "id" => "edge_selected",
+        "from" => "node_recorded",
+        "to" => "node_waiting",
+        "status" => "selected"
+      },
+      %{
+        "id" => "edge_skipped",
+        "from" => "node_recorded",
+        "to" => "node_pending",
+        "status" => "skipped"
+      },
+      %{
+        "id" => "edge_pending",
+        "from" => "node_recorded",
+        "to" => "node_running",
+        "status" => "pending"
+      },
+      %{
+        "id" => "edge_blocked",
+        "from" => "node_recorded",
+        "to" => "node_completed",
+        "status" => "blocked"
+      },
+      %{
+        "id" => "edge_unknown",
+        "from" => "node_recorded",
+        "to" => "node_failed",
+        "status" => "unknown"
+      },
+      %{
+        "id" => "edge_custom_type",
+        "from" => "node_recorded",
+        "to" => "node_unknown",
+        "type" => "custom"
+      }
+    ]
+
+    snapshot = %Snapshot{
+      run_id: @run_id,
+      workflow: "MissingWorkflow",
+      queue: "default",
+      status: :running,
+      reason: :run_started,
+      terminal?: false,
+      terminal_status: nil,
+      thread_revisions: %{run: 2, dispatch: 0},
+      dynamic_work: [
+        %{
+          "dynamic_key" => "status_fanout",
+          "status" => "preview",
+          "nodes" => dynamic_nodes,
+          "edges" => dynamic_edges
+        },
+        %{
+          "dynamic_key" => "unknown_status_fanout",
+          "status" => "unknown",
+          "nodes" => [],
+          "edges" => []
+        }
+      ]
+    }
+
+    graph = GraphInspection.from_snapshot(snapshot, source: :read_model)
+    nodes_by_id = Map.new(graph.nodes, &{&1.id, &1})
+    edges_by_id = Map.new(graph.edges, &{&1.id, &1})
+
+    assert nodes_by_id["node_recorded"].status == :recorded
+    assert nodes_by_id["node_waiting"].status == :waiting
+    assert nodes_by_id["node_pending"].status == :pending
+    assert nodes_by_id["node_running"].status == :running
+    assert nodes_by_id["node_completed"].status == :completed
+    assert nodes_by_id["node_failed"].status == :failed
+    assert nodes_by_id["node_unknown"].status == :recorded
+
+    assert edges_by_id["edge_selected"].status == :selected
+    assert edges_by_id["edge_skipped"].status == :skipped
+    assert edges_by_id["edge_pending"].status == :pending
+    assert edges_by_id["edge_blocked"].status == :blocked
+    assert edges_by_id["edge_unknown"].status == :pending
+    assert edges_by_id["edge_custom_type"].type == :dynamic
+
+    assert [
+             %{status: :preview, node_count: 7, edge_count: 6},
+             %{status: :recorded, node_count: 0, edge_count: 0}
+           ] = graph.dynamic_work_overlays
+  end
+
   test "marks greater-than conditional transition edges from persisted route evidence" do
     snapshot = %Snapshot{
       run_id: @run_id,

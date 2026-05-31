@@ -189,6 +189,20 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
                edges: [%{type: :dynamic}]
              }
            ] = redacted.dynamic_work
+
+    assert [
+             %{
+               dynamic_key: "fanout",
+               origin_node_id: "charge_card",
+               added_node_ids: ["deliver_digest:chat_1"],
+               added_edge_ids: ["charge_card:dynamic:deliver_digest:chat_1"]
+             } = overlay,
+             %{}
+           ] = redacted.dynamic_work_overlays
+
+    refute Map.has_key?(overlay, :metadata)
+    refute Map.has_key?(overlay.origin, :tenant_id)
+    refute Map.has_key?(overlay.origin, :secret)
   end
 
   test "redacts JSON-ready graph maps by default" do
@@ -205,6 +219,19 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
       graph()
       |> GraphInspection.to_map()
       |> Map.put("child_links", [mixed_key_child_link])
+      |> Map.put("dynamic_work_overlays", [
+        %{
+          "dynamic_key" => "mixed_fanout",
+          "origin" => %{
+            "runnable_key" => "run_123:mixed:1",
+            "step" => "mixed",
+            "tenant_id" => "tenant_123"
+          },
+          "origin_node_id" => "mixed",
+          "added_node_ids" => ["deliver_digest:chat_mixed"],
+          "metadata" => %{"secret" => "internal"}
+        }
+      ])
 
     assert {:ok, redacted} = Visibility.redact(graph_map, %{role: :external})
 
@@ -228,6 +255,13 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
 
     assert [%{child_run_id: "child_mixed"} = mixed_key_link] = redacted["child_links"]
     refute Map.has_key?(mixed_key_link.origin, :tenant_id)
+
+    assert [%{origin_node_id: "charge_card"} = overlay, %{}] = redacted.dynamic_work_overlays
+    refute Map.has_key?(overlay, :metadata)
+
+    assert [%{origin_node_id: "mixed"} = mixed_overlay] = redacted["dynamic_work_overlays"]
+    refute Map.has_key?(mixed_overlay, :metadata)
+    refute Map.has_key?(mixed_overlay.origin, :tenant_id)
   end
 
   test "redacts stale malformed dynamic work shapes" do
@@ -551,6 +585,28 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
           metadata: %{secret: "internal"},
           recorded_at: @now
         }
+      ],
+      dynamic_work_overlays: [
+        %{
+          dynamic_key: "fanout",
+          status: :recorded,
+          reason: :runtime_fanout,
+          origin: %{
+            runnable_key: "run_123:charge_card:1",
+            step: "charge_card",
+            attempt: 1,
+            tenant_id: "tenant_123",
+            secret: "internal"
+          },
+          origin_node_id: "charge_card",
+          added_node_ids: ["deliver_digest:chat_1"],
+          added_edge_ids: ["charge_card:dynamic:deliver_digest:chat_1"],
+          node_count: 1,
+          edge_count: 1,
+          metadata: %{secret: "internal"},
+          recorded_at: @now
+        },
+        :legacy_overlay
       ],
       anomalies: [%{source: :workflow, reason: :duplicate_command, payload: %{secret: true}}]
     }

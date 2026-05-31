@@ -1301,7 +1301,20 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the dynamic work inspection smoke path" do
-    assert %{dynamic_work: [%{dynamic_key: "dynamic_invoice_fanout"}]} =
+    assert %{
+             dynamic_work: [%{dynamic_key: "dynamic_invoice_fanout"}],
+             dynamic_work_overlays: [
+               %{
+                 dynamic_key: "dynamic_invoice_fanout",
+                 status: :recorded,
+                 origin_node_id: "load_account",
+                 added_node_ids: ["notify_invoice:inv_dynamic_demo"],
+                 added_edge_ids: ["load_account:dynamic:notify_invoice:inv_dynamic_demo"],
+                 node_count: 1,
+                 edge_count: 1
+               }
+             ]
+           } =
              Smoke.run_dynamic_work_inspection!()
   end
 

@@ -610,6 +610,18 @@ defmodule MinimalHostApp.Smoke do
                  graph_payload.dynamic_work,
                  &(&1.dynamic_key == "dynamic_invoice_fanout")
                ) and
+                 Enum.any?(
+                   graph_payload.dynamic_work_overlays,
+                   &(&1.dynamic_key == "dynamic_invoice_fanout" and
+                       &1.status == :recorded and
+                       &1.origin_node_id == "load_account" and
+                       &1.added_node_ids == ["notify_invoice:inv_dynamic_demo"] and
+                       &1.added_edge_ids == [
+                         "load_account:dynamic:notify_invoice:inv_dynamic_demo"
+                       ] and
+                       &1.node_count == 1 and
+                       &1.edge_count == 1)
+                 ) and
                  Enum.any?(graph_payload.nodes, &(&1.id == "notify_invoice:inv_dynamic_demo")) and
                  explanation.details.dynamic_work_count == 1 do
           raise "unexpected dynamic work inspection smoke result"

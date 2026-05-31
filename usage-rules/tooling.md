@@ -15,6 +15,9 @@
   render the graph overlay before committing them to the journal. Prefer its
   `origin_node_id`, `added_node_ids`, `added_edge_ids`, `recordable?`, and
   `warnings` fields over ad hoc graph diffing in visual editor clients.
+- Use `dynamic_work_overlays` from `SquidMesh.inspect_run_graph/2` or
+  `GraphInspection.to_map/1` to inspect recorded dynamic work groups; use raw
+  `dynamic_work` only when the caller needs the full normalized durable record.
 - Pass host-owned `:action_registry` options when previewing or recording
   dynamic nodes that represent executable work candidates.
 - Keep list responses redacted by default; fetch detailed history only when the
