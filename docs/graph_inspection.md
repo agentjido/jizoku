@@ -36,6 +36,8 @@ The map shape is:
   terminal?: false,
   nodes: [...],
   edges: [...],
+  child_runs: [],
+  child_links: [],
   dynamic_work: [],
   anomalies: []
 }
@@ -169,6 +171,40 @@ execution semantics for dynamic in-run graph expansion. Previewing or recording
 dynamic work does not schedule dispatch attempts, alter dependency readiness, or
 change terminal-state decisions. Terminal runs reject new dynamic-work previews
 and records.
+
+## Child Run Links
+
+Nested workflow starts remain separate durable runs. The parent graph exposes
+their factual records through `child_runs` and a derived `child_links` overlay
+that graph UIs can render as subflow links without treating the child as an
+inline executable node:
+
+```elixir
+%{
+  id: "start_nested_invite:child_run:child_run_123",
+  from: "start_nested_invite",
+  to: "child_run_123",
+  type: :child_run,
+  status: :linked,
+  child_run_id: "child_run_123",
+  child_workflow: "Elixir.MyApp.Workflows.InviteDelivery",
+  child_trigger: "deliver_invite",
+  child_key: "invite_guest_456",
+  origin: %{step: "start_nested_invite", runnable_key: "run_123:start_nested_invite:1", attempt: 1},
+  metadata: %{guest_id: "guest_456"},
+  started_at: ~U[2026-05-30 12:00:00Z]
+}
+```
+
+Use `child_links` for visual inspection and editor-friendly stable ids. Use
+`child_runs` when the UI needs the full child-run fact, and call
+`inspect_run/2` or `inspect_run_graph/2` on `child_run_id` for the child
+workflow's own status, nodes, and edges. Child links are not workflow transition
+edges and do not affect dependency readiness, retry behavior, replay behavior,
+or cancellation boundaries. `started_at` is optional and appears only when the
+durable child-run fact includes it. Stale child-run facts without both
+`child_run_id` and an origin step remain visible in `child_runs`, but they do
+not produce a `child_links` entry.
 
 ## Edge Shape
 

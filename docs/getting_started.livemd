@@ -391,6 +391,8 @@ child_queue = "livebook-child"
 {:ok, parent_completed} = SquidMesh.execute_next(worker_opts)
 
 [%{child_run_id: child_run_id}] = parent_completed.child_runs
+{:ok, nested_graph} = SquidMesh.inspect_run_graph(nested_parent.run_id, opts)
+nested_graph_payload = SquidMesh.Runs.GraphInspection.to_map(nested_graph)
 
 {:ok, child_retrying} =
   SquidMesh.execute_next(Keyword.merge(worker_opts, queue: child_queue))
@@ -401,6 +403,7 @@ child_queue = "livebook-child"
 %{
   parent_attempts: Enum.map(parent_completed.attempts, &SquidMeshLivebook.Output.attempt/1),
   parent_child_runs: parent_completed.child_runs,
+  parent_child_links: nested_graph_payload.child_links,
   parent_context: parent_completed.context.invite_child,
   child_before_drain: child_run_id,
   child_retrying_attempts: Enum.map(child_retrying.attempts, &SquidMeshLivebook.Output.attempt/1),
@@ -412,7 +415,9 @@ child_queue = "livebook-child"
 The parent attempted `start_invite_child` twice, but `child_runs` contains one
 child because the second parent attempt reused the original `child_key`. The
 child also retried once before completing, and its `parent_run` points back to
-the parent step that created it.
+the parent step that created it. Graph inspection also exposes `child_links` so
+UIs can render the parent-to-child subflow without treating the child workflow
+as an inline node.
 
 ## Inspect The Run
 
@@ -454,14 +459,15 @@ graph_payload = SquidMesh.Runs.GraphInspection.to_map(graph)
   source: graph.source,
   current_node_id: graph.current_node_id,
   nodes: Enum.map(graph_payload.nodes, &SquidMeshLivebook.Output.node/1),
-  edges: Enum.map(graph_payload.edges, &SquidMeshLivebook.Output.edge/1)
+  edges: Enum.map(graph_payload.edges, &SquidMeshLivebook.Output.edge/1),
+  child_links: graph_payload.child_links
 }
 ```
 
 The graph contract is the shape a host UI can serialize after applying its own
 authorization and redaction policy. See the
-[Graph Inspection Contract](graph_inspection.md) for the full node and edge
-shape.
+[Graph Inspection Contract](graph_inspection.md) for the full node, edge, and
+child-link shape.
 
 ## Explain The State
 

@@ -39,6 +39,18 @@ defmodule SquidMesh.ReadModel.Visibility do
   @dynamic_origin_fields [:runnable_key, :step, :attempt]
   @dynamic_node_fields [:id, :action, :status]
   @dynamic_edge_fields [:id, :from, :to, :type, :status]
+  @child_link_fields [
+    :id,
+    :from,
+    :to,
+    :type,
+    :status,
+    :child_run_id,
+    :child_workflow,
+    :child_trigger,
+    :child_key,
+    :origin
+  ]
 
   @type scope :: :external | :operator | :auditor
   @type policy ::
@@ -136,6 +148,7 @@ defmodule SquidMesh.ReadModel.Visibility do
       graph
       | nodes: Enum.map(graph.nodes, &summarize_node/1),
         child_runs: Enum.map(graph.child_runs, &summarize_run/1),
+        child_links: Enum.map(graph.child_links, &summarize_child_link/1),
         dynamic_work: Enum.map(graph.dynamic_work, &summarize_dynamic_work/1),
         anomalies: Enum.map(graph.anomalies, &summarize_anomaly/1)
     }
@@ -149,11 +162,45 @@ defmodule SquidMesh.ReadModel.Visibility do
     }
   end
 
-  defp redact_view(view, _scope) when is_map(view), do: remove_sensitive_nested(view)
+  defp redact_view(view, _scope) when is_map(view) do
+    if graph_map?(view) do
+      view
+      |> remove_sensitive_nested()
+      |> update_dual_list(:child_runs, &summarize_run/1)
+      |> update_dual_list(:child_links, &summarize_child_link/1)
+      |> update_dual_list(:dynamic_work, &summarize_dynamic_work/1)
+      |> update_dual_list(:anomalies, &summarize_anomaly/1)
+    else
+      remove_sensitive_nested(view)
+    end
+  end
 
   defp redact_view(view, scope) when is_list(view), do: Enum.map(view, &redact_view(&1, scope))
 
   defp redact_view(view, _scope), do: view
+
+  defp graph_map?(view) when is_map(view) do
+    is_list(value(view, :nodes)) and is_list(value(view, :edges)) and
+      (not is_nil(value(view, :run_id)) or not is_nil(value(view, :workflow)))
+  end
+
+  defp update_dual_list(map, key, fun)
+       when is_map(map) and is_atom(key) and is_function(fun, 1) do
+    map
+    |> update_list_key(key, fun)
+    |> update_list_key(Atom.to_string(key), fun)
+  end
+
+  defp update_list_key(map, key, fun) do
+    if Map.has_key?(map, key) do
+      Map.update!(map, key, &summarize_list(&1, fun))
+    else
+      map
+    end
+  end
+
+  defp summarize_list(value, fun) when is_list(value), do: Enum.map(value, fun)
+  defp summarize_list(_value, _fun), do: []
 
   defp summarize_node(%Node{} = node) do
     %Node{
@@ -259,6 +306,15 @@ defmodule SquidMesh.ReadModel.Visibility do
 
   defp summarize_dynamic_edge(_edge), do: %{}
 
+  defp summarize_child_link(child_link) when is_map(child_link) do
+    child_link
+    |> take_dual_keys(@child_link_fields)
+    |> Map.update(:origin, nil, &summarize_dynamic_origin/1)
+    |> compact()
+  end
+
+  defp summarize_child_link(_child_link), do: %{}
+
   defp summarize_details(details) when is_map(details) do
     if manual_details?(details) do
       summarize_manual_state(details)
@@ -331,6 +387,7 @@ defmodule SquidMesh.ReadModel.Visibility do
       :claim_id,
       :owner_id,
       :lease_until,
+      :started_at,
       :token,
       :secret
     ]
@@ -350,6 +407,7 @@ defmodule SquidMesh.ReadModel.Visibility do
       "claim_id",
       "owner_id",
       "lease_until",
+      "started_at",
       "token",
       "secret"
     ]

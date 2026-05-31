@@ -26,6 +26,7 @@ defmodule SquidMesh.Runs.GraphInspection do
           nodes: [Node.t()],
           edges: [Edge.t()],
           child_runs: [map()],
+          child_links: [map()],
           dynamic_work: [map()],
           anomalies: [map()]
         }
@@ -41,6 +42,7 @@ defmodule SquidMesh.Runs.GraphInspection do
     :current_node_id,
     :terminal?,
     child_runs: [],
+    child_links: [],
     current_node_ids: [],
     nodes: [],
     edges: [],
@@ -71,6 +73,7 @@ defmodule SquidMesh.Runs.GraphInspection do
       nodes: nodes,
       edges: graph_edges(definition, nodes) ++ dynamic_edges(snapshot.dynamic_work),
       child_runs: snapshot.child_runs,
+      child_links: child_links(snapshot.child_runs),
       dynamic_work: snapshot.dynamic_work,
       anomalies: sanitize_anomalies(snapshot.anomalies)
     }
@@ -98,10 +101,54 @@ defmodule SquidMesh.Runs.GraphInspection do
       nodes: Enum.map(graph.nodes, &Node.to_map/1),
       edges: Enum.map(graph.edges, &Edge.to_map/1),
       child_runs: graph.child_runs,
+      child_links: graph.child_links,
       dynamic_work: graph.dynamic_work,
       anomalies: graph.anomalies
     }
   end
+
+  defp child_links(child_runs) when is_list(child_runs) do
+    Enum.flat_map(child_runs, &child_link/1)
+  end
+
+  defp child_links(_child_runs), do: []
+
+  defp child_link(child_run) when is_map(child_run) do
+    origin = field(child_run, :origin)
+    child_run_id = field(child_run, :child_run_id)
+    from = origin_step(origin)
+
+    if is_binary(child_run_id) and is_binary(from) and from != "" do
+      [
+        compact(%{
+          id: Enum.join([from, "child_run", child_run_id], ":"),
+          from: from,
+          to: child_run_id,
+          type: :child_run,
+          status: :linked,
+          child_run_id: child_run_id,
+          child_workflow: field(child_run, :child_workflow),
+          child_trigger: field(child_run, :child_trigger),
+          child_key: field(child_run, :child_key),
+          origin: origin,
+          metadata: field(child_run, :metadata, %{}),
+          started_at: field(child_run, :started_at)
+        })
+      ]
+    else
+      []
+    end
+  end
+
+  defp child_link(_child_run), do: []
+
+  defp origin_step(origin) when is_map(origin) do
+    origin
+    |> field(:step)
+    |> normalize_id()
+  end
+
+  defp origin_step(_origin), do: nil
 
   defp snapshot_nodes(%Snapshot{} = snapshot, definition, include_details?) do
     attempts_by_step = Enum.group_by(snapshot.attempts, &Map.fetch!(&1, :step))
@@ -428,6 +475,10 @@ defmodule SquidMesh.Runs.GraphInspection do
 
   defp workflow_name(workflow) when is_atom(workflow), do: Atom.to_string(workflow)
   defp workflow_name(workflow), do: workflow
+
+  defp field(map, key, default \\ nil) when is_map(map) and is_atom(key) do
+    Map.get(map, key, Map.get(map, Atom.to_string(key), default))
+  end
 
   defp normalize_id(nil), do: nil
   defp normalize_id(step) when is_atom(step), do: Atom.to_string(step)

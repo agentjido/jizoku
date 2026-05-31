@@ -328,6 +328,22 @@ defmodule BedrockMinimalHostApp.SquidMeshLeaseAdapterTest do
     assert [%{child_run_id: child_run_id, child_key: "invite_guest_bedrock"}] =
              retried_parent.child_runs
 
+    assert {:ok, parent_graph} = SquidMesh.inspect_run_graph(parent_summary.run_id)
+    parent_graph_map = SquidMesh.Runs.GraphInspection.to_map(parent_graph)
+
+    assert [
+             %{
+               from: "start_nested_invite",
+               to: ^child_run_id,
+               type: :child_run,
+               status: :linked,
+               child_run_id: ^child_run_id,
+               child_key: "invite_guest_bedrock",
+               child_trigger: "deliver_invite",
+               metadata: %{guest_id: "guest_bedrock"}
+             }
+           ] = parent_graph_map.child_links
+
     assert [%{step: "start_nested_invite", status: :retry_scheduled, attempt_number: 2}] =
              retried_parent.visible_attempts
 
@@ -341,6 +357,13 @@ defmodule BedrockMinimalHostApp.SquidMeshLeaseAdapterTest do
 
     assert {:ok, reconstructed_parent} = WorkflowRuns.inspect_run(retried_parent.run_id)
     assert reconstructed_parent.child_runs == retried_parent.child_runs
+    assert {:ok, reconstructed_parent_graph} = SquidMesh.inspect_run_graph(retried_parent.run_id)
+
+    reconstructed_parent_graph_map =
+      SquidMesh.Runs.GraphInspection.to_map(reconstructed_parent_graph)
+
+    assert [%{from: "start_nested_invite", to: ^child_run_id, type: :child_run}] =
+             reconstructed_parent_graph_map.child_links
 
     assert {:ok, reconstructed_waiting_child} =
              WorkflowRuns.inspect_run(child_run_id, queue: child_queue)

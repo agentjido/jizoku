@@ -495,15 +495,15 @@ defmodule MinimalHostApp.Smoke do
 
     with_journal_runtime_config(queue, fn ->
       with {:ok, started_run} <-
-           SquidMesh.start(
-             MinimalHostApp.Workflows.DependencyRecovery,
-             :dependency_recovery,
-             %{
+             SquidMesh.start(
+               MinimalHostApp.Workflows.DependencyRecovery,
+               :dependency_recovery,
+               %{
                  account_id: "acct_dynamic_demo",
-               invoice_id: "inv_dynamic_demo",
-               attempt_id: "attempt_dynamic_demo"
-             }
-           ),
+                 invoice_id: "inv_dynamic_demo",
+                 attempt_id: "attempt_dynamic_demo"
+               }
+             ),
            :ok <- preview_dynamic_work!(started_run),
            :ok <- record_dynamic_work!(started_run),
            {:ok, inspected_run} <- drain_journal_run(started_run.run_id, @journal_run_attempts),
@@ -1357,13 +1357,15 @@ defmodule MinimalHostApp.Smoke do
     do: {:error, :unexpected_saga_compensation}
 
   defp ensure_nested_child_link(
-         %SquidMesh.ReadModel.Inspection.Snapshot{child_runs: child_runs},
+         %SquidMesh.ReadModel.Inspection.Snapshot{run_id: parent_run_id, child_runs: child_runs},
          child_key,
          child_queue
        ) do
     case child_runs do
       [%{child_key: ^child_key, child_run_id: child_run_id}] ->
-        with {:ok, child_run} <- WorkflowRuns.inspect_run(child_run_id, queue: child_queue) do
+        with {:ok, child_run} <- WorkflowRuns.inspect_run(child_run_id, queue: child_queue),
+             {:ok, graph} <- SquidMesh.inspect_run_graph(parent_run_id),
+             :ok <- ensure_nested_graph_child_link(graph, child_run_id, child_key) do
           if child_run.status == :running do
             {:ok, child_run_id}
           else
@@ -1376,9 +1378,32 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
+  defp ensure_nested_graph_child_link(graph, child_run_id, child_key) do
+    graph_map = SquidMesh.Runs.GraphInspection.to_map(graph)
+
+    case Map.fetch!(graph_map, :child_links) do
+      [
+        %{
+          from: "start_nested_invite",
+          to: ^child_run_id,
+          type: :child_run,
+          status: :linked,
+          child_key: ^child_key
+        }
+      ] ->
+        :ok
+
+      _other ->
+        {:error, :unexpected_nested_graph_child_link}
+    end
+  end
+
   defp ensure_reconstructed_nested_runs(parent_run_id, child_run_id, child_runs, child_queue) do
-    with {:ok, parent_run} <- WorkflowRuns.inspect_run(parent_run_id),
-         {:ok, child_run} <- WorkflowRuns.inspect_run(child_run_id, queue: child_queue) do
+    with {:ok, child_key} <- nested_child_key(child_runs),
+         {:ok, parent_run} <- WorkflowRuns.inspect_run(parent_run_id),
+         {:ok, child_run} <- WorkflowRuns.inspect_run(child_run_id, queue: child_queue),
+         {:ok, graph} <- SquidMesh.inspect_run_graph(parent_run_id),
+         :ok <- ensure_nested_graph_child_link(graph, child_run_id, child_key) do
       cond do
         parent_run.child_runs != child_runs ->
           {:error, :unexpected_reconstructed_nested_child_runs}
@@ -1394,6 +1419,9 @@ defmodule MinimalHostApp.Smoke do
       end
     end
   end
+
+  defp nested_child_key([%{child_key: child_key}]) when is_binary(child_key), do: {:ok, child_key}
+  defp nested_child_key(_child_runs), do: {:error, :unexpected_nested_child_runs}
 
   defp ensure_reconstructed_nested_child_retry(child_run_id, child_queue) do
     with {:ok, child_run} <- WorkflowRuns.inspect_run(child_run_id, queue: child_queue) do

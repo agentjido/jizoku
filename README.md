@@ -446,6 +446,9 @@ graph
 ```
 
 The graph includes nodes, edges, and the selected transition path for conditional routing.
+Nested workflow starts stay as separate runs; parent graph maps include
+`child_links` so dashboards and visual editors can render subflow links without
+treating child workflows as inline executable nodes.
 
 ### Node Visibility and Redaction
 
