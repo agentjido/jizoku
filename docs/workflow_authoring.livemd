@@ -238,13 +238,15 @@ editor_map =
 
 :ok = SquidMesh.Workflow.EditorSpec.validate_map(editor_map)
 {:ok, draft_graph} = SquidMesh.Workflow.EditorSpec.preview_graph(editor_map)
+{:ok, draft_diff} = SquidMesh.Workflow.EditorSpec.diff(spec, editor_map)
 
 Map.take(draft_graph, ["source", "status", "workflow"])
 ```
 
 If the editor map uses runtime-authored top-level action keys, pass the host
 registry to `validate_map/2` and `preview_graph/2` before accepting the draft
-graph.
+graph. Use `diff/2` or `diff/3` when a service needs to inspect what changed
+between a source spec and an edited draft.
 
 ## Start A Run
 

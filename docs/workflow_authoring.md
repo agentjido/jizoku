@@ -172,6 +172,11 @@ registry = %{"billing.load_invoice" => Billing.Steps.LoadInvoice}
   SquidMesh.Workflow.EditorSpec.preview_graph(editor_map,
     action_registry: registry
   )
+
+{:ok, draft_diff} =
+  SquidMesh.Workflow.EditorSpec.diff(spec, editor_map,
+    action_registry: registry
+  )
 ```
 
 The round-trip boundary is intentionally data-only:
@@ -194,6 +199,8 @@ sequenceDiagram
   Editor->>Preview: validated map
   Preview->>Preview: generate nodes and edges (explicit or inferred)
   Preview-->>Editor: draft graph {nodes, edges}
+  Editor->>Preview: compare source spec to edited map
+  Preview-->>Editor: draft diff {added, removed, changed}
 ```
 
 The editor map uses string keys and JSON-safe values. Editors own declarative

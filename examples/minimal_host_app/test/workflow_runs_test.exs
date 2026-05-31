@@ -1090,6 +1090,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              action_registry: action_registry,
              editor_spec_graph: editor_spec_graph,
              editor_action_registry_graph: editor_action_registry_graph,
+             editor_spec_diff: editor_spec_diff,
              daily_digest: daily_digest
            } =
              Smoke.run_all!()
@@ -1230,6 +1231,11 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              {"load_invoice", "payment.load_invoice"},
              {"notify_customer", "payment.notify_customer"}
            ]
+
+    assert editor_spec_diff["summary"]["nodes_added"] == 1
+    assert editor_spec_diff["summary"]["edges_added"] == 2
+    assert editor_spec_diff["summary"]["edges_removed"] == 1
+    assert [%{"id" => "archive_invoice"}] = editor_spec_diff["nodes"]["added"]
 
     assert daily_digest.status == :completed
     assert daily_digest.trigger == "daily_digest"
