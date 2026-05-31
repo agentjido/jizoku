@@ -618,9 +618,23 @@ adapter boundaries.
 Dynamic in-run graph expansion is tracked separately from child workflows. The
 current runtime can persist and inspect dynamic-work metadata so dashboards and
 visual editors can show bounded runtime-generated nodes, producer origins, and
-dynamic edges. Those recorded dynamic nodes are inspection-only in this slice:
-they do not become executable planner work until the later dynamic graph
-execution semantics are added.
+dynamic edges. Use `SquidMesh.record_dynamic_work/3` instead of appending
+`dynamic_work_recorded` journal facts directly. Record dynamic work while the
+producer run is still active; terminal runs reject new dynamic-work records.
+
+```elixir
+{:ok, _snapshot} =
+  SquidMesh.record_dynamic_work(run_id, %{
+    dynamic_key: "subscription_digest_fanout",
+    origin: %{runnable_key: runnable_key, step: "schedule_digest", attempt: 1},
+    reason: :runtime_fanout,
+    nodes: [%{id: "deliver_digest:chat_1", action: "digest.deliver"}]
+  })
+```
+
+Those recorded dynamic nodes are inspection-only in this slice: they do not
+become executable planner work until the later dynamic graph execution semantics
+are added.
 
 Built-in steps:
 

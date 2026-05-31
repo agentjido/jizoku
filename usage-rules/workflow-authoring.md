@@ -64,5 +64,7 @@
 - Treat child runs as separate replay, retry, cancellation, and inspection
   boundaries. Do not mutate already-run parent steps to simulate dynamic
   expansion.
+- Use `SquidMesh.record_dynamic_work/3` for bounded dynamic work that should be
+  visible to operators but is not executable planner work yet.
 - Do not rely on "this step should only run once" as the side-effect safety
   model.

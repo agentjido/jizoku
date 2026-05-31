@@ -348,6 +348,33 @@ end
 
 Each child run has independent inspection, retry, replay, and cancellation. Repeating the same `child_key` returns the existing child instead of creating duplicates.
 
+## Inspectable Dynamic Work
+
+Host code can also record bounded dynamic work metadata for an active run
+without making those nodes executable yet:
+
+```elixir
+{:ok, snapshot} =
+  SquidMesh.record_dynamic_work(run.run_id, %{
+    dynamic_key: "subscription_digest_fanout",
+    origin: %{
+      runnable_key: "run_123:schedule_digest:1",
+      step: "schedule_digest",
+      attempt: 1
+    },
+    reason: :runtime_fanout,
+    nodes: [
+      %{id: "deliver_digest:chat_1", action: "digest.deliver"}
+    ]
+  })
+```
+
+`record_dynamic_work/3` validates stable ids, origin metadata, nodes, and
+optional edges against the current run snapshot before appending a durable
+journal fact. Terminal runs reject new dynamic work. The recorded structure is
+visible through `inspect_run/2`, `inspect_run_graph/2`, and `explain_run/2`, but
+it remains inspection-only until executable dynamic graph expansion is added.
+
 ## Runtime-Authored Specs
 
 Host-owned editors or databases can activate validated workflow specs without
