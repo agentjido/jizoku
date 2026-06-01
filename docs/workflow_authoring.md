@@ -589,6 +589,15 @@ not a failure and should be checked again later. It differs from retry because i
 does not consume workflow retry budget; it differs from `:wait` because the
 decision comes from the step's current domain result; and it differs from
 `:pause` or `approval_step/2` because no operator action is required.
+It also differs from a child workflow run: deferred continuation rechecks the
+same declared step, while a child run represents newly discovered work with its
+own workflow lifecycle.
+
+Use deferred continuation when Squid Mesh should own the wakeup and keep the
+pending state visible in run inspection. Prefer a normal step that hands off to
+domain-owned polling work when another system owns the polling lifecycle,
+backoff, cancellation, and alerting, and the workflow should continue only after
+that system sends a later signal or starts a new run.
 
 ```elixir
 defmodule Billing.Steps.CheckGateway do
