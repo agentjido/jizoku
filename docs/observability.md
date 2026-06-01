@@ -46,7 +46,8 @@ default.
 
 `SquidMesh.ReadModel.Visibility.redact/2` and
 `SquidMesh.ReadModel.Visibility.redact/3` provide the built-in projection
-helper for that boundary. The helper accepts an existing listing summary,
+helper for that boundary. For comprehensive documentation on actor visibility
+and redaction patterns, see the [Actor Visibility Guide](./actor_visibility.md). The helper accepts an existing listing summary,
 inspection snapshot, graph inspection, or explanation diagnostic plus a
 host-owned actor. The two-arity form defaults to `:external`; the three-arity
 form accepts a host policy. Policies may return `:external`, `:operator`, or

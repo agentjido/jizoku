@@ -77,6 +77,7 @@ defmodule SquidMesh.MixProject do
         "docs/compatibility.md",
         "docs/tool_adapters.md",
         "docs/observability.md",
+        "docs/actor_visibility.md",
         "docs/workflow_authoring.md",
         "docs/graph_inspection.md",
         "docs/reference_workflows.md",
@@ -106,7 +107,8 @@ defmodule SquidMesh.MixProject do
           "docs/host_app_integration.md",
           "docs/workflow_authoring.md",
           "docs/operations.md",
-          "docs/observability.md"
+          "docs/observability.md",
+          "docs/actor_visibility.md"
         ],
         Reference: [
           "docs/graph_inspection.md",

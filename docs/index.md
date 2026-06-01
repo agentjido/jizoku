@@ -45,6 +45,8 @@ Use these when building or embedding Squid Mesh in an application.
 - [Observability](observability.md) - durable read-model surfaces,
   field-selection and redaction guidance, operator explanations, graph output,
   host-owned telemetry, and logs.
+- [Actor Visibility](actor_visibility.md) - actor-scoped visibility patterns,
+  redaction policies, multi-tenant access control, and security best practices.
 
 ## Reference
 

@@ -665,6 +665,36 @@ External/operator views preserve node ids, status, current state, recovery
 availability, dynamic-work shape, and safe edge topology while removing node
 payloads, errors, attempt internals, command history, and sensitive metadata.
 
+## Actor Visibility
+
+Squid Mesh provides built-in support for actor-scoped visibility to safely expose workflow data to different users. The runtime tracks actor information in manual actions and provides flexible redaction policies:
+
+```elixir
+# Define a visibility policy
+defmodule MyApp.VisibilityPolicy do
+  @behaviour SquidMesh.ReadModel.Visibility.Policy
+
+  def visibility_scope(actor, _view) do
+    cond do
+      actor.role == "admin" -> :auditor     # Full access
+      actor.role == "support" -> :operator  # Operational details
+      true -> :external                     # Minimal information
+    end
+  end
+end
+
+# Apply redaction at API boundaries
+{:ok, snapshot} = SquidMesh.inspect(run_id)
+safe_view = SquidMesh.ReadModel.Visibility.redact(snapshot, current_user, MyApp.VisibilityPolicy)
+```
+
+The three standard scopes provide appropriate data access:
+- `:external` - High-level status only, all sensitive data redacted
+- `:operator` - Includes operational metrics and debugging information
+- `:auditor` - Complete unredacted access for privileged users
+
+See the [Actor Visibility Guide](docs/actor_visibility.md) for comprehensive documentation on implementing multi-tenant access patterns, role-based visibility, and security best practices.
+
 ## Optional Dashboard
 
 [SquidSonar](https://github.com/dark-trench/squid_sonar) is the optional read-only Phoenix LiveView dashboard for Squid Mesh. Mount it inside a Phoenix host application to inspect recent runs, filter by status, search runtime metadata, and view run detail pages with diagnosis, history counts, last error information, and workflow graph visualization.
