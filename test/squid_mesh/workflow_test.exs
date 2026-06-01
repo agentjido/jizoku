@@ -982,6 +982,79 @@ defmodule SquidMesh.WorkflowTest do
              SquidMesh.Workflow.Definition.fingerprint(reordered_definition)
   end
 
+  test "fingerprint includes step recovery semantics" do
+    base_definition = %{
+      steps: [
+        %{
+          name: :send_email,
+          module: DependencyWorkflow.SendEmail,
+          opts: []
+        }
+      ],
+      transitions: [],
+      retries: []
+    }
+
+    irreversible_definition = %{
+      base_definition
+      | steps: [
+          %{
+            name: :send_email,
+            module: DependencyWorkflow.SendEmail,
+            opts: [irreversible: true]
+          }
+        ]
+    }
+
+    non_compensatable_definition = %{
+      base_definition
+      | steps: [
+          %{
+            name: :send_email,
+            module: DependencyWorkflow.SendEmail,
+            opts: [compensatable: false]
+          }
+        ]
+    }
+
+    compensated_definition = %{
+      base_definition
+      | steps: [
+          %{
+            name: :send_email,
+            module: DependencyWorkflow.SendEmail,
+            opts: [compensate: DependencyWorkflow.LoadInvoice]
+          }
+        ]
+    }
+
+    changed_compensation_definition = %{
+      base_definition
+      | steps: [
+          %{
+            name: :send_email,
+            module: DependencyWorkflow.SendEmail,
+            opts: [compensate: DependencyWorkflow.LoadAccount]
+          }
+        ]
+    }
+
+    base_fingerprint = SquidMesh.Workflow.Definition.fingerprint(base_definition)
+    compensated_fingerprint = SquidMesh.Workflow.Definition.fingerprint(compensated_definition)
+
+    refute base_fingerprint ==
+             SquidMesh.Workflow.Definition.fingerprint(irreversible_definition)
+
+    refute base_fingerprint ==
+             SquidMesh.Workflow.Definition.fingerprint(non_compensatable_definition)
+
+    refute base_fingerprint ==
+             compensated_fingerprint
+
+    refute compensated_fingerprint ==
+             SquidMesh.Workflow.Definition.fingerprint(changed_compensation_definition)
+  end
+
   test "supports explicit step input and output mapping options" do
     module =
       compile_module("""

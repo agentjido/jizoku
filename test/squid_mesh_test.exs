@@ -18,6 +18,15 @@ defmodule SquidMeshTest do
 
   defp execute_journal_next(opts), do: Executor.execute_next(opts)
 
+  @spec record_saga_compensation(String.t(), atom()) :: :ok
+  def record_saga_compensation(order_id, compensation) do
+    key = saga_compensation_log_key(order_id)
+    :persistent_term.put(key, [compensation | :persistent_term.get(key, [])])
+  end
+
+  @spec saga_compensation_log_key(String.t()) :: {atom(), String.t()}
+  def saga_compensation_log_key(order_id), do: {:squid_mesh_test_saga_compensations, order_id}
+
   defmodule CommitThenFailStorage do
     @behaviour Jido.Storage
 
@@ -959,6 +968,95 @@ defmodule SquidMeshTest do
     @impl SquidMesh.Step
     def run(_input, _context) do
       {:error, %{message: "capture declined", code: "capture_declined"}}
+    end
+  end
+
+  defmodule JournalSagaRollbackWorkflow do
+    use SquidMesh.Workflow
+
+    workflow do
+      trigger :checkout do
+        manual()
+
+        payload do
+          field :order_id, :string
+        end
+      end
+
+      step :reserve_inventory, JournalSagaRollbackWorkflow.ReserveInventory,
+        compensate: JournalSagaRollbackWorkflow.ReleaseInventory
+
+      step :authorize_payment, JournalSagaRollbackWorkflow.AuthorizePayment,
+        compensate: JournalSagaRollbackWorkflow.VoidPaymentAuthorization
+
+      step :capture_payment, JournalSagaRollbackWorkflow.CapturePayment
+
+      transition :reserve_inventory, on: :ok, to: :authorize_payment
+      transition :authorize_payment, on: :ok, to: :capture_payment
+      transition :capture_payment, on: :ok, to: :complete
+    end
+  end
+
+  defmodule JournalSagaRollbackWorkflow.ReserveInventory do
+    use SquidMesh.Step,
+      name: :reserve_inventory,
+      description: "Reserves inventory for a saga rollback test"
+
+    @impl SquidMesh.Step
+    def run(%{order_id: order_id}, _context) do
+      {:ok, %{inventory_reservation: %{order_id: order_id, status: "reserved"}}}
+    end
+  end
+
+  defmodule JournalSagaRollbackWorkflow.AuthorizePayment do
+    use SquidMesh.Step,
+      name: :authorize_payment,
+      description: "Authorizes payment for a saga rollback test"
+
+    @impl SquidMesh.Step
+    def run(%{order_id: order_id}, _context) do
+      {:ok, %{payment_authorization: %{order_id: order_id, status: "authorized"}}}
+    end
+  end
+
+  defmodule JournalSagaRollbackWorkflow.ReleaseInventory do
+    use SquidMesh.Step,
+      name: :release_inventory,
+      description: "Releases inventory during saga rollback"
+
+    @impl SquidMesh.Step
+    def run(
+          %{step: %{output: %{inventory_reservation: %{order_id: order_id} = reservation}}},
+          _context
+        ) do
+      SquidMeshTest.record_saga_compensation(order_id, :release_inventory)
+      {:ok, %{released_inventory: Map.put(reservation, :status, "released")}}
+    end
+  end
+
+  defmodule JournalSagaRollbackWorkflow.VoidPaymentAuthorization do
+    use SquidMesh.Step,
+      name: :void_payment_authorization,
+      description: "Voids payment authorization during saga rollback"
+
+    @impl SquidMesh.Step
+    def run(
+          %{step: %{output: %{payment_authorization: %{order_id: order_id} = authorization}}},
+          _context
+        ) do
+      SquidMeshTest.record_saga_compensation(order_id, :void_payment_authorization)
+      {:ok, %{voided_payment_authorization: Map.put(authorization, :status, "voided")}}
+    end
+  end
+
+  defmodule JournalSagaRollbackWorkflow.CapturePayment do
+    use SquidMesh.Step,
+      name: :capture_payment,
+      description: "Fails after compensatable steps complete"
+
+    @impl SquidMesh.Step
+    def run(_input, _context) do
+      {:error, %{message: "capture declined", code: "capture_declined", retryable?: false}}
     end
   end
 
@@ -2336,6 +2434,432 @@ defmodule SquidMeshTest do
       assert diagnostic.evidence.recovery_policies == %{
                "reserve_inventory" => expected_recovery
              }
+    end
+
+    test "terminal failure compensates completed saga steps in reverse completion order" do
+      order_id = "order_saga_rollback"
+
+      :persistent_term.put(saga_compensation_log_key(order_id), [])
+      on_exit(fn -> :persistent_term.erase(saga_compensation_log_key(order_id)) end)
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               SquidMesh.start(
+                 JournalSagaRollbackWorkflow,
+                 :checkout,
+                 %{order_id: order_id},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert [%{step: "reserve_inventory"}] = snapshot.visible_attempts
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: @read_model_visible_at,
+                 finished_at: DateTime.add(@read_model_visible_at, 1, :second)
+               )
+
+      assert [%{step: "authorize_payment"}] = snapshot.visible_attempts
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: DateTime.add(@read_model_visible_at, 2, :second),
+                 finished_at: DateTime.add(@read_model_visible_at, 3, :second)
+               )
+
+      assert [%{step: "capture_payment"}] = snapshot.visible_attempts
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: DateTime.add(@read_model_visible_at, 4, :second),
+                 finished_at: DateTime.add(@read_model_visible_at, 5, :second)
+               )
+
+      refute snapshot.terminal?
+      assert [%{step: "compensate:authorize_payment"}] = snapshot.visible_attempts
+
+      assert [%{dynamic_work: %{kind: :compensation, origin_step: "authorize_payment"}}] =
+               Enum.filter(
+                 snapshot.planned_runnables,
+                 &(&1.step == "compensate:authorize_payment")
+               )
+
+      assert {:ok, graph} =
+               SquidMesh.inspect_run_graph(snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: DateTime.add(@read_model_visible_at, 5, :second)
+               )
+
+      graph_nodes = Map.new(graph.nodes, &{&1.id, &1})
+      assert graph_nodes["compensate:authorize_payment"].status == :pending
+      assert graph_nodes["compensate:authorize_payment"].current?
+
+      assert {:ok, diagnostic} =
+               SquidMesh.explain_run(snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: DateTime.add(@read_model_visible_at, 5, :second)
+               )
+
+      assert diagnostic.evidence.recovery_policies["compensate:authorize_payment"] == %{
+               irreversible?: false,
+               compensatable?: false,
+               replay: :manual_review_required,
+               recovery: :manual_intervention
+             }
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: DateTime.add(@read_model_visible_at, 6, :second),
+                 finished_at: DateTime.add(@read_model_visible_at, 7, :second)
+               )
+
+      refute snapshot.terminal?
+      assert [%{step: "compensate:reserve_inventory"}] = snapshot.visible_attempts
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: DateTime.add(@read_model_visible_at, 8, :second),
+                 finished_at: DateTime.add(@read_model_visible_at, 9, :second)
+               )
+
+      assert snapshot.terminal?
+      assert snapshot.terminal_status == :failed
+
+      assert order_id
+             |> saga_compensation_log_key()
+             |> :persistent_term.get()
+             |> Enum.reverse() == [
+               :void_payment_authorization,
+               :release_inventory
+             ]
+
+      assert %{
+               released_inventory: %{status: "released"},
+               voided_payment_authorization: %{status: "voided"}
+             } = snapshot.context
+    end
+
+    test "execute_next/1 recovers a failed saga attempt by planning compensation" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               SquidMesh.start(
+                 JournalSagaRollbackWorkflow,
+                 :checkout,
+                 %{order_id: "order_saga_recovery"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, %Snapshot{visible_attempts: [%{step: "authorize_payment"}]}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: @read_model_visible_at,
+                 finished_at: DateTime.add(@read_model_visible_at, 1, :second)
+               )
+
+      assert {:ok, %Snapshot{visible_attempts: [%{step: "capture_payment"}]}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: DateTime.add(@read_model_visible_at, 2, :second),
+                 finished_at: DateTime.add(@read_model_visible_at, 3, :second)
+               )
+
+      assert {:ok, dispatch_agent} =
+               DispatchAgent.rebuild(@read_model_storage, @read_model_queue)
+
+      assert {:ok, %{agent: claimed_agent, attempt: attempt}} =
+               DispatchAgent.claim_next(@read_model_storage, dispatch_agent, "worker_1",
+                 claim_id: "claim_1",
+                 claim_token: "token_1",
+                 now: DateTime.add(@read_model_visible_at, 4, :second)
+               )
+
+      assert attempt.step == "capture_payment"
+
+      assert {:ok, %{}} =
+               DispatchAgent.fail(
+                 @read_model_storage,
+                 claimed_agent,
+                 attempt.runnable_key,
+                 "claim_1",
+                 "token_1",
+                 %{code: "capture_declined", message: "capture declined", retryable?: false},
+                 now: DateTime.add(@read_model_visible_at, 5, :second)
+               )
+
+      assert {:ok, %Snapshot{reason: :waiting_for_dispatch}} =
+               SquidMesh.inspect_run(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: DateTime.add(@read_model_visible_at, 5, :second)
+               )
+
+      assert {:ok, %Snapshot{} = recovered_snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_2",
+                 claim_id: "claim_2",
+                 claim_token: "token_2",
+                 now: DateTime.add(@read_model_visible_at, 6, :second)
+               )
+
+      refute recovered_snapshot.terminal?
+      assert [%{step: "compensate:authorize_payment"}] = recovered_snapshot.visible_attempts
+
+      assert {:ok, run_entries} =
+               load_read_model_run_entries(started_snapshot.run_id)
+
+      assert Enum.map(run_entries, & &1.type) == [
+               :run_started,
+               :runnables_planned,
+               :runnable_applied,
+               :runnables_planned,
+               :runnable_applied,
+               :runnables_planned,
+               :runnables_planned
+             ]
+    end
+
+    test "graph and explanation surface compensation before dispatch scheduling recovers" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               SquidMesh.start(
+                 JournalSagaRollbackWorkflow,
+                 :checkout,
+                 %{order_id: "order_saga_pending_dispatch"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, %Snapshot{visible_attempts: [%{step: "authorize_payment"}]}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: @read_model_visible_at,
+                 finished_at: DateTime.add(@read_model_visible_at, 1, :second)
+               )
+
+      assert {:ok, %Snapshot{visible_attempts: [%{step: "capture_payment"}]}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: DateTime.add(@read_model_visible_at, 2, :second),
+                 finished_at: DateTime.add(@read_model_visible_at, 3, :second)
+               )
+
+      compensation_key = "#{started_snapshot.run_id}:compensate:authorize_payment:1"
+
+      compensation_recovery = %{
+        "irreversible?" => false,
+        "compensatable?" => false,
+        "replay" => "manual_review_required",
+        "recovery" => "manual_intervention"
+      }
+
+      compensation_runnable = %{
+        run_id: started_snapshot.run_id,
+        runnable_key: compensation_key,
+        idempotency_key: compensation_key,
+        attempt_number: 1,
+        queue: @read_model_queue,
+        step: "compensate:authorize_payment",
+        input: %{
+          source: %{run_id: started_snapshot.run_id},
+          step: %{name: :authorize_payment, output: %{}}
+        },
+        recovery: compensation_recovery,
+        visible_at: DateTime.add(@read_model_visible_at, 5, :second),
+        dynamic?: true,
+        dynamic_work: %{kind: :compensation, origin_step: "authorize_payment"}
+      }
+
+      assert {:ok, entry} =
+               DispatchProtocol.new_entry(:runnables_planned, %{
+                 run_id: started_snapshot.run_id,
+                 runnables: [compensation_runnable],
+                 occurred_at: DateTime.add(@read_model_visible_at, 5, :second)
+               })
+
+      assert {:ok, _thread} = Journal.append_entries(@read_model_storage, [entry])
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               SquidMesh.inspect_run(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: DateTime.add(@read_model_visible_at, 5, :second)
+               )
+
+      assert [%{step: "compensate:authorize_payment", recovery: recovery}] =
+               snapshot.pending_dispatches
+
+      assert recovery == %{
+               irreversible?: false,
+               compensatable?: false,
+               replay: :manual_review_required,
+               recovery: :manual_intervention
+             }
+
+      assert {:ok, graph} =
+               SquidMesh.inspect_run_graph(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: DateTime.add(@read_model_visible_at, 5, :second)
+               )
+
+      graph_nodes = Map.new(graph.nodes, &{&1.id, &1})
+      assert graph_nodes["compensate:authorize_payment"].current?
+      assert graph_nodes["compensate:authorize_payment"].status == :pending
+      assert graph_nodes["compensate:authorize_payment"].recovery == recovery
+
+      assert {:ok, diagnostic} =
+               SquidMesh.explain_run(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: DateTime.add(@read_model_visible_at, 5, :second)
+               )
+
+      assert diagnostic.evidence.recovery_policies["compensate:authorize_payment"] == recovery
+    end
+
+    test "execute_next/1 recovers completed compensation by continuing the undo chain" do
+      order_id = "order_saga_compensation_recovery"
+
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               SquidMesh.start(
+                 JournalSagaRollbackWorkflow,
+                 :checkout,
+                 %{order_id: order_id},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, %Snapshot{visible_attempts: [%{step: "authorize_payment"}]}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: @read_model_visible_at,
+                 finished_at: DateTime.add(@read_model_visible_at, 1, :second)
+               )
+
+      assert {:ok, %Snapshot{visible_attempts: [%{step: "capture_payment"}]}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: DateTime.add(@read_model_visible_at, 2, :second),
+                 finished_at: DateTime.add(@read_model_visible_at, 3, :second)
+               )
+
+      assert {:ok, %Snapshot{visible_attempts: [%{step: "compensate:authorize_payment"}]}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: DateTime.add(@read_model_visible_at, 4, :second),
+                 finished_at: DateTime.add(@read_model_visible_at, 5, :second)
+               )
+
+      assert {:ok, dispatch_agent} =
+               DispatchAgent.rebuild(@read_model_storage, @read_model_queue)
+
+      assert {:ok, %{agent: claimed_agent, attempt: attempt}} =
+               DispatchAgent.claim_next(@read_model_storage, dispatch_agent, "worker_1",
+                 claim_id: "claim_1",
+                 claim_token: "token_1",
+                 now: DateTime.add(@read_model_visible_at, 6, :second)
+               )
+
+      assert attempt.step == "compensate:authorize_payment"
+
+      assert {:ok, %{}} =
+               DispatchAgent.complete(
+                 @read_model_storage,
+                 claimed_agent,
+                 attempt.runnable_key,
+                 "claim_1",
+                 "token_1",
+                 %{voided_payment_authorization: %{order_id: order_id, status: "voided"}},
+                 now: DateTime.add(@read_model_visible_at, 7, :second)
+               )
+
+      assert {:ok, %Snapshot{} = recovered_snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_2",
+                 claim_id: "claim_2",
+                 claim_token: "token_2",
+                 now: DateTime.add(@read_model_visible_at, 8, :second)
+               )
+
+      refute recovered_snapshot.terminal?
+      assert [%{step: "compensate:reserve_inventory"}] = recovered_snapshot.visible_attempts
+
+      assert {:ok, run_entries} =
+               load_read_model_run_entries(started_snapshot.run_id)
+
+      assert Enum.map(run_entries, & &1.type) == [
+               :run_started,
+               :runnables_planned,
+               :runnable_applied,
+               :runnables_planned,
+               :runnable_applied,
+               :runnables_planned,
+               :runnables_planned,
+               :runnable_applied,
+               :runnables_planned
+             ]
     end
 
     test "inspect, graph, and explanation expose recorded dynamic work metadata" do

@@ -204,7 +204,11 @@ defmodule SquidMesh.Runs.GraphInspection do
   defp origin_step(_origin), do: nil
 
   defp snapshot_nodes(%Snapshot{} = snapshot, definition, include_details?) do
-    attempts_by_step = Enum.group_by(snapshot.attempts, &Map.fetch!(&1, :step))
+    attempts_by_step = Enum.group_by(snapshot.attempts, &snapshot_step_id/1)
+
+    pending_dispatches_by_step =
+      Enum.group_by(snapshot.pending_dispatches, &snapshot_step_id/1)
+
     dynamic_node_ids = dynamic_node_ids(snapshot.dynamic_work)
 
     step_sources =
@@ -219,16 +223,18 @@ defmodule SquidMesh.Runs.GraphInspection do
     declared_nodes =
       Enum.map(node_ids, fn node_id ->
         attempts = Map.get(attempts_by_step, node_id, [])
+        pending_dispatches = Map.get(pending_dispatches_by_step, node_id, [])
+        status_sources = attempts ++ pending_dispatches
 
         %Node{
           id: node_id,
           action: snapshot_node_action(Map.get(step_sources_by_id, node_id, [])),
-          status: snapshot_node_status(snapshot, node_id, attempts),
+          status: snapshot_node_status(snapshot, node_id, status_sources),
           current?: false,
           input: detail(include_details?, latest_attempt_value(attempts, :input)),
           output: detail(include_details?, latest_attempt_value(attempts, :result)),
           error: detail(include_details?, latest_attempt_value(attempts, :error)),
-          recovery: latest_attempt_value(attempts, :recovery),
+          recovery: normalize_recovery(latest_attempt_value(status_sources, :recovery)),
           transition:
             Definition.deserialize_transition_decision(
               definition,
@@ -239,22 +245,37 @@ defmodule SquidMesh.Runs.GraphInspection do
         }
       end)
 
-    declared_nodes ++ dynamic_nodes(snapshot, attempts_by_step, include_details?)
+    declared_nodes ++
+      dynamic_nodes(snapshot, attempts_by_step, pending_dispatches_by_step, include_details?)
   end
 
   defp dynamic_nodes(
          %Snapshot{dynamic_work: dynamic_work} = snapshot,
          attempts_by_step,
+         pending_dispatches_by_step,
          include_details?
        )
-       when is_list(dynamic_work) and is_map(attempts_by_step) do
+       when is_list(dynamic_work) and is_map(attempts_by_step) and
+              is_map(pending_dispatches_by_step) do
     Enum.flat_map(
       dynamic_work,
-      &dynamic_work_nodes(&1, snapshot, attempts_by_step, include_details?)
+      &dynamic_work_nodes(
+        &1,
+        snapshot,
+        attempts_by_step,
+        pending_dispatches_by_step,
+        include_details?
+      )
     )
   end
 
-  defp dynamic_nodes(%Snapshot{}, _attempts_by_step, _include_details?), do: []
+  defp dynamic_nodes(
+         %Snapshot{},
+         _attempts_by_step,
+         _pending_dispatches_by_step,
+         _include_details?
+       ),
+       do: []
 
   defp dynamic_node_ids(dynamic_work) when is_list(dynamic_work) do
     dynamic_work
@@ -273,7 +294,13 @@ defmodule SquidMesh.Runs.GraphInspection do
 
   defp dynamic_node_ids(_dynamic_work), do: []
 
-  defp dynamic_work_nodes(dynamic_work, snapshot, attempts_by_step, include_details?)
+  defp dynamic_work_nodes(
+         dynamic_work,
+         snapshot,
+         attempts_by_step,
+         pending_dispatches_by_step,
+         include_details?
+       )
        when is_map(dynamic_work) do
     origin = field(dynamic_work, :origin)
 
@@ -284,17 +311,19 @@ defmodule SquidMesh.Runs.GraphInspection do
       case field(node, :id) do
         id when is_binary(id) ->
           attempts = Map.get(attempts_by_step, id, [])
+          pending_dispatches = Map.get(pending_dispatches_by_step, id, [])
+          status_sources = attempts ++ pending_dispatches
 
           [
             %Node{
               id: id,
               action: field(node, :action),
-              status: dynamic_node_status(snapshot, id, node, attempts),
+              status: dynamic_node_status(snapshot, id, node, status_sources),
               current?: false,
               input: detail(include_details?, latest_attempt_value(attempts, :input)),
               output: detail(include_details?, latest_attempt_value(attempts, :result)),
               error: detail(include_details?, latest_attempt_value(attempts, :error)),
-              recovery: latest_attempt_value(attempts, :recovery),
+              recovery: normalize_recovery(latest_attempt_value(status_sources, :recovery)),
               dynamic?: true,
               origin: origin,
               metadata: field(node, :metadata, %{}),
@@ -308,7 +337,14 @@ defmodule SquidMesh.Runs.GraphInspection do
     end)
   end
 
-  defp dynamic_work_nodes(_dynamic_work, _snapshot, _attempts_by_step, _include_details?), do: []
+  defp dynamic_work_nodes(
+         _dynamic_work,
+         _snapshot,
+         _attempts_by_step,
+         _pending_dispatches_by_step,
+         _include_details?
+       ),
+       do: []
 
   defp dynamic_node_status(snapshot, id, _node, [_attempt | _attempts] = attempts) do
     snapshot_node_status(snapshot, id, attempts)
@@ -405,10 +441,11 @@ defmodule SquidMesh.Runs.GraphInspection do
   defp normalize_dynamic_edge_status(_status), do: :pending
 
   defp snapshot_node_status(%Snapshot{} = snapshot, node_id, attempts) do
-    cond do
-      manual_node?(snapshot, node_id) ->
-        :paused
+    if manual_node?(snapshot, node_id), do: :paused, else: attempt_node_status(attempts)
+  end
 
+  defp attempt_node_status(attempts) do
+    cond do
       Enum.any?(attempts, &(Map.get(&1, :status) == :completed and Map.get(&1, :applied?))) ->
         :completed
 
@@ -418,7 +455,7 @@ defmodule SquidMesh.Runs.GraphInspection do
       Enum.any?(attempts, &(Map.get(&1, :status) == :retry_scheduled)) ->
         :retrying
 
-      Enum.any?(attempts, &(Map.get(&1, :status) in [:available, :retry_scheduled])) ->
+      Enum.any?(attempts, &(Map.get(&1, :status) == :available or pending_dispatch?(&1))) ->
         :pending
 
       Enum.any?(attempts, &(Map.get(&1, :status) == :failed)) ->
@@ -427,6 +464,10 @@ defmodule SquidMesh.Runs.GraphInspection do
       true ->
         :waiting
     end
+  end
+
+  defp pending_dispatch?(source) do
+    is_binary(map_value(source, :runnable_key)) and is_nil(map_value(source, :status))
   end
 
   defp snapshot_attempt(attempt) do
@@ -438,30 +479,41 @@ defmodule SquidMesh.Runs.GraphInspection do
   end
 
   defp snapshot_node_action(step_sources) do
-    Enum.find_value(step_sources, fn
-      %{action: action} when is_atom(action) or is_binary(action) ->
-        action
+    Enum.find_value(step_sources, fn source ->
+      case field(source, :action) do
+        nil ->
+          metadata_action(Map.get(source, :metadata) || Map.get(source, "metadata"))
 
-      %{metadata: metadata} when is_map(metadata) ->
-        metadata_action(metadata)
+        action when is_atom(action) or is_binary(action) ->
+          action
 
-      _source ->
-        nil
+        _other ->
+          metadata_action(Map.get(source, :metadata) || Map.get(source, "metadata"))
+      end
     end)
   end
 
-  defp metadata_action(metadata) do
+  defp metadata_action(metadata) when is_map(metadata) do
     case Map.get(metadata, :action) || Map.get(metadata, "action") do
+      nil -> nil
       action when is_atom(action) or is_binary(action) -> action
       _other -> nil
     end
   end
 
+  defp metadata_action(_metadata), do: nil
+
   defp latest_attempt_value(attempts, key) do
     attempts
     |> Enum.reverse()
-    |> Enum.find_value(&Map.get(&1, key))
+    |> Enum.find_value(&field(&1, key))
   end
+
+  defp normalize_recovery(recovery) when is_map(recovery) do
+    Definition.normalize_recovery_policy(recovery)
+  end
+
+  defp normalize_recovery(recovery), do: recovery
 
   defp snapshot_manual_state(%Snapshot{} = snapshot, node_id) do
     if manual_node?(snapshot, node_id), do: snapshot.manual_state, else: nil
@@ -479,7 +531,8 @@ defmodule SquidMesh.Runs.GraphInspection do
     |> Kernel.++(snapshot.expired_claims)
     |> Kernel.++(claimed_attempts(snapshot.attempts))
     |> Kernel.++(snapshot.scheduled_attempts)
-    |> Enum.map(&normalize_id(Map.get(&1, :step)))
+    |> Kernel.++(snapshot.pending_dispatches)
+    |> Enum.map(&snapshot_step_id/1)
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
   end
@@ -636,7 +689,7 @@ defmodule SquidMesh.Runs.GraphInspection do
 
   defp snapshot_step_id(step_source) when is_map(step_source) do
     step_source
-    |> Map.get(:step)
+    |> map_value(:step)
     |> normalize_id()
   end
 
@@ -668,6 +721,10 @@ defmodule SquidMesh.Runs.GraphInspection do
   end
 
   defp field(_value, key, default) when is_atom(key), do: default
+
+  defp map_value(map, key) when is_map(map) and is_atom(key) do
+    Map.get(map, key, Map.get(map, Atom.to_string(key)))
+  end
 
   defp normalize_id(nil), do: nil
   defp normalize_id(step) when is_atom(step), do: Atom.to_string(step)

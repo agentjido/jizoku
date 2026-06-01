@@ -14,6 +14,7 @@ defmodule SquidMesh.ReadModel.Explanation do
   alias SquidMesh.ReadModel.Explanation.Diagnostic
   alias SquidMesh.ReadModel.Inspection
   alias SquidMesh.ReadModel.Inspection.Snapshot
+  alias SquidMesh.Workflow.Definition
 
   @type storage_config :: Inspection.storage_config()
   @type explanation_option :: Inspection.snapshot_option()
@@ -335,12 +336,13 @@ defmodule SquidMesh.ReadModel.Explanation do
     snapshot.attempts
     |> Kernel.++(snapshot.visible_attempts)
     |> Kernel.++(snapshot.scheduled_attempts)
+    |> Kernel.++(snapshot.pending_dispatches)
     |> Kernel.++(snapshot.pending_results)
     |> Kernel.++(snapshot.expired_claims)
     |> Enum.reduce(%{}, fn attempt, policies ->
       case {item_value(attempt, :step), item_value(attempt, :recovery)} do
         {step, recovery} when is_binary(step) and is_map(recovery) ->
-          Map.put_new(policies, step, recovery)
+          Map.put_new(policies, step, Definition.normalize_recovery_policy(recovery))
 
         _missing ->
           policies

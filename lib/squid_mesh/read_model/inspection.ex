@@ -283,8 +283,17 @@ defmodule SquidMesh.ReadModel.Inspection do
 
   defp normalize_runnables(runnables) do
     runnables
-    |> Enum.map(&Map.new/1)
+    |> Enum.map(&normalize_runnable/1)
     |> Enum.sort_by(&runnable_key/1)
+  end
+
+  defp normalize_runnable(runnable) when is_map(runnable) do
+    runnable = Map.new(runnable)
+
+    case Map.get(runnable, :recovery) || Map.get(runnable, "recovery") do
+      recovery when is_map(recovery) -> Map.put(runnable, :recovery, normalize_recovery(recovery))
+      _missing -> runnable
+    end
   end
 
   defp runnable_key(runnable) when is_map(runnable) do
