@@ -165,6 +165,130 @@ defmodule SquidMesh.ReadModel.InspectionTest do
     assert snapshot.expired_claims == []
   end
 
+  test "evaluates active attempt deadlines from persisted runnable metadata" do
+    deadline =
+      deadline(
+        started_at: @visible_at,
+        within: 20_000,
+        due_soon: 15_000,
+        escalate_after: 5_000
+      )
+
+    append_run_entries([
+      run_started(),
+      runnables_planned([planned_runnable(deadline: deadline)])
+    ])
+
+    append_dispatch_entries([attempt_scheduled(deadline: deadline), attempt_claimed()])
+
+    assert {:ok, %Snapshot{} = snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert snapshot.reason == :attempt_claimed
+
+    assert %{
+             status: :escalated,
+             step: "charge_card",
+             escalation: %{outcome: :diagnostic}
+           } = snapshot.deadline
+
+    assert DateTime.compare(snapshot.deadline.due_at, ~U[2026-05-15 00:00:30Z]) == :eq
+    assert DateTime.compare(snapshot.deadline.escalated_at, ~U[2026-05-15 00:00:35Z]) == :eq
+
+    assert [
+             %{
+               runnable_key: @runnable_key,
+               deadline: %{status: :escalated, escalation: %{outcome: :diagnostic}}
+             }
+           ] = snapshot.attempts
+  end
+
+  test "does not promote completed historical deadlines as the run active deadline" do
+    completed_deadline =
+      deadline(
+        started_at: @visible_at,
+        within: 1_000,
+        due_soon: 500,
+        escalate_after: 500
+      )
+
+    active_deadline =
+      deadline(
+        started_at: @completed_at,
+        within: 60_000,
+        due_soon: 10_000,
+        escalate_after: 10_000
+      )
+
+    active_key = "#{@run_id}:capture_receipt:1"
+
+    append_run_entries([
+      run_started(),
+      runnables_planned([
+        planned_runnable(deadline: completed_deadline),
+        planned_runnable(
+          runnable_key: active_key,
+          idempotency_key: active_key,
+          step: "capture_receipt",
+          deadline: active_deadline
+        )
+      ]),
+      runnable_applied()
+    ])
+
+    append_dispatch_entries([
+      attempt_scheduled(deadline: completed_deadline),
+      attempt_claimed(),
+      attempt_completed(),
+      attempt_scheduled(
+        runnable_key: active_key,
+        idempotency_key: active_key,
+        step: "capture_receipt",
+        visible_at: @completed_at,
+        deadline: active_deadline
+      )
+    ])
+
+    assert {:ok, %Snapshot{} = snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert %{step: "capture_receipt", status: :on_time} = snapshot.deadline
+  end
+
+  test "evaluates manual step deadlines from persisted manual metadata" do
+    deadline =
+      deadline(
+        started_at: @completed_at,
+        within: 5_000,
+        due_soon: 2_000,
+        escalation: :operator_action
+      )
+
+    append_run_entries([
+      run_started(),
+      runnables_planned(),
+      manual_step_paused(deadline: deadline)
+    ])
+
+    assert {:ok, %Snapshot{} = snapshot} =
+             Inspection.snapshot(@storage, @run_id,
+               queue: @queue,
+               now: DateTime.add(@completed_at, 6, :second)
+             )
+
+    assert snapshot.reason == :manual_intervention_required
+
+    assert %{
+             deadline: %{
+               status: :overdue,
+               step: "wait_for_review",
+               escalation: %{outcome: :operator_action}
+             }
+           } = snapshot.manual_state
+
+    assert %{status: :overdue, step: "wait_for_review"} = snapshot.deadline
+  end
+
   test "derives idle reason from applied run-thread facts" do
     append_run_entries([run_started(), runnables_planned(), runnable_applied()])
     append_dispatch_entries([attempt_scheduled(), attempt_claimed(), attempt_completed()])
@@ -306,8 +430,15 @@ defmodule SquidMesh.ReadModel.InspectionTest do
   end
 
   test "uses terminal run facts to suppress scheduled attempt views" do
-    append_run_entries([run_started(), runnables_planned(), run_terminal(:cancelled)])
-    append_dispatch_entries([attempt_scheduled()])
+    deadline = deadline(started_at: @visible_at, within: 20_000)
+
+    append_run_entries([
+      run_started(),
+      runnables_planned([planned_runnable(deadline: deadline)]),
+      run_terminal(:cancelled)
+    ])
+
+    append_dispatch_entries([attempt_scheduled(deadline: deadline)])
 
     assert {:ok, %Snapshot{} = snapshot} =
              Inspection.snapshot(@storage, @run_id, queue: @queue, now: @started_at)
@@ -315,6 +446,7 @@ defmodule SquidMesh.ReadModel.InspectionTest do
     assert snapshot.status == :cancelled
     assert snapshot.reason == :terminal
     assert snapshot.manual_state == nil
+    assert snapshot.deadline == nil
     assert snapshot.scheduled_attempts == []
     assert snapshot.visible_attempts == []
     assert [%{runnable_key: @runnable_key, status: :available}] = snapshot.attempts
@@ -476,12 +608,13 @@ defmodule SquidMesh.ReadModel.InspectionTest do
     })
   end
 
-  defp manual_step_paused do
+  defp manual_step_paused(overrides \\ []) do
     entry!(:manual_step_paused, %{
       run_id: @run_id,
       step: :wait_for_review,
       kind: :approval,
       metadata: %{output_key: "approval"},
+      deadline: Keyword.get(overrides, :deadline),
       occurred_at: @completed_at
     })
   end
@@ -535,6 +668,28 @@ defmodule SquidMesh.ReadModel.InspectionTest do
     }
 
     Map.merge(base, Map.new(overrides))
+  end
+
+  defp deadline(opts) do
+    started_at = Keyword.fetch!(opts, :started_at)
+    within = Keyword.fetch!(opts, :within)
+    due_at = DateTime.add(started_at, within, :millisecond)
+    due_soon = Keyword.get(opts, :due_soon)
+    escalate_after = Keyword.get(opts, :escalate_after)
+
+    %{
+      policy: %{
+        within: within,
+        due_soon: due_soon,
+        escalate_after: escalate_after,
+        escalation: Keyword.get(opts, :escalation, :diagnostic)
+      },
+      started_at: started_at,
+      due_at: due_at,
+      due_soon_at: if(is_integer(due_soon), do: DateTime.add(due_at, -due_soon, :millisecond)),
+      escalated_at:
+        if(is_integer(escalate_after), do: DateTime.add(due_at, escalate_after, :millisecond))
+    }
   end
 
   defp entry!(type, attrs) do

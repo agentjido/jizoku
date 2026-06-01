@@ -173,8 +173,11 @@ defmodule BedrockMinimalHostApp.SquidMeshLeaseAdapterTest do
       assert {:ok, approval_run} =
                WorkflowRuns.start_manual_approval(%{account_id: "acct_bedrock_approve"})
 
-      assert {:ok, %SquidMesh.ReadModel.Inspection.Snapshot{status: :paused}} =
+      assert {:ok, %SquidMesh.ReadModel.Inspection.Snapshot{status: :paused} = paused_run} =
                SquidMesh.execute_next(owner_id: "bedrock-manual-approve-test")
+
+      assert paused_run.manual_state.deadline.status == :on_time
+      assert paused_run.manual_state.deadline.escalation == %{outcome: :operator_action}
 
       assert {:ok, approved_run} =
                WorkflowRuns.approve(approval_run.run_id, %{actor: "ops_bedrock"})
@@ -266,6 +269,17 @@ defmodule BedrockMinimalHostApp.SquidMeshLeaseAdapterTest do
       assert completed_run.context.gateway_check.attempt.idempotency_key
       assert completed_run.context.gateway_check.attempt.claim_id
       refute Map.has_key?(completed_run.context.gateway_check.attempt, :claim_token)
+
+      assert %{deadline: %{status: :on_time, escalation: %{outcome: :diagnostic}}} =
+               Enum.find(completed_run.attempts, fn attempt ->
+                 attempt.step == "check_gateway_status" and attempt.status == :completed
+               end)
+
+      assert {:ok, completed_graph} = SquidMesh.inspect_run_graph(started_run.run_id)
+      graph_nodes = Map.new(SquidMesh.Runs.GraphInspection.to_map(completed_graph).nodes, &{&1.id, &1})
+
+      assert graph_nodes["check_gateway_status"].deadline.status == :on_time
+      assert graph_nodes["check_gateway_status"].deadline.escalation == %{outcome: :diagnostic}
 
       storage = {SquidMesh.Runtime.Journal.Storage.Ecto, repo: Repo}
       assert {:ok, dispatch_entries} = Journal.load_entries(storage, {:dispatch, queue})

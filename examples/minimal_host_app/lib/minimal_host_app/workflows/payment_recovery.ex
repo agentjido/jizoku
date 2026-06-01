@@ -20,7 +20,8 @@ defmodule MinimalHostApp.Workflows.PaymentRecovery do
     step :load_invoice, MinimalHostApp.Steps.LoadInvoice
 
     step :check_gateway_status, MinimalHostApp.Steps.CheckGatewayStatus,
-      retry: [max_attempts: 5, backoff: [type: :exponential, min: 1_000, max: 1_000]]
+      retry: [max_attempts: 5, backoff: [type: :exponential, min: 1_000, max: 1_000]],
+      deadline: [within: 30_000, due_soon: 5_000, escalation: :diagnostic]
 
     step :issue_gateway_credit, MinimalHostApp.Steps.IssueGatewayCredit
     step :notify_customer, MinimalHostApp.Steps.NotifyCustomer, compensatable: false

@@ -3133,6 +3133,69 @@ defmodule SquidMesh.WorkflowTest do
            ]
   end
 
+  test "supports step deadline declarations" do
+    module =
+      compile_module("""
+      defmodule WorkflowWithStepDeadlines do
+        use SquidMesh.Workflow
+
+        workflow do
+          trigger :manual do
+            manual()
+          end
+
+          step :charge_card, WorkflowWithStepDeadlines.ChargeCard,
+            deadline: [within: 5_000, due_soon: 1_000, escalation: :diagnostic]
+
+          approval_step :wait_for_review,
+            output: :approval,
+            deadline: [within: 60_000, due_soon: 10_000, escalation: :operator_action]
+
+          step :record_approval, WorkflowWithStepDeadlines.RecordApproval
+          step :record_rejection, WorkflowWithStepDeadlines.RecordRejection
+
+          transition :charge_card, on: :ok, to: :wait_for_review
+          transition :wait_for_review, on: :ok, to: :record_approval
+          transition :wait_for_review, on: :error, to: :record_rejection
+          transition :record_approval, on: :ok, to: :complete
+          transition :record_rejection, on: :ok, to: :complete
+        end
+      end
+      """)
+
+    assert [
+             %{name: :charge_card, opts: [deadline: charge_deadline]},
+             %{name: :wait_for_review, opts: [output: :approval, deadline: review_deadline]},
+             _record_approval,
+             _record_rejection
+           ] = module.workflow_definition().steps
+
+    assert charge_deadline == [within: 5_000, due_soon: 1_000, escalation: :diagnostic]
+    assert review_deadline == [within: 60_000, due_soon: 10_000, escalation: :operator_action]
+  end
+
+  test "rejects invalid step deadline declarations" do
+    assert_compile_error(
+      """
+      defmodule WorkflowWithInvalidDeadline do
+        use SquidMesh.Workflow
+
+        workflow do
+          trigger :manual do
+            manual()
+          end
+
+          step :charge_card, WorkflowWithInvalidDeadline.ChargeCard,
+            deadline: [within: 0]
+
+          transition :charge_card, on: :ok, to: :complete
+        end
+      end
+      """,
+      "step :charge_card defines an invalid :deadline policy"
+    )
+  end
+
   test "rejects built-in :pause steps in dependency-based workflows" do
     assert_compile_error(
       """

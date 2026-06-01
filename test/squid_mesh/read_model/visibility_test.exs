@@ -395,6 +395,7 @@ defmodule SquidMesh.ReadModel.VisibilityTest do
       status: :running,
       terminal?: false,
       terminal_status: nil,
+      deadline: nil,
       indexed_at: @now,
       thread_revision: 4,
       anomalies: [%{source: :workflow, reason: :duplicate_command}]

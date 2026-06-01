@@ -15,6 +15,7 @@ defmodule SquidMesh.Workflow.Validation do
   @built_in_step_kinds [:wait, :log, :pause, :approval]
   @log_levels [:debug, :info, :warning, :error]
 
+  alias SquidMesh.Runtime.Deadline
   alias SquidMesh.Workflow.InputMapping
 
   @doc """
@@ -433,6 +434,7 @@ defmodule SquidMesh.Workflow.Validation do
       |> validate_step_input_mapping(name, opts)
       |> validate_step_output_mapping(name, opts)
       |> validate_step_transaction_boundary(name, opts)
+      |> validate_step_deadline(name, opts)
     end)
   end
 
@@ -473,6 +475,13 @@ defmodule SquidMesh.Workflow.Validation do
 
       :error ->
         errors
+    end
+  end
+
+  defp validate_step_deadline(errors, name, opts) do
+    case Deadline.policy_from_opts(opts) do
+      {:ok, _deadline} -> errors
+      {:error, _reason} -> ["step #{inspect(name)} defines an invalid :deadline policy" | errors]
     end
   end
 

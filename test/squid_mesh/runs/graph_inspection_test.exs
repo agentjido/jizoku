@@ -182,6 +182,48 @@ defmodule SquidMesh.Runs.GraphInspectionTest do
              GraphInspection.to_map(graph)
   end
 
+  test "exposes deadline state on graph nodes" do
+    deadline = %{
+      status: :overdue,
+      step: "load_invoice",
+      due_at: ~U[2026-05-15 00:00:30Z],
+      escalation: %{outcome: :diagnostic}
+    }
+
+    snapshot = %Snapshot{
+      run_id: @run_id,
+      workflow: "RuntimeAuthoredWorkflow",
+      queue: "default",
+      status: :running,
+      reason: :attempt_visible,
+      terminal?: false,
+      terminal_status: nil,
+      thread_revisions: %{run: 2, dispatch: 1},
+      attempts: [
+        %{
+          step: "load_invoice",
+          runnable_key: "#{@run_id}:load_invoice:1",
+          attempt_number: 1,
+          status: :available,
+          deadline: deadline
+        }
+      ],
+      visible_attempts: [
+        %{
+          step: "load_invoice",
+          runnable_key: "#{@run_id}:load_invoice:1",
+          attempt_number: 1,
+          status: :available,
+          deadline: deadline
+        }
+      ]
+    }
+
+    graph = GraphInspection.from_snapshot(snapshot, source: :read_model)
+
+    assert [%{id: "load_invoice", deadline: ^deadline}] = GraphInspection.to_map(graph).nodes
+  end
+
   test "dynamic work overlays stay consistent with stale string-keyed graph records" do
     snapshot = %Snapshot{
       run_id: @run_id,

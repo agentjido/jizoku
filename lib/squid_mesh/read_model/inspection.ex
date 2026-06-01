@@ -16,6 +16,7 @@ defmodule SquidMesh.ReadModel.Inspection do
 
   alias Jido.Agent
   alias SquidMesh.ReadModel.Inspection.Snapshot
+  alias SquidMesh.Runtime.Deadline
   alias SquidMesh.Runtime.DispatchAgent
   alias SquidMesh.Runtime.DispatchProtocol
   alias SquidMesh.Runtime.DispatchProtocol.ActionAttempt
@@ -110,15 +111,37 @@ defmodule SquidMesh.ReadModel.Inspection do
         }
       end
 
-    recovery_by_runnable_key =
-      workflow_agent
-      |> WorkflowAgent.planned_runnables()
-      |> recovery_by_runnable_key()
+    planned_runnables = WorkflowAgent.planned_runnables(workflow_agent)
 
-    deferred_by_runnable_key =
-      workflow_agent
-      |> WorkflowAgent.planned_runnables()
-      |> deferred_by_runnable_key()
+    recovery_by_runnable_key = recovery_by_runnable_key(planned_runnables)
+
+    deferred_by_runnable_key = deferred_by_runnable_key(planned_runnables)
+    deadline_by_runnable_key = deadline_by_runnable_key(planned_runnables, now)
+
+    normalized_manual_state = normalize_manual_state(manual_state, now)
+    normalized_planned_runnables = normalize_runnables(planned_runnables, now)
+
+    attempt_snapshot_fun =
+      &attempt_snapshot(
+        &1,
+        recovery_by_runnable_key,
+        deferred_by_runnable_key,
+        deadline_by_runnable_key,
+        now
+      )
+
+    pending_result_snapshots = Enum.map(pending_results, attempt_snapshot_fun)
+    visible_attempt_snapshots = Enum.map(visible_attempts, attempt_snapshot_fun)
+    scheduled_attempt_snapshots = Enum.map(scheduled_attempts, attempt_snapshot_fun)
+    expired_claim_snapshots = Enum.map(expired_claims, attempt_snapshot_fun)
+    attempt_snapshots = Enum.map(attempts, attempt_snapshot_fun)
+
+    active_attempt_snapshots =
+      attempts
+      |> active_attempts()
+      |> Enum.map(attempt_snapshot_fun)
+
+    normalized_pending_dispatches = normalize_runnables(pending_dispatches, now)
 
     %Snapshot{
       run_id: run_id,
@@ -146,43 +169,33 @@ defmodule SquidMesh.ReadModel.Inspection do
         ),
       terminal?: terminal?,
       terminal_status: WorkflowAgent.Projection.terminal_status(workflow_projection),
-      manual_state: manual_state,
+      deadline:
+        if(terminal?,
+          do: nil,
+          else:
+            active_deadline([
+              normalized_manual_state,
+              normalized_pending_dispatches,
+              active_attempt_snapshots
+            ])
+        ),
+      manual_state: normalized_manual_state,
       command_history: WorkflowAgent.Projection.command_history(workflow_projection),
       thread_revisions: %{run: run_thread_rev, dispatch: dispatch_thread_rev},
-      planned_runnables: normalize_runnables(WorkflowAgent.planned_runnables(workflow_agent)),
+      planned_runnables: normalized_planned_runnables,
       planned_runnable_keys: WorkflowAgent.planned_runnable_keys(workflow_agent),
       applied_runnable_keys:
         workflow_agent
         |> WorkflowAgent.applied_runnable_keys()
         |> MapSet.to_list()
         |> Enum.sort(),
-      pending_dispatches: normalize_runnables(pending_dispatches),
-      pending_results:
-        Enum.map(
-          pending_results,
-          &attempt_snapshot(&1, recovery_by_runnable_key, deferred_by_runnable_key)
-        ),
-      visible_attempts:
-        Enum.map(
-          visible_attempts,
-          &attempt_snapshot(&1, recovery_by_runnable_key, deferred_by_runnable_key)
-        ),
-      scheduled_attempts:
-        Enum.map(
-          scheduled_attempts,
-          &attempt_snapshot(&1, recovery_by_runnable_key, deferred_by_runnable_key)
-        ),
+      pending_dispatches: normalized_pending_dispatches,
+      pending_results: pending_result_snapshots,
+      visible_attempts: visible_attempt_snapshots,
+      scheduled_attempts: scheduled_attempt_snapshots,
       next_visible_at: next_visible_at(scheduled_attempts),
-      expired_claims:
-        Enum.map(
-          expired_claims,
-          &attempt_snapshot(&1, recovery_by_runnable_key, deferred_by_runnable_key)
-        ),
-      attempts:
-        Enum.map(
-          attempts,
-          &attempt_snapshot(&1, recovery_by_runnable_key, deferred_by_runnable_key)
-        ),
+      expired_claims: expired_claim_snapshots,
+      attempts: attempt_snapshots,
       anomalies: projection_anomalies(workflow_projection, dispatch_projection)
     }
   end
@@ -312,25 +325,84 @@ defmodule SquidMesh.ReadModel.Inspection do
     |> sort_attempts()
   end
 
+  defp active_attempts(attempts) do
+    attempts
+    |> Enum.filter(fn %ActionAttempt{} = attempt ->
+      attempt.status in [:available, :retry_scheduled, :claimed]
+    end)
+    |> sort_attempts()
+  end
+
   defp next_visible_at([%ActionAttempt{visible_at: %DateTime{} = visible_at} | _attempts]) do
     visible_at
   end
 
   defp next_visible_at([]), do: nil
 
-  defp normalize_runnables(runnables) do
+  defp normalize_runnables(runnables, %DateTime{} = now) do
     runnables
-    |> Enum.map(&normalize_runnable/1)
+    |> Enum.map(&normalize_runnable(&1, now))
     |> Enum.sort_by(&runnable_key/1)
   end
 
-  defp normalize_runnable(runnable) when is_map(runnable) do
-    runnable = Map.new(runnable)
+  defp normalize_runnable(runnable, %DateTime{} = now) when is_map(runnable) do
+    normalized_runnable =
+      case Map.get(runnable, :recovery) || Map.get(runnable, "recovery") do
+        recovery when is_map(recovery) ->
+          Map.put(runnable, :recovery, normalize_recovery(recovery))
 
-    case Map.get(runnable, :recovery) || Map.get(runnable, "recovery") do
-      recovery when is_map(recovery) -> Map.put(runnable, :recovery, normalize_recovery(recovery))
-      _missing -> runnable
+        _missing ->
+          runnable
+      end
+
+    case Deadline.evaluate(
+           Map.get(normalized_runnable, :deadline) || Map.get(normalized_runnable, "deadline"),
+           now,
+           step: Map.get(normalized_runnable, :step) || Map.get(normalized_runnable, "step"),
+           runnable_key: runnable_key(normalized_runnable)
+         ) do
+      nil -> normalized_runnable
+      deadline -> Map.put(normalized_runnable, :deadline, deadline)
     end
+  end
+
+  defp normalize_manual_state(nil, %DateTime{}), do: nil
+
+  defp normalize_manual_state(manual_state, %DateTime{} = now) when is_map(manual_state) do
+    manual_state = Map.new(manual_state)
+
+    case Deadline.evaluate(
+           Map.get(manual_state, :deadline) || Map.get(manual_state, "deadline"),
+           now,
+           step: Map.get(manual_state, :step) || Map.get(manual_state, "step")
+         ) do
+      nil -> manual_state
+      deadline -> Map.put(manual_state, :deadline, deadline)
+    end
+  end
+
+  defp deadline_by_runnable_key(runnables, %DateTime{} = now) when is_list(runnables) do
+    runnables
+    |> Enum.flat_map(fn runnable ->
+      deadline =
+        Deadline.evaluate(Map.get(runnable, :deadline) || Map.get(runnable, "deadline"), now,
+          step: Map.get(runnable, :step) || Map.get(runnable, "step"),
+          runnable_key: runnable_key(runnable)
+        )
+
+      case deadline do
+        nil -> []
+        deadline -> [{runnable_key(runnable), deadline}]
+      end
+    end)
+    |> Map.new()
+  end
+
+  defp active_deadline(sources) do
+    sources
+    |> List.flatten()
+    |> Enum.map(&Map.get(&1 || %{}, :deadline))
+    |> Deadline.most_urgent()
   end
 
   defp runnable_key(runnable) when is_map(runnable) do
@@ -358,7 +430,9 @@ defmodule SquidMesh.ReadModel.Inspection do
   defp attempt_snapshot(
          %ActionAttempt{} = attempt,
          recovery_by_runnable_key,
-         deferred_by_runnable_key
+         deferred_by_runnable_key,
+         deadline_by_runnable_key,
+         %DateTime{} = now
        ) do
     snapshot = %{
       runnable_key: attempt.runnable_key,
@@ -376,6 +450,12 @@ defmodule SquidMesh.ReadModel.Inspection do
       error: attempt.error,
       recovery: Map.get(recovery_by_runnable_key, attempt.runnable_key),
       deferred: Map.get(deferred_by_runnable_key, attempt.runnable_key),
+      deadline:
+        Map.get(deadline_by_runnable_key, attempt.runnable_key) ||
+          Deadline.evaluate(attempt.deadline, now,
+            step: normalize_step(attempt.step),
+            runnable_key: attempt.runnable_key
+          ),
       wakeup_emitted?: attempt.wakeup_emitted?,
       applied?: attempt.applied?
     }

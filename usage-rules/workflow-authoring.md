@@ -64,6 +64,10 @@
 - Use `:pause` or `approval_step/2` for operator-controlled boundaries.
 - Resolve manual gates through `resume/3`, `approve/3`, and `reject/3`.
 - Use `:wait` for workflow-scale delays, not arbitrary timers.
+- Use `deadline: [within: milliseconds]` on normal steps, `:pause`, or
+  `approval_step/2` when operators need durable SLA evidence. Treat deadline
+  state as read-model data; alert delivery and escalation execution stay in the
+  host app.
 - Use deferred continuation for domain-owned polling decisions made by a native
   step; use retry only for failures and `:wait` for definition-owned delays.
 - Use a child workflow instead when the step discovers separate work with its

@@ -269,7 +269,8 @@ defmodule MiddleEarth.Workflows.RingErrand do
     step :hide_at_prancing_pony, :pause
 
     approval_step :council_vote,
-      output: :council
+      output: :council,
+      deadline: [within: 300_000, due_soon: 60_000, escalation: :operator_action]
 
     step :choose_path, Rivendell.Steps.ChoosePath,
       input: [bearer: [:bearer], decision: [:council, :decision]],
@@ -277,7 +278,8 @@ defmodule MiddleEarth.Workflows.RingErrand do
 
     step :cross_moria, Fellowship.Steps.CrossMoria,
       input: [:bearer, :provisions, :route],
-      retry: [max_attempts: 3, backoff: [type: :exponential]]
+      retry: [max_attempts: 3, backoff: [type: :exponential]],
+      deadline: [within: 30_000, due_soon: 5_000, escalation: :diagnostic]
 
     step :reserve_eagle, Eagles.Steps.ReserveRide,
       compensate: Eagles.Steps.CancelRide
@@ -296,6 +298,14 @@ defmodule MiddleEarth.Workflows.RingErrand do
   end
 end
 ```
+
+Steps and approvals can declare diagnostic deadlines with `deadline: [...]`.
+Squid Mesh persists the due timestamps in runnable and manual-control facts and
+surfaces evaluated states such as `:on_time`, `:due_soon`, `:overdue`, and
+`:escalated` through `list_runs/2`, `inspect_run/2`,
+`inspect_run_graph/2`, and `explain_run/2`. Alert delivery, paging, and
+operator escalation remain host-owned; the runtime only records durable
+deadline evidence and safe next actions.
 
 Cron-triggered workflows use scheduling declarations:
 

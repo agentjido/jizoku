@@ -18,6 +18,7 @@ defmodule SquidMesh.Runtime.Journal.Starter do
 
   alias SquidMesh.ReadModel.Inspection
   alias SquidMesh.Runtime.AgentRecovery
+  alias SquidMesh.Runtime.Deadline
   alias SquidMesh.Runtime.DispatchAgent
   alias SquidMesh.Runtime.DispatchProtocol
   alias SquidMesh.Runtime.Journal
@@ -427,19 +428,21 @@ defmodule SquidMesh.Runtime.Journal.Starter do
     step_name = Definition.serialize_step(step)
     runnable_key = "#{run_id}:#{step_name}:#{attempt_number}"
 
-    with {:ok, recovery} <- replay_recovery_policy(definition, step) do
-      {:ok,
-       %{
-         run_id: run_id,
-         runnable_key: runnable_key,
-         idempotency_key: runnable_key,
-         attempt_number: attempt_number,
-         queue: queue,
-         step: step_name,
-         input: input || %{},
-         recovery: recovery,
-         visible_at: now
-       }}
+    with {:ok, recovery} <- replay_recovery_policy(definition, step),
+         {:ok, deadline} <- Deadline.from_definition(definition, step, now) do
+      runnable = %{
+        run_id: run_id,
+        runnable_key: runnable_key,
+        idempotency_key: runnable_key,
+        attempt_number: attempt_number,
+        queue: queue,
+        step: step_name,
+        input: input || %{},
+        recovery: recovery,
+        visible_at: now
+      }
+
+      {:ok, maybe_put(runnable, :deadline, deadline)}
     end
   end
 
@@ -626,6 +629,9 @@ defmodule SquidMesh.Runtime.Journal.Starter do
         {:conflicting, summary}
     end
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp complete_started_run(
          storage,

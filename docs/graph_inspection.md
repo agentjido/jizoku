@@ -88,6 +88,11 @@ runtime has one. For compensatable steps it includes the callback module name
 and status, letting host dashboards show rollback availability without parsing
 journal entries or loading the current workflow module.
 
+`deadline` is populated when a declared step or approval has a persisted
+deadline policy. It contains the evaluated status (`:on_time`, `:due_soon`,
+`:overdue`, or `:escalated`), due timestamps, and the declared escalation
+outcome so graph UIs can decorate nodes without inspecting raw journal entries.
+
 Node status values are:
 
 - `:waiting` - no runnable work has been recorded for the node

@@ -8,6 +8,7 @@ defmodule SquidMesh.Workflow.Spec do
   API.
   """
 
+  alias SquidMesh.Runtime.Deadline
   alias SquidMesh.Workflow.Definition
   alias SquidMesh.Workflow.InputMapping
 
@@ -604,6 +605,7 @@ defmodule SquidMesh.Workflow.Spec do
         |> validate_step_input_mapping(name, opts, index)
         |> validate_step_output_mapping(name, opts, index)
         |> validate_step_transaction_boundary(name, opts, index)
+        |> validate_step_deadline(name, opts, index)
       else
         acc
       end
@@ -666,6 +668,24 @@ defmodule SquidMesh.Workflow.Spec do
         )
         | errors
       ]
+    end
+  end
+
+  defp validate_step_deadline(errors, name, opts, index) do
+    case Deadline.policy_from_opts(opts) do
+      {:ok, _deadline} ->
+        errors
+
+      {:error, _reason} ->
+        [
+          error(
+            [:steps, index, :opts, :deadline],
+            :invalid_step_deadline,
+            "step #{inspect(name)} defines an invalid :deadline policy",
+            %{step: name, deadline: Keyword.get(opts, :deadline)}
+          )
+          | errors
+        ]
     end
   end
 

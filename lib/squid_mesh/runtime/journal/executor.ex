@@ -11,6 +11,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
   alias Jido.Agent
   alias SquidMesh.ReadModel.Inspection
   alias SquidMesh.Runtime.BuiltInStep
+  alias SquidMesh.Runtime.Deadline
   alias SquidMesh.Runtime.DispatchAgent
   alias SquidMesh.Runtime.DispatchProtocol
   alias SquidMesh.Runtime.DispatchProtocol.ActionAttempt
@@ -514,7 +515,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     error = normalize_error(reason)
 
     retry_opts =
-      retry_options(workflow_agent, workflow, step_name, attempt, error, now)
+      retry_options(workflow_agent, workflow, definition, step_name, attempt, error, now)
 
     with {:ok, _failed} <-
            fail_current_claim(
@@ -944,7 +945,8 @@ defmodule SquidMesh.Runtime.Journal.Executor do
   end
 
   defp pause_progression_entries(attempt, definition, step_name, result, now, paused_at) do
-    with {:ok, target} <- Definition.transition_target(definition, step_name, :ok) do
+    with {:ok, target} <- Definition.transition_target(definition, step_name, :ok),
+         {:ok, deadline} <- Deadline.from_definition(definition, step_name, paused_at) do
       {:ok,
        [
          manual_step_paused_entry!(
@@ -953,7 +955,8 @@ defmodule SquidMesh.Runtime.Journal.Executor do
            :pause,
            %{output: result || %{}, target: serialize_manual_target(target)},
            now,
-           paused_at
+           paused_at,
+           deadline
          )
        ]}
     end
@@ -961,6 +964,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
 
   defp approval_progression_entries(attempt, definition, step_name, now, paused_at) do
     with {:ok, targets} <- Definition.approval_transition_targets(definition, step_name),
+         {:ok, deadline} <- Deadline.from_definition(definition, step_name, paused_at),
          {:ok, output_key} <- Definition.step_output_mapping(definition, step_name) do
       metadata =
         maybe_put(
@@ -980,7 +984,8 @@ defmodule SquidMesh.Runtime.Journal.Executor do
            :approval,
            metadata,
            now,
-           paused_at
+           paused_at,
+           deadline
          )
        ]}
     end
@@ -1219,19 +1224,21 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         {:ok, retry_runnable}
 
       :error ->
-        with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
-          {:ok,
-           %{
-             run_id: attempt.run_id,
-             runnable_key: retry_runnable_key,
-             idempotency_key: retry_runnable_key,
-             attempt_number: attempt_number,
-             queue: queue,
-             step: Definition.serialize_step(step_name),
-             input: attempt.input || %{},
-             recovery: recovery,
-             visible_at: retry_visible_at
-           }}
+        with {:ok, recovery} <- replay_recovery_policy(definition, step_name),
+             {:ok, deadline} <- Deadline.from_definition(definition, step_name, retry_visible_at) do
+          runnable = %{
+            run_id: attempt.run_id,
+            runnable_key: retry_runnable_key,
+            idempotency_key: retry_runnable_key,
+            attempt_number: attempt_number,
+            queue: queue,
+            step: Definition.serialize_step(step_name),
+            input: attempt.input || %{},
+            recovery: recovery,
+            visible_at: retry_visible_at
+          }
+
+          {:ok, maybe_put(runnable, :deadline, deadline)}
         end
     end
   end
@@ -1670,24 +1677,25 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
       runnable_key = "#{attempt.runnable_key}:deferred"
 
-      {:ok,
-       %{
-         run_id: attempt.run_id,
-         runnable_key: runnable_key,
-         idempotency_key: runnable_key,
-         attempt_number: attempt.attempt_number,
-         queue: queue,
-         step: Definition.serialize_step(step_name),
-         input: attempt.input || %{},
-         recovery: recovery,
-         visible_at: successor_visible_at(schedule_base_at, execution_opts),
-         deferred:
-           deferred_continuation_metadata(
-             attempt,
-             Keyword.fetch!(execution_opts, :defer),
-             schedule_base_at
-           )
-       }}
+      runnable = %{
+        run_id: attempt.run_id,
+        runnable_key: runnable_key,
+        idempotency_key: runnable_key,
+        attempt_number: attempt.attempt_number,
+        queue: queue,
+        step: Definition.serialize_step(step_name),
+        input: attempt.input || %{},
+        recovery: recovery,
+        visible_at: successor_visible_at(schedule_base_at, execution_opts),
+        deferred:
+          deferred_continuation_metadata(
+            attempt,
+            Keyword.fetch!(execution_opts, :defer),
+            schedule_base_at
+          )
+      }
+
+      {:ok, maybe_put(runnable, :deadline, attempt.deadline)}
     end
   end
 
@@ -1912,6 +1920,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
   defp retry_options(
          workflow_agent,
          workflow,
+         definition,
          step_name,
          %ActionAttempt{} = attempt,
          error,
@@ -1931,10 +1940,12 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         case RetryPolicy.resolve(workflow, step_name, attempt.attempt_number) do
           {:retry, next_attempt, delay_ms} ->
             retry_visible_at = DateTime.add(now, retry_delay_ms(error, delay_ms), :millisecond)
+            {:ok, deadline} = Deadline.from_definition(definition, step_name, retry_visible_at)
 
             [
               retry_runnable_key: runnable_key(attempt.run_id, step_name, next_attempt),
-              retry_visible_at: retry_visible_at
+              retry_visible_at: retry_visible_at,
+              retry_deadline: deadline
             ]
 
           _no_retry ->
@@ -1954,6 +1965,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
       [
         retry_runnable_key: retry_runnable_key,
         retry_visible_at: retry_visible_at,
+        retry_deadline: Map.get(runnable, :deadline) || Map.get(runnable, "deadline"),
         retry_runnable:
           dynamic_retry_runnable(
             runnable,
@@ -1995,6 +2007,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
       input: attempt.input || %{},
       recovery: Map.get(runnable, :recovery) || Map.get(runnable, "recovery"),
       visible_at: retry_visible_at,
+      deadline: Map.get(runnable, :deadline) || Map.get(runnable, "deadline"),
       dynamic?: true,
       dynamic_work: Map.get(runnable, :dynamic_work) || Map.get(runnable, "dynamic_work")
     }
@@ -2041,7 +2054,8 @@ defmodule SquidMesh.Runtime.Journal.Executor do
          kind,
          metadata,
          %DateTime{} = now,
-         %DateTime{} = paused_at
+         %DateTime{} = paused_at,
+         deadline
        )
        when is_binary(run_id) and is_atom(step_name) and is_atom(kind) and is_map(metadata) do
     entry!(:manual_step_paused, %{
@@ -2049,6 +2063,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
       step: Definition.serialize_step(step_name),
       kind: Atom.to_string(kind),
       metadata: metadata,
+      deadline: deadline,
       paused_at: paused_at,
       occurred_at: now
     })
@@ -2096,19 +2111,21 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     step = Definition.serialize_step(step_name)
     runnable_key = runnable_key(run_id, step_name, attempt_number)
 
-    with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
-      {:ok,
-       %{
-         run_id: run_id,
-         runnable_key: runnable_key,
-         idempotency_key: runnable_key,
-         attempt_number: attempt_number,
-         queue: queue,
-         step: step,
-         input: input,
-         recovery: recovery,
-         visible_at: now
-       }}
+    with {:ok, recovery} <- replay_recovery_policy(definition, step_name),
+         {:ok, deadline} <- Deadline.from_definition(definition, step_name, now) do
+      runnable = %{
+        run_id: run_id,
+        runnable_key: runnable_key,
+        idempotency_key: runnable_key,
+        attempt_number: attempt_number,
+        queue: queue,
+        step: step,
+        input: input,
+        recovery: recovery,
+        visible_at: now
+      }
+
+      {:ok, maybe_put(runnable, :deadline, deadline)}
     end
   end
 

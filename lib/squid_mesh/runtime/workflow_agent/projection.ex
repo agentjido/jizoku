@@ -22,7 +22,8 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
           required(:step) => String.t(),
           required(:kind) => String.t(),
           required(:paused_at) => DateTime.t(),
-          required(:metadata) => map()
+          required(:metadata) => map(),
+          optional(:deadline) => map()
         }
 
   @type string_set :: MapSet.t(String.t()) | %MapSet{}
@@ -604,12 +605,14 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
          entry,
          data
        ) do
-    manual_state = %{
-      step: data.step,
-      kind: data.kind,
-      paused_at: manual_paused_at(data, entry),
-      metadata: Map.get(data, :metadata, %{})
-    }
+    manual_state =
+      compact(%{
+        step: data.step,
+        kind: data.kind,
+        paused_at: manual_paused_at(data, entry),
+        metadata: Map.get(data, :metadata, %{}),
+        deadline: manual_deadline(data)
+      })
 
     projection
     |> Map.put(:run_id, projection.run_id || data.run_id)
@@ -622,12 +625,14 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
          entry,
          data
        ) do
-    duplicate_state = %{
-      step: data.step,
-      kind: data.kind,
-      paused_at: manual_paused_at(data, entry),
-      metadata: Map.get(data, :metadata, %{})
-    }
+    duplicate_state =
+      compact(%{
+        step: data.step,
+        kind: data.kind,
+        paused_at: manual_paused_at(data, entry),
+        metadata: Map.get(data, :metadata, %{}),
+        deadline: manual_deadline(data)
+      })
 
     if manual_state == duplicate_state do
       projection
@@ -686,6 +691,10 @@ defmodule SquidMesh.Runtime.WorkflowAgent.Projection do
       %DateTime{} = paused_at -> paused_at
       _missing_or_invalid -> entry.occurred_at
     end
+  end
+
+  defp manual_deadline(data) when is_map(data) do
+    Map.get(data, :deadline) || Map.get(data, "deadline")
   end
 
   defp refresh_status(%__MODULE__{terminal_status: terminal_status} = projection)

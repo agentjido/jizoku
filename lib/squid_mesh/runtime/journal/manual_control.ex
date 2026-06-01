@@ -9,6 +9,7 @@ defmodule SquidMesh.Runtime.Journal.ManualControl do
 
   alias Jido.Agent
   alias SquidMesh.ReadModel.Inspection
+  alias SquidMesh.Runtime.Deadline
   alias SquidMesh.Runtime.DispatchAgent
   alias SquidMesh.Runtime.DispatchProtocol
   alias SquidMesh.Runtime.DispatchProtocol.Entry
@@ -971,19 +972,21 @@ defmodule SquidMesh.Runtime.Journal.ManualControl do
     step = Definition.serialize_step(step_name)
     runnable_key = "#{run_id}:#{step}:#{attempt_number}"
 
-    with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
-      {:ok,
-       %{
-         run_id: run_id,
-         runnable_key: runnable_key,
-         idempotency_key: runnable_key,
-         attempt_number: attempt_number,
-         queue: queue,
-         step: step,
-         input: input,
-         recovery: recovery,
-         visible_at: now
-       }}
+    with {:ok, recovery} <- replay_recovery_policy(definition, step_name),
+         {:ok, deadline} <- Deadline.from_definition(definition, step_name, now) do
+      runnable = %{
+        run_id: run_id,
+        runnable_key: runnable_key,
+        idempotency_key: runnable_key,
+        attempt_number: attempt_number,
+        queue: queue,
+        step: step,
+        input: input,
+        recovery: recovery,
+        visible_at: now
+      }
+
+      {:ok, maybe_put(runnable, :deadline, deadline)}
     end
   end
 
