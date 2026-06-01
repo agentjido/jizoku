@@ -175,6 +175,115 @@ defmodule SquidMeshTest do
     end
   end
 
+  defmodule DeferredContinuationWorkflow do
+    use SquidMesh.Workflow
+
+    workflow do
+      trigger :checkout do
+        manual()
+
+        payload do
+          field :order_id, :string
+        end
+      end
+
+      step :check_gateway, DeferredContinuationWorkflow.CheckGateway, retry: [max_attempts: 2]
+
+      transition :check_gateway, on: :ok, to: :complete
+    end
+  end
+
+  defmodule DeferredContinuationWorkflow.CheckGateway do
+    use SquidMesh.Step,
+      name: "deferred_gateway_check",
+      input_schema: [order_id: [type: :string, required: true]]
+
+    @impl SquidMesh.Step
+    def run(%{order_id: order_id}, context) do
+      key = {__MODULE__, context.run_id}
+      calls = :persistent_term.get(key, 0)
+      :persistent_term.put(key, calls + 1)
+
+      if calls == 0 do
+        {:defer, %{code: "gateway_pending", order_id: order_id}, schedule_in: 30}
+      else
+        {:ok, %{gateway: %{status: "ready", calls: calls + 1}}}
+      end
+    end
+  end
+
+  defmodule DeferredDependencyWorkflow do
+    use SquidMesh.Workflow
+
+    workflow do
+      trigger :checkout do
+        manual()
+
+        payload do
+          field :order_id, :string
+          field :invoice_id, :string
+        end
+      end
+
+      step :check_gateway, DeferredDependencyWorkflow.CheckGateway
+      step :load_invoice, DeferredDependencyWorkflow.LoadInvoice
+
+      step :send_receipt, DeferredDependencyWorkflow.SendReceipt,
+        after: [:check_gateway, :load_invoice]
+    end
+  end
+
+  defmodule DeferredDependencyWorkflow.CheckGateway do
+    use SquidMesh.Step,
+      name: "deferred_dependency_gateway_check",
+      input_schema: [order_id: [type: :string, required: true]]
+
+    @impl SquidMesh.Step
+    def run(%{order_id: order_id}, context) do
+      key = {__MODULE__, context.run_id}
+      calls = :persistent_term.get(key, 0)
+      :persistent_term.put(key, calls + 1)
+
+      if calls == 0 do
+        {:defer, %{code: "gateway_pending", order_id: order_id}, schedule_in: 30}
+      else
+        {:ok, %{gateway: %{order_id: order_id, status: "ready"}}}
+      end
+    end
+  end
+
+  defmodule DeferredDependencyWorkflow.LoadInvoice do
+    use SquidMesh.Step,
+      name: "deferred_dependency_load_invoice",
+      input_schema: [invoice_id: [type: :string, required: true]]
+
+    @impl SquidMesh.Step
+    def run(%{invoice_id: invoice_id}, _context) do
+      {:ok, %{invoice: %{id: invoice_id, status: "open"}}}
+    end
+  end
+
+  defmodule DeferredDependencyWorkflow.SendReceipt do
+    use SquidMesh.Step,
+      name: "deferred_dependency_send_receipt",
+      input_schema: [
+        gateway: [type: :map, required: true],
+        invoice: [type: :map, required: true]
+      ]
+
+    @impl SquidMesh.Step
+    def run(%{gateway: gateway, invoice: invoice}, _context) do
+      {:ok,
+       %{
+         receipt: %{
+           order_id: gateway.order_id,
+           invoice_id: invoice.id,
+           gateway_status: gateway.status
+         }
+       }}
+    end
+  end
+
   defmodule BillingWorkflow do
     use SquidMesh.Workflow
 
@@ -2763,6 +2872,263 @@ defmodule SquidMeshTest do
                )
 
       assert diagnostic.evidence.recovery_policies["compensate:authorize_payment"] == recovery
+    end
+
+    test "execute_next/1 persists deferred continuation without consuming retry budget" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               SquidMesh.start(
+                 DeferredContinuationWorkflow,
+                 :checkout,
+                 %{order_id: "order_deferred"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      on_exit(fn ->
+        :persistent_term.erase(
+          {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id}
+        )
+      end)
+
+      finished_at = DateTime.add(@read_model_visible_at, 1, :second)
+      deferred_visible_at = DateTime.add(finished_at, 30, :second)
+
+      assert {:ok, %Snapshot{} = deferred_snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: @read_model_visible_at,
+                 finished_at: finished_at
+               )
+
+      refute deferred_snapshot.terminal?
+      assert deferred_snapshot.reason == :deferred_continuation
+      assert deferred_snapshot.next_visible_at == deferred_visible_at
+      assert deferred_snapshot.visible_attempts == []
+
+      assert [
+               %{
+                 step: "check_gateway",
+                 attempt_number: 1,
+                 visible_at: ^deferred_visible_at,
+                 deferred: %{
+                   reason: %{code: "gateway_pending", order_id: "order_deferred"},
+                   from_runnable_key: original_runnable_key
+                 }
+               } = deferred_attempt
+             ] = deferred_snapshot.scheduled_attempts
+
+      assert original_runnable_key == "#{started_snapshot.run_id}:check_gateway:1"
+      assert deferred_attempt.runnable_key == "#{original_runnable_key}:deferred"
+
+      assert {:ok, graph} =
+               SquidMesh.inspect_run_graph(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: finished_at
+               )
+
+      graph_nodes = Map.new(graph.nodes, &{&1.id, &1})
+      assert graph_nodes["check_gateway"].current?
+      assert graph_nodes["check_gateway"].status == :deferred
+
+      assert {:ok, diagnostic} =
+               SquidMesh.explain_run(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: finished_at
+               )
+
+      assert diagnostic.reason == :deferred_continuation
+      assert diagnostic.next_actions == [:wait_until_attempt_visible]
+      assert diagnostic.details.next_visible_at == deferred_visible_at
+
+      assert {:ok, ready_graph} =
+               SquidMesh.inspect_run_graph(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: deferred_visible_at
+               )
+
+      ready_graph_nodes = Map.new(ready_graph.nodes, &{&1.id, &1})
+      assert ready_graph_nodes["check_gateway"].current?
+      assert ready_graph_nodes["check_gateway"].status == :pending
+
+      assert {:ok, %Snapshot{} = completed_snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 now: deferred_visible_at,
+                 finished_at: DateTime.add(deferred_visible_at, 1, :second)
+               )
+
+      assert completed_snapshot.terminal?
+      assert completed_snapshot.terminal_status == :completed
+
+      assert %{gateway: %{status: "ready", calls: 2}} =
+               completed_snapshot.context
+    end
+
+    test "execute_next/1 recovers deferred continuation after dispatch completion" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               SquidMesh.start(
+                 DeferredContinuationWorkflow,
+                 :checkout,
+                 %{order_id: "order_dispatch_deferred"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      on_exit(fn ->
+        :persistent_term.erase(
+          {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id}
+        )
+      end)
+
+      finished_at = DateTime.add(@read_model_visible_at, 1, :second)
+      deferred_visible_at = DateTime.add(finished_at, 30, :second)
+
+      assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@read_model_storage, @read_model_queue)
+
+      assert {:ok,
+              %{
+                agent: claimed_agent,
+                attempt: claimed_attempt,
+                claim_id: claim_id,
+                claim_token: claim_token
+              }} =
+               DispatchAgent.claim_next(@read_model_storage, dispatch_agent, "worker_1",
+                 now: @read_model_visible_at,
+                 claim_id: "deferred_completion_claim",
+                 claim_token: "deferred_completion_token"
+               )
+
+      assert {:ok, %{attempt: completed_attempt}} =
+               DispatchAgent.complete(
+                 @read_model_storage,
+                 claimed_agent,
+                 claimed_attempt.runnable_key,
+                 claim_id,
+                 claim_token,
+                 %{},
+                 now: finished_at,
+                 execution_opts: [
+                   defer: %{
+                     reason: %{code: "gateway_pending", order_id: "order_dispatch_deferred"}
+                   },
+                   schedule_in: 30
+                 ]
+               )
+
+      assert completed_attempt.execution_opts[:defer].reason.code == "gateway_pending"
+
+      assert {:ok, %Snapshot{} = recovered_snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "deferred-recovery-worker",
+                 now: DateTime.add(finished_at, 1, :second)
+               )
+
+      assert recovered_snapshot.reason == :deferred_continuation
+      assert recovered_snapshot.next_visible_at == deferred_visible_at
+
+      assert [
+               %{
+                 step: "check_gateway",
+                 attempt_number: 1,
+                 visible_at: ^deferred_visible_at,
+                 deferred: %{
+                   reason: %{
+                     code: "gateway_pending",
+                     order_id: "order_dispatch_deferred"
+                   }
+                 }
+               }
+             ] = recovered_snapshot.scheduled_attempts
+    end
+
+    test "execute_next/1 waits for deferred dependency continuations before joins unlock" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               SquidMesh.start(
+                 DeferredDependencyWorkflow,
+                 :checkout,
+                 %{order_id: "order_dependency_deferred", invoice_id: "inv_dependency_deferred"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      on_exit(fn ->
+        :persistent_term.erase({DeferredDependencyWorkflow.CheckGateway, started_snapshot.run_id})
+      end)
+
+      finished_at = DateTime.add(@read_model_visible_at, 1, :second)
+      deferred_visible_at = DateTime.add(finished_at, 30, :second)
+
+      assert {:ok, %Snapshot{} = after_gateway} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "dependency-worker-1",
+                 now: @read_model_visible_at,
+                 finished_at: finished_at
+               )
+
+      assert Enum.map(after_gateway.visible_attempts, & &1.step) == ["load_invoice"]
+      assert [%{step: "check_gateway", deferred: %{}}] = after_gateway.scheduled_attempts
+
+      assert {:ok, %Snapshot{} = after_invoice} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "dependency-worker-2",
+                 now: DateTime.add(@read_model_visible_at, 2, :second),
+                 finished_at: DateTime.add(@read_model_visible_at, 3, :second)
+               )
+
+      assert after_invoice.status == :running
+      assert after_invoice.visible_attempts == []
+      refute Enum.any?(after_invoice.pending_dispatches, &(&1.step == "send_receipt"))
+      refute Enum.any?(after_invoice.scheduled_attempts, &(&1.step == "send_receipt"))
+
+      assert [%{step: "check_gateway", visible_at: ^deferred_visible_at}] =
+               after_invoice.scheduled_attempts
+
+      assert {:ok, %Snapshot{} = after_continuation} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "dependency-worker-3",
+                 now: deferred_visible_at,
+                 finished_at: DateTime.add(deferred_visible_at, 1, :second)
+               )
+
+      assert [
+               %{
+                 step: "send_receipt",
+                 input: %{
+                   gateway: %{status: "ready"},
+                   invoice: %{id: "inv_dependency_deferred", status: "open"}
+                 }
+               }
+             ] = after_continuation.visible_attempts
     end
 
     test "execute_next/1 recovers completed compensation by continuing the undo chain" do

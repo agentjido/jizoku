@@ -15,9 +15,20 @@ defmodule MinimalHostApp.Steps.CheckGatewayStatus do
     ]
 
   @impl true
-  @spec run(map(), SquidMesh.Step.Context.t()) :: {:ok, map()} | {:retry, map()}
+  @spec run(map(), SquidMesh.Step.Context.t()) ::
+          {:ok, map()} | {:defer, map(), keyword()} | {:retry, map()}
   def run(%{invoice: invoice, gateway_url: gateway_url}, context) do
     case SquidMesh.Tools.invoke(SquidMesh.Tools.HTTP, %{method: :get, url: gateway_url}) do
+      {:ok, %{payload: %{status: 202, body: body}}} ->
+        {:defer,
+         %{
+           message: "gateway status is still pending",
+           status: body,
+           status_code: 202,
+           invoice_id: invoice.id,
+           attempt: attempt_metadata(context)
+         }, schedule_in: 1}
+
       {:ok, result} ->
         {:ok,
          %{

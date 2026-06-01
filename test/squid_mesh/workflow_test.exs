@@ -1229,6 +1229,48 @@ defmodule SquidMesh.WorkflowTest do
              )
   end
 
+  test "normalizes native step deferred continuation results" do
+    assert {:ok, %{},
+            [
+              defer: %{reason: %{code: "gateway_pending"}},
+              schedule_in: 30
+            ]} =
+             SquidMesh.Step.normalize_result(
+               {:defer, %{code: "gateway_pending"}, schedule_in: 30}
+             )
+  end
+
+  test "rejects deferred continuation results without a positive schedule" do
+    assert {:error,
+            %{
+              message:
+                "native step deferred continuation requires a positive :schedule_in option",
+              details: :missing_schedule_in,
+              retryable?: false
+            }} = SquidMesh.Step.normalize_result({:defer, :pending, []})
+
+    assert {:error,
+            %{
+              message:
+                "native step deferred continuation requires a positive :schedule_in option",
+              details: %{schedule_in: 0},
+              retryable?: false
+            }} = SquidMesh.Step.normalize_result({:defer, :pending, schedule_in: 0})
+  end
+
+  test "rejects deferred continuation controls in success options" do
+    assert {:error,
+            %{
+              message:
+                "native step deferred continuation must use {:defer, reason, opts}; :defer is reserved in success options",
+              details: :reserved_success_option,
+              retryable?: false
+            }} =
+             SquidMesh.Step.normalize_result(
+               {:ok, %{gateway: %{status: "pending"}}, defer: %{reason: :pending}}
+             )
+  end
+
   test "supports explicit irreversible and non-compensatable step markers" do
     module =
       compile_module("""

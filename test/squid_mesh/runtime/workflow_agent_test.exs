@@ -494,6 +494,103 @@ defmodule SquidMesh.Runtime.WorkflowAgentTest do
     assert applied_entry.data.result == %{"status" => "captured"}
   end
 
+  test "applies completed dispatch execution options to the run-thread entry" do
+    assert {:ok, run_started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, runnables_planned} =
+             DispatchProtocol.new_entry(:runnables_planned, %{
+               run_id: @run_id,
+               runnables: [%{runnable_key: @runnable_key, step: "charge_card"}],
+               occurred_at: @visible_at
+             })
+
+    assert {:ok, _run_thread} = Journal.append_entries(@storage, [run_started, runnables_planned])
+
+    assert {:ok, workflow_agent} = WorkflowAgent.rebuild(@storage, @run_id)
+
+    completed_attempt = completed_attempt(execution_opts: [schedule_in: 2])
+
+    assert {:ok, %{agent: applied_agent}} =
+             WorkflowAgent.apply_result(@storage, workflow_agent, completed_attempt,
+               now: @completed_at
+             )
+
+    assert {:ok, [_run_started, _runnables_planned, applied_entry]} =
+             Journal.load_entries(@storage, {:run, @run_id})
+
+    assert applied_entry.data.execution_opts == [schedule_in: 2]
+
+    assert Projection.applied_execution_opts(applied_agent.state.projection, @runnable_key) == [
+             schedule_in: 2
+           ]
+  end
+
+  test "does not flatten deferred dispatch completions through generic result recovery" do
+    assert {:ok, run_started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, runnables_planned} =
+             DispatchProtocol.new_entry(:runnables_planned, %{
+               run_id: @run_id,
+               runnables: [%{runnable_key: @runnable_key, step: "charge_card"}],
+               occurred_at: @visible_at
+             })
+
+    assert {:ok, dispatch_scheduled} =
+             DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs())
+
+    assert {:ok, dispatch_claimed} =
+             DispatchProtocol.new_entry(:attempt_claimed, claimed_attrs())
+
+    assert {:ok, dispatch_completed} =
+             DispatchProtocol.new_entry(
+               :attempt_completed,
+               completed_attrs(
+                 result: %{},
+                 execution_opts: [
+                   defer: %{reason: %{code: "gateway_pending"}},
+                   schedule_in: 30
+                 ]
+               )
+             )
+
+    assert {:ok, _run_thread} = Journal.append_entries(@storage, [run_started, runnables_planned])
+
+    assert {:ok, _dispatch_thread} =
+             Journal.append_entries(@storage, [
+               dispatch_scheduled,
+               dispatch_claimed,
+               dispatch_completed
+             ])
+
+    assert {:ok, workflow_agent} = WorkflowAgent.rebuild(@storage, @run_id)
+    assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+    assert [completed_attempt] = WorkflowAgent.pending_results(workflow_agent, dispatch_agent)
+
+    assert {:error, :deferred_completion_requires_executor} =
+             WorkflowAgent.apply_result(@storage, workflow_agent, completed_attempt,
+               now: @completed_at
+             )
+
+    assert {:ok, %{agent: recovered_agent, attempts: []}} =
+             WorkflowAgent.apply_pending_results(@storage, workflow_agent, dispatch_agent,
+               now: @completed_at
+             )
+
+    assert recovered_agent.state.thread_rev == 2
+    assert WorkflowAgent.applied_runnable_keys(recovered_agent) == MapSet.new()
+    assert [^completed_attempt] = WorkflowAgent.pending_results(recovered_agent, dispatch_agent)
+  end
+
   test "recovers completed dispatch results after a restart loses the live wakeup" do
     assert {:ok, run_started} =
              DispatchProtocol.new_entry(:run_started, %{
@@ -1224,9 +1321,15 @@ defmodule SquidMesh.Runtime.WorkflowAgentTest do
     for suffix <- [:checkpoints, :threads, :thread_meta] do
       table = table_name(suffix)
 
-      if :ets.whereis(table) != :undefined do
-        :ets.delete(table)
-      end
+      delete_table(table)
     end
+  end
+
+  defp delete_table(table) do
+    if :ets.whereis(table) != :undefined do
+      :ets.delete(table)
+    end
+  rescue
+    ArgumentError -> :ok
   end
 end

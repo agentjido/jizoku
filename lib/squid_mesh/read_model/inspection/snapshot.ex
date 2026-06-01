@@ -22,6 +22,7 @@ defmodule SquidMesh.ReadModel.Inspection.Snapshot do
           | :expired_claim
           | :attempt_claimed
           | :attempt_visible
+          | :deferred_continuation
           | :attempt_scheduled_for_later
           | :manual_intervention_required
           | :run_started
@@ -43,6 +44,7 @@ defmodule SquidMesh.ReadModel.Inspection.Snapshot do
           optional(:transition) => map(),
           optional(:error) => map(),
           optional(:recovery) => map(),
+          optional(:deferred) => map(),
           required(:wakeup_emitted?) => boolean(),
           required(:applied?) => boolean()
         }

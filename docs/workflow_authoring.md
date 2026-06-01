@@ -565,8 +565,12 @@ step context.
 Native steps may return:
 
 - `{:ok, output}` or `{:ok, output, opts}` for success
+- `{:defer, reason, schedule_in: seconds}` to intentionally defer the same logical step attempt until a future visibility time
 - `{:error, reason}` for terminal failure that skips workflow retries and follows failure routing
 - `{:retry, reason}` or `{:retry, reason, opts}` for retryable failure governed by the workflow retry policy
+
+`:defer` is reserved for the explicit `{:defer, reason, opts}` return shape and
+is invalid inside `{:ok, output, opts}` success options.
 
 When `output: :key` is declared on the workflow step, Squid Mesh stores the
 native step's returned map under that key after the step returns. The
@@ -577,6 +581,43 @@ Raw `Jido.Action` modules remain supported for advanced interop. They execute
 through the same journal-backed runtime and receive the same safe context map,
 including `idempotency_key` and `claim_id` but not claim tokens. Applications
 should prefer `use SquidMesh.Step` for the common authoring path.
+
+### Deferred Continuation
+
+Use deferred continuation when a step made a durable domain observation that is
+not a failure and should be checked again later. It differs from retry because it
+does not consume workflow retry budget; it differs from `:wait` because the
+decision comes from the step's current domain result; and it differs from
+`:pause` or `approval_step/2` because no operator action is required.
+
+```elixir
+defmodule Billing.Steps.CheckGateway do
+  use SquidMesh.Step,
+    name: :check_gateway,
+    input_schema: [gateway_id: [type: :string, required: true]],
+    output_schema: [gateway: [type: :map, required: true]]
+
+  @impl true
+  def run(%{gateway_id: gateway_id}, _context) do
+    case Billing.gateway_status(gateway_id) do
+      {:ok, :pending} ->
+        {:defer, %{code: "gateway_pending", gateway_id: gateway_id}, schedule_in: 30}
+
+      {:ok, status} ->
+        {:ok, %{gateway: %{id: gateway_id, status: status}}}
+    end
+  end
+end
+```
+
+Squid Mesh records the completed dispatch attempt and plans a new runnable for
+the same step with the same logical attempt number and a new runnable key. The
+planned runnable carries deferred metadata with the reason, original runnable
+key, and deferred timestamp. `inspect_run/2` reports
+`:deferred_continuation` once the deferred dispatch has been scheduled,
+scheduled attempts include `:deferred`, `inspect_run_graph/2` marks the node
+`:deferred` while it is waiting for its visibility time, and `explain_run/2`
+reports that the next safe action is to wait until the attempt is visible.
 
 ## Child Workflow Runs
 
@@ -743,6 +784,7 @@ Built-in step options supported today:
 - `:wait` appends delayed journal continuation so long waits do not block a worker slot
 - `:pause` is supported in transition-based workflows; dependency-based workflows cannot declare `:pause`
 - `approval_step/2` is also transition-based only; dependency-based workflows cannot declare built-in `:approval` steps
+- `{:defer, reason, schedule_in: seconds}` is a native step result, not a built-in step; use it when the step's domain response says the same work should continue later
 
 Manual approval example:
 
@@ -963,9 +1005,10 @@ dependency.
 
 Node statuses use the same durable evidence: `:waiting` means no runnable work
 has been recorded for the node, `:pending` means work is visible or scheduled,
-`:running` means a worker has an active claim, `:retrying` means a failed
-attempt scheduled a retry, `:paused` means manual intervention is required, and
-`:completed` or `:failed` mean durable terminal step state exists.
+`:deferred` means a step intentionally scheduled the same continuation for
+future visibility, `:running` means a worker has an active claim, `:retrying`
+means a failed attempt scheduled a retry, `:paused` means manual intervention is
+required, and `:completed` or `:failed` mean durable terminal step state exists.
 
 ## Local Repo Transactions
 
@@ -1147,6 +1190,7 @@ end
 Step result contract:
 
 - success: `{:ok, map()}`
+- deferred continuation: `{:defer, reason, schedule_in: seconds}`
 - failure: `{:error, map()}`
 - retryable failure: `{:retry, reason}` or `{:retry, reason, opts}`
 

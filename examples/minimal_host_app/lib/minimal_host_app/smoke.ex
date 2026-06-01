@@ -88,6 +88,7 @@ defmodule MinimalHostApp.Smoke do
 
   @spec run_all!() :: %{
           payment_recovery: SquidMesh.ReadModel.Inspection.Snapshot.t(),
+          deferred_payment_recovery: SquidMesh.ReadModel.Inspection.Snapshot.t(),
           dependency_recovery: SquidMesh.ReadModel.Inspection.Snapshot.t(),
           manual_approval: SquidMesh.ReadModel.Inspection.Snapshot.t(),
           manual_digest: SquidMesh.ReadModel.Inspection.Snapshot.t(),
@@ -120,6 +121,7 @@ defmodule MinimalHostApp.Smoke do
     editor_action_registry_graph = run_editor_action_registry_preview!()
     editor_spec_diff = run_editor_spec_diff!()
     payment_recovery = run!()
+    deferred_payment_recovery = run_deferred_payment_recovery!()
     dependency_recovery = run_dependency_recovery!()
     manual_approval = run_manual_approval!()
     manual_digest = run_manual_digest!()
@@ -146,6 +148,7 @@ defmodule MinimalHostApp.Smoke do
 
       %{
         payment_recovery: payment_recovery,
+        deferred_payment_recovery: deferred_payment_recovery,
         dependency_recovery: dependency_recovery,
         manual_approval: manual_approval,
         manual_digest: manual_digest,
@@ -172,6 +175,84 @@ defmodule MinimalHostApp.Smoke do
     else
       {:error, reason} ->
         raise "cron smoke test failed: #{inspect(reason)}"
+    end
+  end
+
+  @spec run_deferred_payment_recovery!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  def run_deferred_payment_recovery! do
+    RuntimeHarness.ensure_runtime_started()
+
+    {server_pid, port} =
+      RuntimeHarness.start_gateway_server(
+        fn
+          1 -> RuntimeHarness.accepted_gateway_response("pending")
+          _attempt -> RuntimeHarness.success_gateway_response("settled")
+        end,
+        2
+      )
+
+    attrs = %{
+      account_id: "acct_deferred_demo",
+      invoice_id: "inv_deferred_demo",
+      attempt_id: "attempt_deferred_demo",
+      gateway_url: RuntimeHarness.endpoint_url(port, "/gateway")
+    }
+
+    try do
+      with {:ok, run} <- WorkflowRuns.start_payment_recovery(attrs),
+           :ok <- RuntimeHarness.perform_scheduled_step!(run.run_id, "load_invoice"),
+           :ok <- RuntimeHarness.perform_scheduled_step!(run.run_id, "check_gateway_status"),
+           {:ok, deferred_run} <- WorkflowRuns.inspect_run(run.run_id),
+           :ok <- ensure_deferred_gateway_run(deferred_run),
+           {:ok, graph} <- SquidMesh.inspect_run_graph(run.run_id),
+           :ok <- ensure_deferred_gateway_graph(graph),
+           {:ok, diagnostic} <- SquidMesh.explain_run(run.run_id),
+           :ok <- ensure_deferred_gateway_explanation(diagnostic),
+           :ok <- RuntimeHarness.perform_scheduled_step!(run.run_id, "check_gateway_status"),
+           {:ok, completed_run} <-
+             RuntimeHarness.await_terminal_run(run.run_id, attempts: @poll_attempts) do
+        unless completed_run.status == :completed and
+                 completed_run.context.gateway_check.status == "settled" do
+          raise "unexpected deferred payment recovery result"
+        end
+
+        completed_run
+      else
+        {:error, reason} ->
+          raise "deferred payment recovery smoke test failed: #{inspect(reason)}"
+      end
+    after
+      RuntimeHarness.stop_gateway_server(server_pid)
+    end
+  end
+
+  defp ensure_deferred_gateway_run(%SquidMesh.ReadModel.Inspection.Snapshot{} = run) do
+    with :running <- run.status,
+         :deferred_continuation <- run.reason,
+         [%{step: "check_gateway_status", deferred: %{reason: %{status_code: 202}}}] <-
+           run.scheduled_attempts do
+      :ok
+    else
+      _unexpected -> {:error, :unexpected_deferred_gateway_run}
+    end
+  end
+
+  defp ensure_deferred_gateway_graph(%SquidMesh.Runs.GraphInspection{} = graph) do
+    nodes = Map.new(graph.nodes, &{&1.id, &1})
+
+    case Map.fetch(nodes, "check_gateway_status") do
+      {:ok, %{status: :deferred, current?: true}} -> :ok
+      _unexpected -> {:error, :unexpected_deferred_gateway_graph}
+    end
+  end
+
+  defp ensure_deferred_gateway_explanation(%SquidMesh.ReadModel.Explanation.Diagnostic{} = diagnostic) do
+    case diagnostic do
+      %{reason: :deferred_continuation, next_actions: [:wait_until_attempt_visible]} ->
+        :ok
+
+      _unexpected ->
+        {:error, :unexpected_deferred_gateway_explanation}
     end
   end
 

@@ -21,7 +21,7 @@ defmodule SquidMesh.Step.Action do
     with {:ok, input} <- Step.validate_input(step, input),
          {:ok, result} <- run_native_step(step, input, Context.from_map(context)),
          {:ok, output, opts} <- Step.normalize_result(result),
-         {:ok, output} <- Step.validate_output(step, output) do
+         {:ok, output} <- maybe_validate_output(step, output, opts) do
       {:ok, output, opts}
     end
   end
@@ -44,5 +44,13 @@ defmodule SquidMesh.Step.Action do
          exception: inspect(exception.__struct__),
          retryable?: false
        }}
+  end
+
+  defp maybe_validate_output(step, output, opts) when is_list(opts) do
+    if Keyword.has_key?(opts, :defer) do
+      {:ok, output}
+    else
+      Step.validate_output(step, output)
+    end
   end
 end

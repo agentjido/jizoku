@@ -78,6 +78,11 @@ defmodule MinimalHostApp.RuntimeHarness do
     "HTTP/1.1 200 OK\r\ncontent-length: #{byte_size(body)}\r\n\r\n#{body}"
   end
 
+  @spec accepted_gateway_response(String.t()) :: iodata()
+  def accepted_gateway_response(body \\ "pending") do
+    "HTTP/1.1 202 Accepted\r\ncontent-length: #{byte_size(body)}\r\n\r\n#{body}"
+  end
+
   @spec failure_gateway_response(pos_integer(), String.t()) :: iodata()
   def failure_gateway_response(status_code \\ 500, body \\ "retry_later") do
     reason_phrase =

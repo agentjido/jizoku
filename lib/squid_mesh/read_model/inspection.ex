@@ -115,6 +115,11 @@ defmodule SquidMesh.ReadModel.Inspection do
       |> WorkflowAgent.planned_runnables()
       |> recovery_by_runnable_key()
 
+    deferred_by_runnable_key =
+      workflow_agent
+      |> WorkflowAgent.planned_runnables()
+      |> deferred_by_runnable_key()
+
     %Snapshot{
       run_id: run_id,
       workflow: workflow,
@@ -152,14 +157,32 @@ defmodule SquidMesh.ReadModel.Inspection do
         |> MapSet.to_list()
         |> Enum.sort(),
       pending_dispatches: normalize_runnables(pending_dispatches),
-      pending_results: Enum.map(pending_results, &attempt_snapshot(&1, recovery_by_runnable_key)),
+      pending_results:
+        Enum.map(
+          pending_results,
+          &attempt_snapshot(&1, recovery_by_runnable_key, deferred_by_runnable_key)
+        ),
       visible_attempts:
-        Enum.map(visible_attempts, &attempt_snapshot(&1, recovery_by_runnable_key)),
+        Enum.map(
+          visible_attempts,
+          &attempt_snapshot(&1, recovery_by_runnable_key, deferred_by_runnable_key)
+        ),
       scheduled_attempts:
-        Enum.map(scheduled_attempts, &attempt_snapshot(&1, recovery_by_runnable_key)),
+        Enum.map(
+          scheduled_attempts,
+          &attempt_snapshot(&1, recovery_by_runnable_key, deferred_by_runnable_key)
+        ),
       next_visible_at: next_visible_at(scheduled_attempts),
-      expired_claims: Enum.map(expired_claims, &attempt_snapshot(&1, recovery_by_runnable_key)),
-      attempts: Enum.map(attempts, &attempt_snapshot(&1, recovery_by_runnable_key)),
+      expired_claims:
+        Enum.map(
+          expired_claims,
+          &attempt_snapshot(&1, recovery_by_runnable_key, deferred_by_runnable_key)
+        ),
+      attempts:
+        Enum.map(
+          attempts,
+          &attempt_snapshot(&1, recovery_by_runnable_key, deferred_by_runnable_key)
+        ),
       anomalies: projection_anomalies(workflow_projection, dispatch_projection)
     }
   end
@@ -193,9 +216,23 @@ defmodule SquidMesh.ReadModel.Inspection do
       visible_attempts != [] ->
         :attempt_visible
 
+      deferred_attempts?(scheduled_attempts, workflow_projection) ->
+        :deferred_continuation
+
       true ->
         idle_snapshot_reason(workflow_projection, scheduled_attempts, attempts)
     end
+  end
+
+  defp deferred_attempts?(scheduled_attempts, %WorkflowAgent.Projection{} = workflow_projection) do
+    deferred_keys =
+      workflow_projection
+      |> WorkflowAgent.Projection.planned_runnables()
+      |> deferred_by_runnable_key()
+      |> Map.keys()
+      |> MapSet.new()
+
+    Enum.any?(scheduled_attempts, &MapSet.member?(deferred_keys, &1.runnable_key))
   end
 
   defp snapshot_context(%WorkflowAgent.Projection{} = projection) do
@@ -307,7 +344,22 @@ defmodule SquidMesh.ReadModel.Inspection do
     end)
   end
 
-  defp attempt_snapshot(%ActionAttempt{} = attempt, recovery_by_runnable_key) do
+  defp deferred_by_runnable_key(runnables) when is_list(runnables) do
+    runnables
+    |> Enum.flat_map(fn runnable ->
+      case Map.get(runnable, :deferred) || Map.get(runnable, "deferred") do
+        deferred when is_map(deferred) -> [{runnable_key(runnable), normalize_deferred(deferred)}]
+        _missing -> []
+      end
+    end)
+    |> Map.new()
+  end
+
+  defp attempt_snapshot(
+         %ActionAttempt{} = attempt,
+         recovery_by_runnable_key,
+         deferred_by_runnable_key
+       ) do
     snapshot = %{
       runnable_key: attempt.runnable_key,
       status: attempt.status,
@@ -323,6 +375,7 @@ defmodule SquidMesh.ReadModel.Inspection do
       transition: attempt.transition,
       error: attempt.error,
       recovery: Map.get(recovery_by_runnable_key, attempt.runnable_key),
+      deferred: Map.get(deferred_by_runnable_key, attempt.runnable_key),
       wakeup_emitted?: attempt.wakeup_emitted?,
       applied?: attempt.applied?
     }
@@ -335,6 +388,29 @@ defmodule SquidMesh.ReadModel.Inspection do
   end
 
   defp normalize_recovery(_recovery), do: nil
+
+  defp normalize_deferred(deferred) when is_map(deferred) do
+    deferred
+    |> Map.new(fn {key, value} -> {normalize_deferred_key(key), value} end)
+    |> update_in([:reason], &normalize_deferred_reason/1)
+  end
+
+  defp normalize_deferred_key(key) when is_binary(key) do
+    case key do
+      "reason" -> :reason
+      "from_runnable_key" -> :from_runnable_key
+      "deferred_at" -> :deferred_at
+      other -> other
+    end
+  end
+
+  defp normalize_deferred_key(key), do: key
+
+  defp normalize_deferred_reason(reason) when is_map(reason) do
+    reason
+  end
+
+  defp normalize_deferred_reason(reason), do: reason
 
   defp projection_anomalies(
          %WorkflowAgent.Projection{} = workflow_projection,
