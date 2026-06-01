@@ -276,7 +276,9 @@ defmodule BedrockMinimalHostApp.SquidMeshLeaseAdapterTest do
                end)
 
       assert {:ok, completed_graph} = SquidMesh.inspect_run_graph(started_run.run_id)
-      graph_nodes = Map.new(SquidMesh.Runs.GraphInspection.to_map(completed_graph).nodes, &{&1.id, &1})
+
+      graph_nodes =
+        Map.new(SquidMesh.Runs.GraphInspection.to_map(completed_graph).nodes, &{&1.id, &1})
 
       assert graph_nodes["check_gateway_status"].deadline.status == :on_time
       assert graph_nodes["check_gateway_status"].deadline.escalation == %{outcome: :diagnostic}
