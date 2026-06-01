@@ -46,6 +46,9 @@
 - Retry scheduling must be durable journal intent with a future `visible_at`.
 - Built-in `:wait` must create delayed journal intent instead of sleeping in a
   worker.
+- Deferred continuation must persist a same-step planned runnable with deferred
+  metadata and future `visible_at`; it must not be represented as failure or
+  consume retry budget.
 - Cancellation, replay, pause, approval, rejection, and unblock behavior must
   append durable facts before exposing success.
 - Starting a child run must append parent lineage and start the child as one

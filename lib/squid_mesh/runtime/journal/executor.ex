@@ -412,7 +412,8 @@ defmodule SquidMesh.Runtime.Journal.Executor do
              claim_id,
              claim_token,
              result,
-             now: now
+             now: now,
+             execution_opts: execution_opts
            ) do
       append_completed_attempt_progression(
         runtime,
@@ -751,6 +752,17 @@ defmodule SquidMesh.Runtime.Journal.Executor do
          progression
        ) do
     cond do
+      deferred_continuation_execution?(progression) ->
+        with {:ok, progression_entries} <-
+               deferred_continuation_progression_entries(
+                 attempt,
+                 definition,
+                 step_name,
+                 progression
+               ) do
+          {:ok, nil, progression_entries}
+        end
+
       manual_intervention_execution?(definition, step_name, progression) ->
         with {:ok, progression_entries} <-
                manual_intervention_progression_entries(
@@ -804,6 +816,47 @@ defmodule SquidMesh.Runtime.Journal.Executor do
           {:ok, Definition.serialize_transition_decision(transition), progression_entries}
         end
     end
+  end
+
+  defp deferred_continuation_execution?(%{execution_opts: execution_opts})
+       when is_list(execution_opts) do
+    Keyword.has_key?(execution_opts, :defer)
+  end
+
+  defp deferred_continuation_execution?(_progression), do: false
+
+  defp deferred_continuation_progression_entries(
+         %ActionAttempt{} = attempt,
+         definition,
+         step_name,
+         %{
+           execution_opts: execution_opts,
+           queue: queue,
+           schedule_base_at: %DateTime{} = schedule_base_at,
+           now: %DateTime{} = now
+         }
+       )
+       when is_atom(step_name) do
+    with {:ok, runnable} <-
+           deferred_continuation_runnable(
+             attempt,
+             definition,
+             step_name,
+             execution_opts,
+             queue,
+             schedule_base_at
+           ) do
+      {:ok, [runnables_planned_entry!(attempt.run_id, [runnable], now)]}
+    end
+  end
+
+  defp deferred_continuation_progression_entries(
+         %ActionAttempt{},
+         _definition,
+         _step_name,
+         _progression
+       ) do
+    {:error, {:unsupported_deferred_continuation, :dynamic_runnable}}
   end
 
   defp dynamic_success_progression_entries(workflow_agent, attempt, definition, progression) do
@@ -1359,7 +1412,11 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     current = Map.get(latest_by_step, step)
 
     if is_nil(current) or attempt_number >= current.attempt_number do
-      Map.put(latest_by_step, step, %{attempt_number: attempt_number, runnable_key: key})
+      Map.put(latest_by_step, step, %{
+        attempt_number: attempt_number,
+        runnable_key: key,
+        step: step
+      })
     else
       latest_by_step
     end
@@ -1526,21 +1583,28 @@ defmodule SquidMesh.Runtime.Journal.Executor do
 
     workflow_agent
     |> WorkflowAgent.planned_runnables()
+    |> latest_planned_runnables_by_step()
     |> Enum.reduce(%{}, fn runnable, acc ->
-      runnable_key = Map.get(runnable, :runnable_key) || Map.get(runnable, "runnable_key")
-      step = Map.get(runnable, :step) || Map.get(runnable, "step")
+      runnable_key = runnable.runnable_key
+      step_name = Definition.deserialize_step(definition, runnable.step)
 
       cond do
-        MapSet.member?(applied_keys, runnable_key) ->
-          Map.put(acc, Definition.deserialize_step(definition, step), :completed)
-
-        Definition.deserialize_step(definition, step) == completed_step ->
+        step_name == completed_step ->
           Map.put(acc, completed_step, :completed)
 
+        MapSet.member?(applied_keys, runnable_key) ->
+          Map.put(acc, step_name, :completed)
+
         true ->
-          acc
+          Map.put(acc, step_name, :pending)
       end
     end)
+  end
+
+  defp latest_planned_runnables_by_step(runnables) when is_list(runnables) do
+    runnables
+    |> Enum.reduce(%{}, &put_latest_planned_runnable/2)
+    |> Map.values()
   end
 
   defp dependency_context(workflow_agent, current_result) do
@@ -1593,6 +1657,45 @@ defmodule SquidMesh.Runtime.Journal.Executor do
       {:error, _reason} = error ->
         error
     end
+  end
+
+  defp deferred_continuation_runnable(
+         %ActionAttempt{} = attempt,
+         definition,
+         step_name,
+         execution_opts,
+         queue,
+         %DateTime{} = schedule_base_at
+       ) do
+    with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
+      runnable_key = "#{attempt.runnable_key}:deferred"
+
+      {:ok,
+       %{
+         run_id: attempt.run_id,
+         runnable_key: runnable_key,
+         idempotency_key: runnable_key,
+         attempt_number: attempt.attempt_number,
+         queue: queue,
+         step: Definition.serialize_step(step_name),
+         input: attempt.input || %{},
+         recovery: recovery,
+         visible_at: successor_visible_at(schedule_base_at, execution_opts),
+         deferred:
+           deferred_continuation_metadata(
+             attempt,
+             Keyword.fetch!(execution_opts, :defer),
+             schedule_base_at
+           )
+       }}
+    end
+  end
+
+  defp deferred_continuation_metadata(%ActionAttempt{} = attempt, defer, %DateTime{} = now)
+       when is_map(defer) do
+    defer
+    |> Map.put(:from_runnable_key, attempt.runnable_key)
+    |> Map.put(:deferred_at, now)
   end
 
   defp successor_input(context, definition, next_step) do
@@ -2161,7 +2264,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
                definition: definition,
                step_name: step_name,
                result: attempt.result || %{},
-               execution_opts: recovered_execution_opts(step),
+               execution_opts: recovered_attempt_execution_opts(attempt, step),
                schedule_base_at: attempt_completion_at(attempt, now)
              }
            ),
@@ -2189,6 +2292,13 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         error
     end
   end
+
+  defp recovered_attempt_execution_opts(%ActionAttempt{execution_opts: execution_opts}, _step)
+       when is_list(execution_opts) and execution_opts != [] do
+    execution_opts
+  end
+
+  defp recovered_attempt_execution_opts(_attempt, step), do: recovered_execution_opts(step)
 
   defp recover_success_progression_failure(storage, queue, workflow_agent, attempt, now, reason) do
     error = normalize_error(reason)
@@ -2642,8 +2752,12 @@ defmodule SquidMesh.Runtime.Journal.Executor do
     {:ok, %{}, [pause: true]}
   end
 
-  defp run_step(%{module: module}, input, context) do
-    run_action_step(module, input, context)
+  defp run_step(%{module: module}, input, context) when is_atom(module) do
+    if Step.native_step?(module) do
+      run_native_step(module, input, context)
+    else
+      run_action_step(module, input, context)
+    end
   end
 
   defp serialize_manual_target(:complete), do: "__complete__"

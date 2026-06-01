@@ -144,6 +144,22 @@ defmodule SquidMesh.ReadModel.Explanation do
     }
   end
 
+  defp explanation_parts(%Snapshot{reason: :deferred_continuation} = snapshot) do
+    attempts = snapshot.scheduled_attempts
+
+    {
+      "A workflow step intentionally deferred its continuation until a future visibility time.",
+      %{
+        deferred_attempt_count: length(attempts),
+        runnable_keys: runnable_keys(attempts),
+        next_visible_at: snapshot.next_visible_at,
+        deferred: deferred_metadata(attempts)
+      },
+      [:wait_until_attempt_visible],
+      first_step(attempts)
+    }
+  end
+
   defp explanation_parts(%Snapshot{reason: :attempt_claimed} = snapshot) do
     attempts = claimed_attempts(snapshot.attempts)
 
@@ -368,6 +384,12 @@ defmodule SquidMesh.ReadModel.Explanation do
     |> Enum.map(&item_value(&1, :runnable_key))
     |> Enum.reject(&is_nil/1)
     |> Enum.sort()
+  end
+
+  defp deferred_metadata(attempts) do
+    attempts
+    |> Enum.map(&Map.get(&1, :deferred))
+    |> Enum.reject(&is_nil/1)
   end
 
   defp first_step([first | _items]), do: item_value(first, :step)

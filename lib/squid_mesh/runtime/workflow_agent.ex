@@ -204,22 +204,39 @@ defmodule SquidMesh.Runtime.WorkflowAgent do
       when is_list(opts) do
     workflow_agent
     |> pending_results(dispatch_agent)
-    |> Enum.reduce_while({:ok, workflow_agent, []}, fn %ActionAttempt{} = attempt,
-                                                       {:ok, current_agent, applied_attempts} ->
-      case apply_result(storage, current_agent, attempt, opts) do
-        {:ok, %{agent: next_agent, attempt: applied_attempt}} ->
-          {:cont, {:ok, next_agent, [applied_attempt | applied_attempts]}}
-
-        {:error, _reason} = error ->
-          {:halt, error}
-      end
-    end)
+    |> Enum.reduce_while(
+      {:ok, workflow_agent, []},
+      &apply_pending_result(storage, opts, &1, &2)
+    )
     |> case do
       {:ok, updated_agent, applied_attempts} ->
         {:ok, %{agent: updated_agent, attempts: Enum.reverse(applied_attempts)}}
 
       {:error, _reason} = error ->
         error
+    end
+  end
+
+  defp apply_pending_result(
+         storage,
+         opts,
+         %ActionAttempt{} = attempt,
+         {:ok, current_agent, applied_attempts}
+       ) do
+    if deferred_completion?(attempt) do
+      {:cont, {:ok, current_agent, applied_attempts}}
+    else
+      apply_pending_result_attempt(storage, opts, attempt, current_agent, applied_attempts)
+    end
+  end
+
+  defp apply_pending_result_attempt(storage, opts, attempt, current_agent, applied_attempts) do
+    case apply_result(storage, current_agent, attempt, opts) do
+      {:ok, %{agent: next_agent, attempt: applied_attempt}} ->
+        {:cont, {:ok, next_agent, [applied_attempt | applied_attempts]}}
+
+      {:error, _reason} = error ->
+        {:halt, error}
     end
   end
 
@@ -245,7 +262,8 @@ defmodule SquidMesh.Runtime.WorkflowAgent do
         opts
       )
       when is_binary(run_id) and is_integer(thread_rev) and thread_rev >= 0 and is_list(opts) do
-    with {:ok, now} <- apply_now(opts),
+    with :ok <- reject_deferred_completion(attempt),
+         {:ok, now} <- apply_now(opts),
          {:ok, target} <- apply_target(projection, run_id, attempt),
          {:pending, %ActionAttempt{} = pending_attempt} <- target,
          {:ok, applied_entry} <-
@@ -253,6 +271,7 @@ defmodule SquidMesh.Runtime.WorkflowAgent do
              run_id: pending_attempt.run_id,
              runnable_key: pending_attempt.runnable_key,
              result: pending_attempt.result,
+             execution_opts: pending_attempt.execution_opts,
              occurred_at: now
            }),
          {:ok, applied_agent} <-
@@ -266,6 +285,21 @@ defmodule SquidMesh.Runtime.WorkflowAgent do
         error
     end
   end
+
+  defp reject_deferred_completion(%ActionAttempt{} = attempt) do
+    if deferred_completion?(attempt) do
+      {:error, :deferred_completion_requires_executor}
+    else
+      :ok
+    end
+  end
+
+  defp deferred_completion?(%ActionAttempt{execution_opts: execution_opts})
+       when is_list(execution_opts) do
+    Keyword.has_key?(execution_opts, :defer)
+  end
+
+  defp deferred_completion?(_attempt), do: false
 
   defp reject_when_terminal(results, %Projection{} = projection) do
     if Projection.terminal?(projection), do: [], else: results

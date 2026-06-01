@@ -295,6 +295,7 @@ defmodule SquidMesh.Runtime.DispatchProtocol.Projection do
         attempt
         | status: :completed,
           result: entry.data.result,
+          execution_opts: Map.get(entry.data, :execution_opts, []),
           completed_at: entry.occurred_at,
           error: nil
       }

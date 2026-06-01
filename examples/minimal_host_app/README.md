@@ -73,6 +73,9 @@ The smoke task:
   `MinimalHostApp.WorkflowRuns.start_payment_recovery/1`
 - verifies the payment recovery graph selected the `greater_than` gateway
   status condition persisted in the run history
+- exercises a `202 Accepted` gateway response that returns
+  `{:defer, reason, schedule_in: 1}`, then verifies the deferred continuation
+  completes without using the workflow retry path
 - starts the dependency-based recovery workflow through
   `MinimalHostApp.WorkflowRuns.start_dependency_recovery/1`
 - starts a manual approval workflow through
@@ -266,7 +269,7 @@ meant to prove.
 
 | Workflow | What it proves | Source |
 | --- | --- | --- |
-| `PaymentRecovery` | A customer-facing recovery flow with retries, a non-compensatable side effect, and explicit replay boundaries. | [`lib/minimal_host_app/workflows/payment_recovery.ex`](lib/minimal_host_app/workflows/payment_recovery.ex) |
+| `PaymentRecovery` | A customer-facing recovery flow with retries, deferred gateway polling, a non-compensatable side effect, and explicit replay boundaries. | [`lib/minimal_host_app/workflows/payment_recovery.ex`](lib/minimal_host_app/workflows/payment_recovery.ex) |
 | `ManualApproval` | Operator pause, approval, rejection, durable resume, and audit history. | [`lib/minimal_host_app/workflows/manual_approval.ex`](lib/minimal_host_app/workflows/manual_approval.ex) |
 | `RetryVerification` | Workflow-level retry policy and failure recovery without backend-specific retry assumptions. | [`lib/minimal_host_app/workflows/retry_verification.ex`](lib/minimal_host_app/workflows/retry_verification.ex) |
 | `DependencyRecovery` | Recovery-oriented dependency joins, mapped input extraction, and durable inspection of joined work. | [`lib/minimal_host_app/workflows/dependency_recovery.ex`](lib/minimal_host_app/workflows/dependency_recovery.ex) |

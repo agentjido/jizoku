@@ -38,6 +38,9 @@
   the idempotency key for the parent run and parent step.
 - Keep child workflow modules backend-neutral, the same as parent workflows.
 - Return `{:ok, output}` for success.
+- Return `{:defer, reason, schedule_in: seconds}` when a native step observes
+  non-failed domain state that should continue from the same logical attempt
+  later without consuming retry budget.
 - Return `{:error, reason}` for terminal failure governed by workflow routing.
 - Return `{:retry, reason}` or `{:retry, reason, opts}` for retryable failure.
 - Keep side-effect idempotency inside the step or host domain boundary.
@@ -61,6 +64,8 @@
 - Use `:pause` or `approval_step/2` for operator-controlled boundaries.
 - Resolve manual gates through `resume/3`, `approve/3`, and `reject/3`.
 - Use `:wait` for workflow-scale delays, not arbitrary timers.
+- Use deferred continuation for domain-owned polling decisions made by a native
+  step; use retry only for failures and `:wait` for definition-owned delays.
 - Prefer cron or host scheduling when the whole workflow should start later.
 
 ## Recovery

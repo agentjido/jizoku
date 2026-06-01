@@ -88,6 +88,62 @@ defmodule SquidMesh.Runtime.AgentRecoveryTest do
     assert recovered_scheduled.data.runnable_key == @refund_key
   end
 
+  test "leaves deferred completions for executor recovery instead of applying them generically" do
+    assert {:ok, run_started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, runnables_planned} =
+             DispatchProtocol.new_entry(:runnables_planned, %{
+               run_id: @run_id,
+               runnables: [charge_runnable()],
+               occurred_at: @visible_at
+             })
+
+    assert {:ok, charge_scheduled} =
+             DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs())
+
+    assert {:ok, charge_claimed} =
+             DispatchProtocol.new_entry(:attempt_claimed, claimed_attrs())
+
+    assert {:ok, charge_completed} =
+             DispatchProtocol.new_entry(
+               :attempt_completed,
+               completed_attrs(
+                 result: %{},
+                 execution_opts: [
+                   defer: %{reason: %{code: "gateway_pending"}},
+                   schedule_in: 30
+                 ]
+               )
+             )
+
+    assert {:ok, %{rev: 2}} = Journal.append_entries(@storage, [run_started, runnables_planned])
+
+    assert {:ok, %{rev: 3}} =
+             Journal.append_entries(@storage, [
+               charge_scheduled,
+               charge_claimed,
+               charge_completed
+             ])
+
+    assert {:ok,
+            %{
+              workflow_agent: workflow_agent,
+              scheduled_runnables: [],
+              applied_attempts: []
+            }} = AgentRecovery.recover(@storage, @run_id, "default", now: @completed_at)
+
+    assert workflow_agent.state.thread_rev == 2
+    assert WorkflowAgent.applied_runnable_keys(workflow_agent) == MapSet.new()
+
+    assert {:ok, run_entries} = Journal.load_entries(@storage, {:run, @run_id})
+    refute Enum.any?(run_entries, &(&1.type == :runnable_applied))
+  end
+
   test "treats repeated recovery as idempotent after durable entries were restored" do
     seed_recoverable_journal()
 

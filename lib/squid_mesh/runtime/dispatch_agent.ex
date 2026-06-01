@@ -343,6 +343,7 @@ defmodule SquidMesh.Runtime.DispatchAgent do
         claim_id: claim_id,
         claim_token: claim_token,
         result: result,
+        execution_opts: Keyword.get(opts, :execution_opts, []),
         now: now
       })
     end
@@ -470,6 +471,7 @@ defmodule SquidMesh.Runtime.DispatchAgent do
            claim_id: claim_id,
            claim_token: claim_token,
            result: result,
+           execution_opts: execution_opts,
            now: now
          }
        ) do
@@ -482,6 +484,7 @@ defmodule SquidMesh.Runtime.DispatchAgent do
              claim_token_hash: claim_token_hash(claim_token),
              queue: queue,
              result: result,
+             execution_opts: execution_opts,
              occurred_at: now
            }),
          {:ok, completed_agent} <-

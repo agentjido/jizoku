@@ -441,14 +441,35 @@ defmodule SquidMesh.Runs.GraphInspection do
   defp normalize_dynamic_edge_status(_status), do: :pending
 
   defp snapshot_node_status(%Snapshot{} = snapshot, node_id, attempts) do
-    if manual_node?(snapshot, node_id), do: :paused, else: attempt_node_status(attempts)
+    if manual_node?(snapshot, node_id) do
+      :paused
+    else
+      attempt_node_status(attempts, scheduled_attempt_keys(snapshot))
+    end
   end
 
-  defp attempt_node_status(attempts) do
-    cond do
-      Enum.any?(attempts, &(Map.get(&1, :status) == :completed and Map.get(&1, :applied?))) ->
-        :completed
+  defp scheduled_attempt_keys(%Snapshot{scheduled_attempts: scheduled_attempts})
+       when is_list(scheduled_attempts) do
+    scheduled_attempts
+    |> Enum.map(&Map.get(&1, :runnable_key))
+    |> MapSet.new()
+  end
 
+  defp attempt_node_status(attempts, scheduled_attempt_keys) do
+    if Enum.any?(attempts, &deferred_scheduled_attempt?(&1, scheduled_attempt_keys)) do
+      :deferred
+    else
+      non_deferred_attempt_node_status(attempts)
+    end
+  end
+
+  defp deferred_scheduled_attempt?(attempt, scheduled_attempt_keys) do
+    Map.has_key?(attempt, :deferred) and
+      Map.get(attempt, :runnable_key) in scheduled_attempt_keys
+  end
+
+  defp non_deferred_attempt_node_status(attempts) do
+    cond do
       Enum.any?(attempts, &(Map.get(&1, :status) == :claimed)) ->
         :running
 
@@ -457,6 +478,9 @@ defmodule SquidMesh.Runs.GraphInspection do
 
       Enum.any?(attempts, &(Map.get(&1, :status) == :available or pending_dispatch?(&1))) ->
         :pending
+
+      Enum.any?(attempts, &(Map.get(&1, :status) == :completed and Map.get(&1, :applied?))) ->
+        :completed
 
       Enum.any?(attempts, &(Map.get(&1, :status) == :failed)) ->
         :failed

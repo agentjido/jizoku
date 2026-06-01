@@ -13,6 +13,7 @@ defmodule SquidMesh.Step do
   @type result ::
           {:ok, map()}
           | {:ok, map(), keyword()}
+          | {:defer, term(), keyword()}
           | {:error, term()}
           | {:retry, term()}
           | {:retry, term(), keyword()}
@@ -89,8 +90,23 @@ defmodule SquidMesh.Step do
   @spec normalize_result(result()) :: {:ok, map(), keyword()} | {:error, map()}
   def normalize_result({:ok, output}) when is_map(output), do: {:ok, output, []}
 
-  def normalize_result({:ok, output, opts}) when is_map(output) and is_list(opts),
-    do: {:ok, output, opts}
+  def normalize_result({:ok, output, opts}) when is_map(output) and is_list(opts) do
+    if Keyword.has_key?(opts, :defer) do
+      {:error, invalid_defer_options_error(:reserved_success_option)}
+    else
+      {:ok, output, opts}
+    end
+  end
+
+  def normalize_result({:defer, reason, opts}) when is_list(opts) do
+    case defer_schedule_in(opts) do
+      {:ok, schedule_in} ->
+        {:ok, %{}, [defer: %{reason: normalize_defer_reason(reason)}, schedule_in: schedule_in]}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   def normalize_result({:retry, reason}), do: {:error, retryable_error(reason)}
 
@@ -192,6 +208,38 @@ defmodule SquidMesh.Step do
   defp valid_type?(value, :map), do: is_map(value)
   defp valid_type?(value, :string), do: is_binary(value)
   defp valid_type?(_value, _type), do: false
+
+  defp defer_schedule_in(opts) do
+    case Keyword.fetch(opts, :schedule_in) do
+      {:ok, seconds} when is_integer(seconds) and seconds > 0 ->
+        {:ok, seconds}
+
+      {:ok, invalid} ->
+        {:error, invalid_defer_options_error(%{schedule_in: invalid})}
+
+      :error ->
+        {:error, invalid_defer_options_error(:missing_schedule_in)}
+    end
+  end
+
+  defp invalid_defer_options_error(details) do
+    %{
+      message: invalid_defer_options_message(details),
+      details: details,
+      retryable?: false
+    }
+  end
+
+  defp invalid_defer_options_message(:reserved_success_option) do
+    "native step deferred continuation must use {:defer, reason, opts}; :defer is reserved in success options"
+  end
+
+  defp invalid_defer_options_message(_details) do
+    "native step deferred continuation requires a positive :schedule_in option"
+  end
+
+  defp normalize_defer_reason(%{} = reason), do: reason
+  defp normalize_defer_reason(reason), do: %{message: inspect(reason)}
 
   defp retryable_error(reason, opts \\ []) do
     reason

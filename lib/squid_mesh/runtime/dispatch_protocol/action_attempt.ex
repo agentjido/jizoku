@@ -22,6 +22,7 @@ defmodule SquidMesh.Runtime.DispatchProtocol.ActionAttempt do
           owner_id: String.t() | nil,
           lease_until: DateTime.t() | nil,
           result: map() | nil,
+          execution_opts: keyword(),
           completed_at: DateTime.t() | nil,
           transition: map() | nil,
           error: map() | nil,
@@ -56,6 +57,7 @@ defmodule SquidMesh.Runtime.DispatchProtocol.ActionAttempt do
     :completed_at,
     :transition,
     :error,
+    execution_opts: [],
     wakeup_emitted?: false,
     applied?: false
   ]
