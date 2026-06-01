@@ -188,7 +188,7 @@ Read the capability map as a contract boundary, not just a feature list.
 Supported rows are available in the journal-backed runtime and are the right
 surface for host applications to adopt today. Supported, evolving rows are
 usable now, but still gaining sharper documentation, examples, or API polish
-while the project remains in beta.
+through the `0.1.x` release line.
 
 For current application work, start with the configured journal runtime. It
 provides the workflow DSL, persisted run and dispatch facts, journal dispatch
