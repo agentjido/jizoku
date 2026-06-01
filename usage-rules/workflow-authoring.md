@@ -66,6 +66,10 @@
 - Use `:wait` for workflow-scale delays, not arbitrary timers.
 - Use deferred continuation for domain-owned polling decisions made by a native
   step; use retry only for failures and `:wait` for definition-owned delays.
+- Use a child workflow instead when the step discovers separate work with its
+  own lifecycle rather than rechecking the same declared step.
+- Use a normal handoff step plus a later signal or run when an external domain
+  system owns polling, backoff, cancellation, and alert delivery.
 - Prefer cron or host scheduling when the whole workflow should start later.
 
 ## Recovery

@@ -464,7 +464,7 @@ defmodule SquidMesh.Runs.GraphInspection do
   end
 
   defp deferred_scheduled_attempt?(attempt, scheduled_attempt_keys) do
-    Map.has_key?(attempt, :deferred) and
+    not is_nil(Map.get(attempt, :deferred)) and
       Map.get(attempt, :runnable_key) in scheduled_attempt_keys
   end
 
