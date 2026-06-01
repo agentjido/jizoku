@@ -135,6 +135,113 @@ To keep workflow modules formatted consistently as DSL-style declarations, impor
 
 Finally, start one supervised worker loop. See [Host App Integration](docs/host_app_integration.md) for a minimal worker shape.
 
+### Optional: Bedrock Job Runner And Leases
+
+Use Bedrock when the host application needs backend-owned delivery, delayed
+visibility, job leases, heartbeat/lease extension, retry requeue, and recovery.
+Keep workflow modules backend-neutral; Bedrock belongs behind host adapter
+modules.
+
+If a simple supervised process can call `SquidMesh.execute_next/1` often enough
+for your workload, start there. Add Bedrock only when the host needs a durable
+job runner to own payload delivery, delayed visibility, worker leases, and
+redelivery after worker or node failure.
+
+At a high level:
+
+1. Configure Squid Mesh with the host repo and the journal queue used by the
+   Bedrock payload worker.
+2. Configure a Bedrock queue for Squid Mesh payload delivery.
+3. Start the host repo, Bedrock cluster, and Bedrock job queue under the host
+   application's supervision tree.
+4. Add a delivery adapter that maps cron payloads to Bedrock jobs.
+5. Add a payload worker that calls `SquidMesh.execute_next/1` while the Bedrock
+   job lease is held.
+6. Configure both lease layers: the Bedrock job lease for payload delivery and
+   `heartbeat_interval_ms` for Squid Mesh journal attempt claims.
+
+Those leases are separate. The Bedrock lease protects job delivery; the Squid
+Mesh heartbeat protects the workflow attempt claimed by `execute_next/1`.
+
+The payload worker is the executor boundary. Keep these responsibilities
+separate:
+
+| Concern | Owner |
+| --- | --- |
+| Persisted workflow state, step attempts, step retry policy, terminal run status | Squid Mesh |
+| Claiming and executing the next visible workflow attempt | `SquidMesh.execute_next/1` |
+| Keeping a long-running workflow attempt claim alive | `heartbeat_interval_ms` passed to `execute_next/1` |
+| Payload delivery, delayed visibility, job leases, and redelivery after worker failure | Bedrock |
+
+Do not enqueue one Bedrock job per workflow step, and do not model workflow step
+retries as Bedrock job retries. A normal step failure, retry, or terminal run is
+durable Squid Mesh state returned by `SquidMesh.execute_next/1`. Bedrock should
+retry only job-level delivery failures, such as a crashed payload worker or a
+transient backend error before the worker can finish draining journal attempts.
+
+The payload worker should usually treat `{:ok, snapshot}` from
+`execute_next/1` as successful job progress even when the snapshot describes a
+failed workflow run. Return `{:error, reason}` to Bedrock only when the payload
+delivery or journal drain itself failed and should be redelivered.
+
+The host-owned wiring looks like this in shape:
+
+```elixir
+# config/config.exs
+config :squid_mesh,
+  repo: MyApp.Repo,
+  queue: "tenant_a"
+
+config :my_app, MyApp.SquidMeshDeliveryAdapter,
+  queue_id: "tenant_a",
+  topic: "squid_mesh:payload"
+
+config :my_app, MyApp.Jobs.SquidMeshPayload,
+  journal_heartbeat_interval_ms: 10_000,
+  max_journal_attempts: 50
+```
+
+```elixir
+defmodule MyApp.Jobs.SquidMeshPayload do
+  use Bedrock.JobQueue.Job,
+    topic: "squid_mesh:payload",
+    # Job retry covers payload delivery only. Step retry lives in the workflow DSL.
+    max_retries: 3
+
+  alias SquidMesh.Runtime.Runner
+
+  def perform(payload, _meta) when is_map(payload) do
+    case Runner.perform(payload) do
+      :ok -> drain_journal("tenant_a", 0)
+      {:ok, _snapshot} -> drain_journal("tenant_a", 0)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp drain_journal(_queue, 50), do: {:error, :journal_drain_limit_exceeded}
+
+  defp drain_journal(queue, count) do
+    case SquidMesh.execute_next(
+           queue: queue,
+           owner_id: "my-app-bedrock-worker",
+           heartbeat_interval_ms: 10_000
+         ) do
+      {:ok, :none} -> :ok
+      # The snapshot may be completed, failed, paused, or still running.
+      # It is still successful job progress because Squid Mesh persisted it.
+      {:ok, _snapshot} -> drain_journal(queue, count + 1)
+      # Return an error only for executor/drain failures Bedrock should redeliver.
+      {:error, reason} -> {:error, reason}
+    end
+  end
+end
+```
+
+For the concrete setup, see
+[Bedrock Lease Backend Setup](docs/host_app_integration.md#bedrock-lease-backend-setup)
+and the
+[Bedrock Minimal Host App](examples/bedrock_minimal_host_app/README.md).
+
 ## Workflows
 
 Workflows are Elixir modules. A trigger declares the entrypoint and validates the payload before the run is persisted. Steps declare their inputs, outputs, retry policy, and compensation behavior. Transitions wire them together.

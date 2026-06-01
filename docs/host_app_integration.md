@@ -339,6 +339,18 @@ long-running journal steps keep their Squid Mesh claim alive while the Bedrock
 payload job is executing. That option does not renew the Bedrock job lease; the
 host backend must size and renew its own lease separately.
 
+The payload worker is the executor boundary. It should deliver a Squid Mesh
+payload, then drain visible journal attempts with `SquidMesh.execute_next/1`.
+Do not enqueue one Bedrock job per workflow step. Do not use Bedrock job retry
+settings to represent workflow step retry policy. Step retry, terminal failure,
+pause, approval, and compensation routing are Squid Mesh runtime facts driven by
+the workflow DSL and persisted by `execute_next/1`.
+
+Treat `{:ok, snapshot}` from `execute_next/1` as successful job progress even
+when the snapshot reports a failed workflow run. Return `{:error, reason}` to
+Bedrock only when the payload delivery or journal drain itself failed and should
+be redelivered by the backend.
+
 A host app using the same shape should:
 
 1. Configure `:squid_mesh` with the host repo and journal queue.
