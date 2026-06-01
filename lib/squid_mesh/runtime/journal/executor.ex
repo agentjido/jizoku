@@ -1224,8 +1224,9 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         {:ok, retry_runnable}
 
       :error ->
-        with {:ok, recovery} <- replay_recovery_policy(definition, step_name),
-             {:ok, deadline} <- Deadline.from_definition(definition, step_name, retry_visible_at) do
+        with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
+          deadline = Keyword.get(retry_opts, :retry_deadline)
+
           runnable = %{
             run_id: attempt.run_id,
             runnable_key: retry_runnable_key,
@@ -1940,7 +1941,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         case RetryPolicy.resolve(workflow, step_name, attempt.attempt_number) do
           {:retry, next_attempt, delay_ms} ->
             retry_visible_at = DateTime.add(now, retry_delay_ms(error, delay_ms), :millisecond)
-            {:ok, deadline} = Deadline.from_definition(definition, step_name, retry_visible_at)
+            deadline = optional_deadline_from_definition(definition, step_name, retry_visible_at)
 
             [
               retry_runnable_key: runnable_key(attempt.run_id, step_name, next_attempt),
@@ -2131,6 +2132,13 @@ defmodule SquidMesh.Runtime.Journal.Executor do
 
   defp runnable_key(run_id, step_name, attempt_number) do
     "#{run_id}:#{Definition.serialize_step(step_name)}:#{attempt_number}"
+  end
+
+  defp optional_deadline_from_definition(definition, step_name, %DateTime{} = started_at) do
+    case Deadline.from_definition(definition, step_name, started_at) do
+      {:ok, deadline} -> deadline
+      {:error, _reason} -> nil
+    end
   end
 
   defp replay_recovery_policy(definition, step_name) do

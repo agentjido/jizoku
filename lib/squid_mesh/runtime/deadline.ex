@@ -30,7 +30,7 @@ defmodule SquidMesh.Runtime.Deadline do
 
   @doc false
   @spec from_definition(Definition.t(), atom(), DateTime.t()) ::
-          {:ok, map() | nil} | {:error, {:invalid_deadline, term()}}
+          {:ok, map() | nil} | {:error, {:invalid_deadline, term()} | {:unknown_step, atom()}}
   def from_definition(definition, step_name, %DateTime{} = started_at) when is_atom(step_name) do
     with {:ok, %{opts: opts}} <- Definition.step(definition, step_name),
          {:ok, policy} <- policy_from_opts(opts) do
