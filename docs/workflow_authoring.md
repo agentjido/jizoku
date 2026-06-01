@@ -781,7 +781,9 @@ Built-in steps:
 step :wait_for_settlement, :wait, duration: 5_000
 step :log_recovery_attempt, :log, message: "Checking gateway status", level: :info
 step :wait_for_approval, :pause
-approval_step :wait_for_review, output: :approval
+approval_step :wait_for_review,
+  output: :approval,
+  deadline: [within: 300_000, due_soon: 60_000, escalation: :operator_action]
 ```
 
 Built-in step options supported today:
@@ -794,6 +796,22 @@ Built-in step options supported today:
 - `:pause` is supported in transition-based workflows; dependency-based workflows cannot declare `:pause`
 - `approval_step/2` is also transition-based only; dependency-based workflows cannot declare built-in `:approval` steps
 - `{:defer, reason, schedule_in: seconds}` is a native step result, not a built-in step; use it when the step's domain response says the same work should continue later
+
+Deadline policies:
+
+```elixir
+step :check_gateway_status, Billing.Steps.CheckGatewayStatus,
+  retry: [max_attempts: 3],
+  deadline: [within: 30_000, due_soon: 5_000, escalation: :diagnostic]
+```
+
+`deadline: [...]` is read-model and operator evidence, not a cancellation
+primitive. The `:within` and optional `:due_soon` values are milliseconds.
+`:escalation` may be `:diagnostic`, `:operator_action`, `:workflow_step`, or
+`:host_callback`; Squid Mesh persists the chosen policy and evaluates
+`:on_time`, `:due_soon`, `:overdue`, or `:escalated` from the stored timestamps
+when callers inspect the run. Hosts still own alert delivery, notification
+routing, and any workflow or callback invoked because a deadline was missed.
 
 Manual approval example:
 

@@ -840,6 +840,7 @@ defmodule SquidMesh.Workflow.Definition do
             output: Keyword.get(step.opts, :output),
             after: canonical_dependency_list(Keyword.get(step.opts, :after)),
             retry: Keyword.get(step.opts, :retry),
+            deadline: Keyword.get(step.opts, :deadline),
             recovery: serialize_recovery_policy(recovery_policy(step))
           }
         end),

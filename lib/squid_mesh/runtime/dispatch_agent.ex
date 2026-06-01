@@ -618,6 +618,7 @@ defmodule SquidMesh.Runtime.DispatchAgent do
           step: runnable_value(runnable, :step),
           input: runnable_value(runnable, :input),
           visible_at: runnable_value(runnable, :visible_at),
+          deadline: runnable_value(runnable, :deadline),
           occurred_at: now
         })
     end
@@ -949,7 +950,21 @@ defmodule SquidMesh.Runtime.DispatchAgent do
 
       {{:ok, retry_runnable_key}, {:ok, %DateTime{} = retry_visible_at}}
       when is_binary(retry_runnable_key) ->
-        {:ok, %{retry_runnable_key: retry_runnable_key, retry_visible_at: retry_visible_at}}
+        attrs = %{retry_runnable_key: retry_runnable_key, retry_visible_at: retry_visible_at}
+
+        case Keyword.fetch(opts, :retry_deadline) do
+          {:ok, deadline} when is_map(deadline) ->
+            {:ok, Map.put(attrs, :retry_deadline, deadline)}
+
+          {:ok, nil} ->
+            {:ok, attrs}
+
+          :error ->
+            {:ok, attrs}
+
+          {:ok, _invalid} ->
+            {:error, {:invalid_option, :retry}}
+        end
 
       _invalid ->
         {:error, {:invalid_option, :retry}}

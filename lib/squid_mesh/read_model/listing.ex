@@ -8,6 +8,7 @@ defmodule SquidMesh.ReadModel.Listing do
 
   alias Jido.Agent
   alias SquidMesh.ReadModel.Listing.Summary
+  alias SquidMesh.Runtime.Deadline
   alias SquidMesh.Runtime.Journal
   alias SquidMesh.Runtime.Journal.Options
   alias SquidMesh.Runtime.RunCatalogProjection
@@ -55,7 +56,7 @@ defmodule SquidMesh.ReadModel.Listing do
          {:ok, opts} <- validate_options(opts),
          {:ok, workflow} <- workflow_filter(filters),
          :ok <- validate_queue_option(opts),
-         {:ok, _now} <- now_option(opts),
+         {:ok, now} <- now_option(opts),
          {:ok, projection} <- Journal.rebuild_run_catalog_projection(storage),
          :ok <- reject_catalog_anomalies(projection) do
       summaries(
@@ -63,7 +64,8 @@ defmodule SquidMesh.ReadModel.Listing do
         projection,
         workflow,
         Keyword.get(filters, :status),
-        Keyword.get(filters, :limit)
+        Keyword.get(filters, :limit),
+        now
       )
     end
   end
@@ -159,13 +161,14 @@ defmodule SquidMesh.ReadModel.Listing do
          %RunCatalogProjection{} = projection,
          workflow_filter,
          status_filter,
-         limit
+         limit,
+         %DateTime{} = now
        ) do
     projection
     |> RunCatalogProjection.runs()
     |> Enum.reverse()
     |> Enum.reduce_while({:ok, []}, fn run_index_summary, {:ok, summaries} ->
-      case summary(storage, run_index_summary) do
+      case summary(storage, run_index_summary, now) do
         {:ok, %Summary{} = summary} ->
           maybe_collect_summary(summary, summaries, workflow_filter, status_filter, limit)
 
@@ -179,12 +182,16 @@ defmodule SquidMesh.ReadModel.Listing do
     end
   end
 
-  defp summary(storage, %{
-         run_id: run_id,
-         workflow: workflow,
-         queue: queue,
-         indexed_at: indexed_at
-       }) do
+  defp summary(
+         storage,
+         %{
+           run_id: run_id,
+           workflow: workflow,
+           queue: queue,
+           indexed_at: indexed_at
+         },
+         %DateTime{} = now
+       ) do
     with {:ok, %Agent{state: %{projection: %Projection{} = projection, thread_rev: thread_rev}}} <-
            WorkflowAgent.rebuild(storage, run_id),
          :ok <- validate_catalog_summary(projection, run_id, workflow, queue) do
@@ -197,10 +204,77 @@ defmodule SquidMesh.ReadModel.Listing do
          status: Projection.status(projection),
          terminal?: Projection.terminal?(projection),
          terminal_status: Projection.terminal_status(projection),
+         deadline: summary_deadline(projection, now),
          indexed_at: indexed_at,
          thread_revision: thread_rev,
          anomalies: Projection.anomalies(projection)
        }}
+    end
+  end
+
+  defp summary_deadline(%Projection{} = projection, %DateTime{} = now) do
+    if Projection.terminal?(projection) do
+      nil
+    else
+      manual_deadline =
+        case Projection.manual_state(projection) do
+          %{deadline: deadline, step: step} ->
+            deadline
+            |> Deadline.evaluate(now, step: step)
+            |> Deadline.public_summary()
+
+          _manual_state ->
+            nil
+        end
+
+      runnable_deadlines =
+        projection
+        |> active_planned_runnables()
+        |> Enum.map(fn runnable ->
+          (Map.get(runnable, :deadline) || Map.get(runnable, "deadline"))
+          |> Deadline.evaluate(now,
+            step: runnable_step(runnable),
+            runnable_key: runnable_key(runnable)
+          )
+          |> Deadline.public_summary()
+        end)
+
+      Deadline.most_urgent([manual_deadline | runnable_deadlines])
+    end
+  end
+
+  defp active_planned_runnables(%Projection{} = projection) do
+    applied_keys = Projection.applied_runnable_keys(projection)
+
+    projection
+    |> Projection.planned_runnables()
+    |> latest_attempt_per_step()
+    |> Enum.reject(fn runnable -> MapSet.member?(applied_keys, runnable_key(runnable)) end)
+  end
+
+  defp latest_attempt_per_step(runnables) do
+    runnables
+    |> Enum.group_by(&runnable_step/1)
+    |> Enum.flat_map(fn {_step, step_runnables} ->
+      step_runnables
+      |> Enum.sort_by(&attempt_number/1, :desc)
+      |> Enum.take(1)
+    end)
+  end
+
+  defp runnable_key(runnable) when is_map(runnable) do
+    Map.get(runnable, :runnable_key) || Map.get(runnable, "runnable_key") ||
+      Map.get(runnable, :key) || Map.get(runnable, "key") || ""
+  end
+
+  defp runnable_step(runnable) when is_map(runnable) do
+    Map.get(runnable, :step) || Map.get(runnable, "step") || runnable_key(runnable)
+  end
+
+  defp attempt_number(runnable) when is_map(runnable) do
+    case Map.get(runnable, :attempt_number) || Map.get(runnable, "attempt_number") do
+      attempt_number when is_integer(attempt_number) -> attempt_number
+      _missing_or_invalid -> 0
     end
   end
 

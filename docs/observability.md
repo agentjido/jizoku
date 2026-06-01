@@ -120,11 +120,15 @@ signals:
 | Claimed or expired attempts | `attempts`, `expired_claims` | Identifies workers that are busy, stalled, or recoverable. |
 | Pending dispatch/results | `pending_dispatches`, `pending_results` | Detects journal facts that need runtime reconciliation. |
 | Manual intervention count | `manual_state` and status `:paused` | Drives approval queues and operator SLAs. |
+| Deadline health | `deadline`, attempt `deadline`, node `deadline` | Shows on-time, due-soon, overdue, and escalated workflow work without exposing payloads. |
 | Terminal outcomes | `terminal?`, `terminal_status` | Tracks completed, failed, cancelled, and replayed work. |
 | Runtime anomalies | `anomalies` | Surfaces inconsistent or malformed durable facts. |
 
 For dashboards, start with `list_runs/2`, then inspect selected runs with
 history only when the caller needs detailed attempts or audit evidence.
+Deadline alerting belongs at the host boundary: use Squid Mesh's deadline state
+as durable evidence, then route notifications or operator actions through the
+host application's policy and authorization layer.
 
 ## Operator Explanations
 

@@ -364,6 +364,7 @@ defmodule SquidMesh.Runtime.DispatchProtocol.Projection do
             attempt_number: attempt.attempt_number + 1,
             status: :retry_scheduled,
             visible_at: retry_visible_at,
+            deadline: Map.get(data, :retry_deadline),
             claim_id: nil,
             claim_token_hash: nil,
             owner_id: nil,
@@ -392,6 +393,7 @@ defmodule SquidMesh.Runtime.DispatchProtocol.Projection do
       step: data.step,
       input: data.input,
       visible_at: data.visible_at,
+      deadline: Map.get(data, :deadline),
       status: :available
     }
   end
@@ -434,7 +436,8 @@ defmodule SquidMesh.Runtime.DispatchProtocol.Projection do
   defp same_intent?(%ActionAttempt{} = left, %ActionAttempt{} = right) do
     left.run_id == right.run_id and left.idempotency_key == right.idempotency_key and
       left.attempt_number == right.attempt_number and left.step == right.step and
-      left.input == right.input and left.visible_at == right.visible_at
+      left.input == right.input and left.visible_at == right.visible_at and
+      left.deadline == right.deadline
   end
 
   defp expired_claim?(%ActionAttempt{lease_until: %DateTime{} = lease_until}, %DateTime{} = at) do

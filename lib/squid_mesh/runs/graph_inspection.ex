@@ -234,6 +234,9 @@ defmodule SquidMesh.Runs.GraphInspection do
           input: detail(include_details?, latest_attempt_value(attempts, :input)),
           output: detail(include_details?, latest_attempt_value(attempts, :result)),
           error: detail(include_details?, latest_attempt_value(attempts, :error)),
+          deadline:
+            latest_attempt_value(status_sources, :deadline) ||
+              map_value(snapshot_manual_state(snapshot, node_id) || %{}, :deadline),
           recovery: normalize_recovery(latest_attempt_value(status_sources, :recovery)),
           transition:
             Definition.deserialize_transition_decision(
@@ -323,6 +326,7 @@ defmodule SquidMesh.Runs.GraphInspection do
               input: detail(include_details?, latest_attempt_value(attempts, :input)),
               output: detail(include_details?, latest_attempt_value(attempts, :result)),
               error: detail(include_details?, latest_attempt_value(attempts, :error)),
+              deadline: latest_attempt_value(status_sources, :deadline),
               recovery: normalize_recovery(latest_attempt_value(status_sources, :recovery)),
               dynamic?: true,
               origin: origin,

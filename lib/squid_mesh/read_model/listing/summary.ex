@@ -15,6 +15,7 @@ defmodule SquidMesh.ReadModel.Listing.Summary do
           status: atom(),
           terminal?: boolean(),
           terminal_status: atom() | nil,
+          deadline: map() | nil,
           indexed_at: DateTime.t(),
           thread_revision: non_neg_integer(),
           anomalies: [map()]
@@ -28,6 +29,7 @@ defmodule SquidMesh.ReadModel.Listing.Summary do
     :status,
     :terminal?,
     :terminal_status,
+    :deadline,
     :indexed_at,
     :thread_revision
   ]
@@ -40,6 +42,7 @@ defmodule SquidMesh.ReadModel.Listing.Summary do
     :status,
     :terminal?,
     :terminal_status,
+    :deadline,
     :indexed_at,
     :thread_revision,
     anomalies: []

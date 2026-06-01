@@ -174,6 +174,28 @@ defmodule SquidMesh.ReadModel.ExplanationTest do
            }
   end
 
+  test "includes deadline details and host-owned escalation action" do
+    deadline =
+      deadline(
+        started_at: @visible_at,
+        within: 20_000,
+        due_soon: 10_000,
+        escalate_after: 0
+      )
+
+    append_run_entries([run_started(), runnables_planned([planned_runnable(deadline: deadline)])])
+    append_dispatch_entries([attempt_scheduled(deadline: deadline), attempt_claimed()])
+
+    assert {:ok, %Diagnostic{} = explanation} =
+             Explanation.explain(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert explanation.reason == :attempt_claimed
+    assert :apply_host_escalation_policy in explanation.next_actions
+    assert explanation.details.deadline_status == :escalated
+    assert explanation.details.deadline_escalation == %{outcome: :diagnostic}
+    assert explanation.evidence.deadline.status == :escalated
+  end
+
   test "explains manual pause state as operator intervention" do
     append_run_entries([run_started(), runnables_planned(), manual_step_paused()])
     append_dispatch_entries([attempt_scheduled()])
@@ -537,6 +559,28 @@ defmodule SquidMesh.ReadModel.ExplanationTest do
     }
 
     Map.merge(base, Map.new(overrides))
+  end
+
+  defp deadline(opts) do
+    started_at = Keyword.fetch!(opts, :started_at)
+    within = Keyword.fetch!(opts, :within)
+    due_at = DateTime.add(started_at, within, :millisecond)
+    due_soon = Keyword.get(opts, :due_soon)
+    escalate_after = Keyword.get(opts, :escalate_after)
+
+    %{
+      policy: %{
+        within: within,
+        due_soon: due_soon,
+        escalate_after: escalate_after,
+        escalation: :diagnostic
+      },
+      started_at: started_at,
+      due_at: due_at,
+      due_soon_at: if(is_integer(due_soon), do: DateTime.add(due_at, -due_soon, :millisecond)),
+      escalated_at:
+        if(is_integer(escalate_after), do: DateTime.add(due_at, escalate_after, :millisecond))
+    }
   end
 
   defp entry!(type, attrs) do

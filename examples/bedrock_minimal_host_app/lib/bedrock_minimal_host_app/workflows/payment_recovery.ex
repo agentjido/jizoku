@@ -20,7 +20,8 @@ defmodule BedrockMinimalHostApp.Workflows.PaymentRecovery do
     step :load_invoice, BedrockMinimalHostApp.Steps.LoadInvoice
 
     step :check_gateway_status, BedrockMinimalHostApp.Steps.CheckGatewayStatus,
-      retry: [max_attempts: 5, backoff: [type: :exponential, min: 1_000, max: 1_000]]
+      retry: [max_attempts: 5, backoff: [type: :exponential, min: 1_000, max: 1_000]],
+      deadline: [within: 30_000, due_soon: 5_000, escalation: :diagnostic]
 
     step :issue_gateway_credit, BedrockMinimalHostApp.Steps.IssueGatewayCredit
     step :notify_customer, BedrockMinimalHostApp.Steps.NotifyCustomer, compensatable: false

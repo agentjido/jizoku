@@ -53,6 +53,7 @@ defmodule SquidMesh.ReadModel.Explanation do
     {summary, details, next_actions, step} = explanation_parts(snapshot)
     command_details = command_details(snapshot.command_history)
     dynamic_work_details = dynamic_work_details(snapshot.dynamic_work)
+    deadline_details = deadline_details(snapshot.deadline)
 
     %Diagnostic{
       run_id: snapshot.run_id,
@@ -66,8 +67,9 @@ defmodule SquidMesh.ReadModel.Explanation do
       details:
         details
         |> Map.merge(command_details)
-        |> Map.merge(dynamic_work_details),
-      next_actions: next_actions,
+        |> Map.merge(dynamic_work_details)
+        |> Map.merge(deadline_details),
+      next_actions: Enum.uniq(next_actions ++ deadline_next_actions(snapshot.deadline)),
       evidence: evidence(snapshot)
     }
   end
@@ -235,6 +237,7 @@ defmodule SquidMesh.ReadModel.Explanation do
       parent_run: snapshot.parent_run,
       child_runs: snapshot.child_runs,
       dynamic_work: snapshot.dynamic_work,
+      deadline: snapshot.deadline,
       command_history: snapshot.command_history,
       command_counts: command_counts(snapshot.command_history),
       duplicate_commands: duplicate_commands(snapshot.command_history),
@@ -271,6 +274,32 @@ defmodule SquidMesh.ReadModel.Explanation do
   end
 
   defp dynamic_work_details(_dynamic_work), do: %{}
+
+  defp deadline_details(nil), do: %{}
+
+  defp deadline_details(deadline) when is_map(deadline) do
+    %{
+      deadline_status: item_value(deadline, :status),
+      deadline_due_at: item_value(deadline, :due_at),
+      deadline_escalation: item_value(deadline, :escalation)
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp deadline_details(_deadline), do: %{}
+
+  defp deadline_next_actions(%{status: status}) when status in [:overdue, :escalated] do
+    [:apply_host_escalation_policy]
+  end
+
+  defp deadline_next_actions(%{"status" => status}) when status in [:overdue, :escalated] do
+    [:apply_host_escalation_policy]
+  end
+
+  defp deadline_next_actions(%{status: :due_soon}), do: [:inspect_deadline_policy]
+  defp deadline_next_actions(%{"status" => :due_soon}), do: [:inspect_deadline_policy]
+  defp deadline_next_actions(_deadline), do: []
 
   defp dynamic_work_key(dynamic_work) when is_map(dynamic_work) do
     Map.get(dynamic_work, :dynamic_key) || Map.get(dynamic_work, "dynamic_key")

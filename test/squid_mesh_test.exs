@@ -187,7 +187,9 @@ defmodule SquidMeshTest do
         end
       end
 
-      step :check_gateway, DeferredContinuationWorkflow.CheckGateway, retry: [max_attempts: 2]
+      step :check_gateway, DeferredContinuationWorkflow.CheckGateway,
+        retry: [max_attempts: 2],
+        deadline: [within: 60_000, due_soon: 20_000, escalation: :diagnostic]
 
       transition :check_gateway, on: :ok, to: :complete
     end
@@ -582,7 +584,10 @@ defmodule SquidMeshTest do
         end
       end
 
-      step :retry_gateway, JournalRetryWorkflow.RetryGateway, retry: [max_attempts: 2]
+      step :retry_gateway, JournalRetryWorkflow.RetryGateway,
+        retry: [max_attempts: 2],
+        deadline: [within: 60_000, due_soon: 20_000, escalation: :diagnostic]
+
       transition :retry_gateway, on: :ok, to: :complete
     end
   end
@@ -1660,7 +1665,12 @@ defmodule SquidMeshTest do
       end
 
       approval_step :wait_for_review, output: :approval
-      step :record_approval, :log, message: "approval recorded", level: :info
+
+      step :record_approval, :log,
+        message: "approval recorded",
+        level: :info,
+        deadline: [within: 30_000, due_soon: 10_000, escalation: :diagnostic]
+
       step :record_rejection, :log, message: "rejection recorded", level: :warning
 
       transition :wait_for_review, on: :ok, to: :record_approval
@@ -2953,12 +2963,18 @@ defmodule SquidMeshTest do
                  step: "check_gateway",
                  attempt_number: 1,
                  visible_at: ^deferred_visible_at,
+                 deadline: %{status: :on_time, due_at: deferred_due_at},
                  deferred: %{
                    reason: %{code: "gateway_pending", order_id: "order_deferred"},
                    from_runnable_key: original_runnable_key
                  }
                } = deferred_attempt
              ] = deferred_snapshot.scheduled_attempts
+
+      assert DateTime.compare(
+               deferred_due_at,
+               DateTime.add(@read_model_started_at, 60, :second)
+             ) == :eq
 
       assert original_runnable_key == "#{started_snapshot.run_id}:check_gateway:1"
       assert deferred_attempt.runnable_key == "#{original_runnable_key}:deferred"
@@ -9880,6 +9896,7 @@ defmodule SquidMeshTest do
                %{
                  step: "record_approval",
                  status: :available,
+                 deadline: %{status: :on_time, due_at: approval_due_at},
                  input: %{
                    account_id: "acct_123",
                    approval: %{
@@ -9891,6 +9908,8 @@ defmodule SquidMeshTest do
                  }
                }
              ] = approved_snapshot.visible_attempts
+
+      assert DateTime.compare(approval_due_at, DateTime.add(approved_at, 30, :second)) == :eq
 
       assert Enum.any?(approved_snapshot.command_history, fn
                %{
@@ -13693,7 +13712,18 @@ defmodule SquidMeshTest do
                %{status: :retry_scheduled, step: "retry_gateway", attempt_number: 2}
              ] = snapshot.attempts
 
-      assert [%{status: :retry_scheduled, attempt_number: 2}] = snapshot.visible_attempts
+      assert [
+               %{
+                 status: :retry_scheduled,
+                 attempt_number: 2,
+                 deadline: %{status: :on_time, due_at: retry_due_at}
+               }
+             ] = snapshot.visible_attempts
+
+      assert DateTime.compare(
+               retry_due_at,
+               DateTime.add(@read_model_visible_at, 60, :second)
+             ) == :eq
 
       assert {:ok, %SquidMesh.Runs.GraphInspection{} = graph} =
                SquidMesh.inspect_run_graph(started_snapshot.run_id,
@@ -13735,6 +13765,8 @@ defmodule SquidMeshTest do
                :attempt_claimed,
                :attempt_failed
              ]
+
+      assert %{retry_deadline: %{due_at: ^retry_due_at}} = List.last(dispatch_entries).data
 
       assert {:ok, run_entries} =
                load_read_model_run_entries(started_snapshot.run_id)

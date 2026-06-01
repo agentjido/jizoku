@@ -14,7 +14,9 @@ defmodule MinimalHostApp.Workflows.ManualApproval do
       end
     end
 
-    approval_step :wait_for_approval, output: :approval
+    approval_step :wait_for_approval,
+      output: :approval,
+      deadline: [within: 300_000, due_soon: 60_000, escalation: :operator_action]
 
     step :record_approval, MinimalHostApp.Steps.RecordApproval,
       input: [:account_id, :approval],

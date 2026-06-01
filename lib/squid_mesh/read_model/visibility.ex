@@ -15,7 +15,16 @@ defmodule SquidMesh.ReadModel.Visibility do
   alias SquidMesh.Runs.GraphInspection.Node
 
   @visibility_scopes [:external, :operator, :auditor]
-  @manual_state_fields [:step, :kind, :status, :reason, :paused_at, :requested_at, :resolved_at]
+  @manual_state_fields [
+    :step,
+    :kind,
+    :status,
+    :reason,
+    :paused_at,
+    :requested_at,
+    :resolved_at,
+    :deadline
+  ]
   @run_summary_fields [
     :run_id,
     :workflow,
@@ -24,13 +33,26 @@ defmodule SquidMesh.ReadModel.Visibility do
     :terminal?,
     :terminal_status
   ]
-  @runnable_fields [:runnable_key, :key, :step, :status, :attempt_number, :visible_at]
+  @deadline_fields [
+    :status,
+    :step,
+    :runnable_key,
+    :started_at,
+    :due_at,
+    :due_soon_at,
+    :escalated_at,
+    :overdue?,
+    :remaining_ms,
+    :escalation
+  ]
+  @runnable_fields [:runnable_key, :key, :step, :status, :attempt_number, :visible_at, :deadline]
   @attempt_fields [
     :runnable_key,
     :status,
     :attempt_number,
     :step,
     :visible_at,
+    :deadline,
     :wakeup_emitted?,
     :applied?
   ]
@@ -143,6 +165,7 @@ defmodule SquidMesh.ReadModel.Visibility do
         child_runs: Enum.map(snapshot.child_runs, &summarize_run/1),
         dynamic_work: Enum.map(snapshot.dynamic_work, &summarize_dynamic_work/1),
         command_history: [],
+        deadline: summarize_deadline(snapshot.deadline),
         manual_state: summarize_manual_state(snapshot.manual_state),
         planned_runnables: Enum.map(snapshot.planned_runnables, &summarize_runnable/1),
         pending_dispatches: Enum.map(snapshot.pending_dispatches, &summarize_runnable/1),
@@ -223,6 +246,7 @@ defmodule SquidMesh.ReadModel.Visibility do
       | input: nil,
         output: nil,
         error: nil,
+        deadline: summarize_deadline(node.deadline),
         metadata: %{},
         origin: summarize_dynamic_origin(node.origin),
         manual_state: summarize_manual_state(node.manual_state),
@@ -235,6 +259,7 @@ defmodule SquidMesh.ReadModel.Visibility do
   defp summarize_manual_state(manual_state) when is_map(manual_state) do
     manual_state
     |> take_dual_keys(@manual_state_fields)
+    |> Map.update(:deadline, nil, &summarize_deadline/1)
     |> compact()
   end
 
@@ -253,6 +278,7 @@ defmodule SquidMesh.ReadModel.Visibility do
   defp summarize_runnable(runnable) when is_map(runnable) do
     runnable
     |> take_dual_keys(@runnable_fields)
+    |> Map.update(:deadline, nil, &summarize_deadline/1)
     |> compact()
   end
 
@@ -261,10 +287,28 @@ defmodule SquidMesh.ReadModel.Visibility do
   defp summarize_attempt(attempt) when is_map(attempt) do
     attempt
     |> take_dual_keys(@attempt_fields)
+    |> Map.update(:deadline, nil, &summarize_deadline/1)
     |> compact()
   end
 
   defp summarize_attempt(_attempt), do: %{}
+
+  defp summarize_deadline(deadline) when is_map(deadline) do
+    deadline
+    |> take_dual_keys(@deadline_fields)
+    |> Map.update(:escalation, nil, &summarize_escalation/1)
+    |> compact()
+  end
+
+  defp summarize_deadline(_deadline), do: nil
+
+  defp summarize_escalation(escalation) when is_map(escalation) do
+    escalation
+    |> take_dual_keys([:outcome])
+    |> compact()
+  end
+
+  defp summarize_escalation(_escalation), do: nil
 
   defp summarize_anomaly(anomaly) when is_map(anomaly) do
     anomaly

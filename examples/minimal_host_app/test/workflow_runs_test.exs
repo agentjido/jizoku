@@ -228,6 +228,34 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert run.status == :running
     assert run.input == attrs
     assert [%{step: "load_invoice", status: :available}] = run.visible_attempts
+
+    assert {:ok, advanced_run} =
+             SquidMesh.execute_next(owner_id: "minimal-host-app-sla-contract-test")
+
+    assert advanced_run.run_id == run.run_id
+
+    assert [
+             %{
+               step: "check_gateway_status",
+               status: :available,
+               deadline: %{status: :on_time, escalation: %{outcome: :diagnostic}}
+             }
+           ] = advanced_run.visible_attempts
+
+    assert {:ok, [listed_run]} =
+             SquidMesh.list_runs([workflow: MinimalHostApp.Workflows.PaymentRecovery],
+               now: DateTime.utc_now()
+             )
+
+    assert listed_run.run_id == run.run_id
+    assert listed_run.deadline.status == :on_time
+    assert listed_run.deadline.step == "check_gateway_status"
+
+    assert {:ok, graph} = SquidMesh.inspect_run_graph(run.run_id)
+    graph_nodes = Map.new(SquidMesh.Runs.GraphInspection.to_map(graph).nodes, &{&1.id, &1})
+
+    assert graph_nodes["check_gateway_status"].deadline.status == :on_time
+    assert graph_nodes["check_gateway_status"].deadline.escalation == %{outcome: :diagnostic}
   end
 
   test "inspects a started run through the host boundary" do
@@ -784,6 +812,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     assert paused_run.status == :paused
     assert paused_run.manual_state.step == "wait_for_approval"
+    assert paused_run.manual_state.deadline.status == :on_time
+    assert paused_run.manual_state.deadline.escalation == %{outcome: :operator_action}
 
     assert {:ok, resumed_run} =
              WorkflowRuns.approve(
