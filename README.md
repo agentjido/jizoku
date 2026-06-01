@@ -1,26 +1,10 @@
-<div align="left">
-
 # SquidMesh
 
-<p>
-  <a href="https://github.com/dark-trench/squid_mesh/actions/workflows/ci.yml">
-    <img alt="CI" src="https://github.com/dark-trench/squid_mesh/actions/workflows/ci.yml/badge.svg" />
-  </a>
-  <a href="https://codecov.io/gh/dark-trench/squid_mesh">
-    <img alt="Codecov" src="https://codecov.io/gh/dark-trench/squid_mesh/branch/main/graph/badge.svg" />
-  </a>
-  <a href="https://hex.pm/packages/squid_mesh">
-    <img alt="Hex.pm" src="https://img.shields.io/hexpm/v/squid_mesh" />
-  </a>
-  <a href="https://hexdocs.pm/squid_mesh">
-    <img alt="HexDocs" src="https://img.shields.io/badge/docs-hexdocs-purple" />
-  </a>
-  <a href="https://github.com/dark-trench/squid_mesh/blob/main/LICENSE">
-    <img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" />
-  </a>
-</p>
-
-</div>
+[![CI](https://github.com/dark-trench/squid_mesh/actions/workflows/ci.yml/badge.svg)](https://github.com/dark-trench/squid_mesh/actions/workflows/ci.yml)
+[![Codecov](https://codecov.io/gh/dark-trench/squid_mesh/branch/main/graph/badge.svg)](https://codecov.io/gh/dark-trench/squid_mesh)
+[![Hex.pm](https://img.shields.io/hexpm/v/squid_mesh)](https://hex.pm/packages/squid_mesh)
+[![HexDocs](https://img.shields.io/badge/docs-hexdocs-purple)](https://hexdocs.pm/squid_mesh)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/dark-trench/squid_mesh/blob/main/LICENSE)
 
 ---
 
