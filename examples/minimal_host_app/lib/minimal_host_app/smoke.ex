@@ -1469,7 +1469,9 @@ defmodule MinimalHostApp.Smoke do
       {"reserve_inventory", :completed, true, 1},
       {"authorize_payment", :completed, true, 1},
       {"capture_payment", :failed, false, 1},
-      {"capture_payment", :failed, false, 2}
+      {"capture_payment", :failed, false, 2},
+      {"compensate:authorize_payment", :completed, true, 1},
+      {"compensate:reserve_inventory", :completed, true, 1}
     ]
 
     if Enum.map(attempts, &{&1.step, &1.status, &1.applied?, &1.attempt_number}) ==

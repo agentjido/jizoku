@@ -15,6 +15,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
   alias SquidMesh.Runtime.DispatchProtocol
   alias SquidMesh.Runtime.DispatchProtocol.ActionAttempt
   alias SquidMesh.Runtime.Journal
+  alias SquidMesh.Runtime.Journal.Compensation
   alias SquidMesh.Runtime.Journal.Options
   alias SquidMesh.Runtime.Journal.WorkflowDefinitionLoader
   alias SquidMesh.Runtime.RetryPolicy
@@ -763,7 +764,15 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         end
 
       dynamic_attempt?(workflow_agent, attempt) ->
-        {:ok, nil, terminal_completion_entries(workflow_agent, attempt, progression.now)}
+        with {:ok, progression_entries} <-
+               dynamic_success_progression_entries(
+                 workflow_agent,
+                 attempt,
+                 definition,
+                 progression
+               ) do
+          {:ok, nil, progression_entries}
+        end
 
       Definition.dependency_mode?(definition) ->
         with {:ok, progression_entries} <-
@@ -794,6 +803,59 @@ defmodule SquidMesh.Runtime.Journal.Executor do
                ) do
           {:ok, Definition.serialize_transition_decision(transition), progression_entries}
         end
+    end
+  end
+
+  defp dynamic_success_progression_entries(workflow_agent, attempt, definition, progression) do
+    case dynamic_planned_runnable(workflow_agent, attempt) do
+      {:ok, runnable} ->
+        if Compensation.runnable?(runnable) do
+          compensation_success_progression_entries(
+            workflow_agent,
+            attempt,
+            definition,
+            runnable,
+            progression
+          )
+        else
+          {:ok, terminal_completion_entries(workflow_agent, attempt, progression.now)}
+        end
+
+      {:error, _reason} ->
+        {:ok, terminal_completion_entries(workflow_agent, attempt, progression.now)}
+    end
+  end
+
+  defp compensation_success_progression_entries(
+         workflow_agent,
+         %ActionAttempt{} = attempt,
+         definition,
+         runnable,
+         %{queue: queue, now: now}
+       ) do
+    failure = Compensation.failure(runnable)
+    failure_runnable_key = Compensation.failure_runnable_key(runnable)
+
+    applied_compensation_keys =
+      workflow_agent
+      |> Compensation.applied_runnable_keys()
+      |> MapSet.put(attempt.runnable_key)
+
+    case Compensation.next_runnable(
+           workflow_agent,
+           definition,
+           attempt.run_id,
+           queue,
+           now,
+           failure,
+           failure_runnable_key,
+           applied_compensation_keys
+         ) do
+      {:ok, nil} ->
+        {:ok, [run_terminal_entry!(attempt.run_id, :failed, now, failure)]}
+
+      {:ok, next_runnable} ->
+        {:ok, [runnables_planned_entry!(attempt.run_id, [next_runnable], now)]}
     end
   end
 
@@ -914,14 +976,14 @@ defmodule SquidMesh.Runtime.Journal.Executor do
          %ActionAttempt{} = attempt,
          _definition,
          step_name,
-         _error,
+         error,
          []
        )
        when not is_atom(step_name) do
     append_run_entries(
       storage,
       workflow_agent,
-      [run_terminal_entry!(attempt.run_id, :failed, now)],
+      [run_terminal_entry!(attempt.run_id, :failed, now, error)],
       @run_append_retries
     )
   end
@@ -932,7 +994,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
          %ActionAttempt{} = attempt,
          definition,
          step_name,
-         _error,
+         error,
          []
        ) do
     case Definition.transition(
@@ -969,25 +1031,124 @@ defmodule SquidMesh.Runtime.Journal.Executor do
         )
 
       {:error, {:unknown_transition, _from_step, :error}} ->
-        append_run_entries(
-          storage,
+        append_terminal_failure_or_compensation(
+          %{storage: storage, queue: queue, now: now},
           workflow_agent,
-          [run_terminal_entry!(attempt.run_id, :failed, now)],
-          @run_append_retries
+          attempt,
+          definition,
+          error
         )
 
       {:error, {:no_matching_transition, _from_step, :error}} ->
-        append_run_entries(
-          storage,
+        append_terminal_failure_or_compensation(
+          %{storage: storage, queue: queue, now: now},
           workflow_agent,
-          [run_terminal_entry!(attempt.run_id, :failed, now)],
-          @run_append_retries
+          attempt,
+          definition,
+          error
         )
 
       {:error, _reason} = error ->
         error
     end
   end
+
+  defp append_terminal_failure_or_compensation(
+         runtime,
+         workflow_agent,
+         %ActionAttempt{} = attempt,
+         definition,
+         error
+       ) do
+    append_terminal_failure_or_compensation(
+      runtime,
+      workflow_agent,
+      attempt,
+      definition,
+      error,
+      @run_append_retries
+    )
+  end
+
+  defp append_terminal_failure_or_compensation(
+         runtime,
+         workflow_agent,
+         %ActionAttempt{} = attempt,
+         definition,
+         error,
+         retries_left
+       ) do
+    if failed_progression_recorded?(workflow_agent, attempt) do
+      {:ok, workflow_agent}
+    else
+      append_recomputed_terminal_failure_or_compensation(
+        runtime,
+        workflow_agent,
+        attempt,
+        definition,
+        error,
+        retries_left
+      )
+    end
+  end
+
+  defp append_recomputed_terminal_failure_or_compensation(
+         %{storage: storage, queue: queue, now: now} = runtime,
+         workflow_agent,
+         %ActionAttempt{} = attempt,
+         definition,
+         error,
+         retries_left
+       )
+       when retries_left > 0 do
+    entries =
+      case Compensation.next_runnable(
+             workflow_agent,
+             definition,
+             attempt.run_id,
+             queue,
+             now,
+             error,
+             attempt.runnable_key,
+             MapSet.new()
+           ) do
+        {:ok, nil} ->
+          [run_terminal_entry!(attempt.run_id, :failed, now, error)]
+
+        {:ok, runnable} ->
+          [runnables_planned_entry!(attempt.run_id, [runnable], now)]
+      end
+
+    case Journal.append_entries(storage, entries, expected_rev: workflow_agent.state.thread_rev) do
+      {:ok, _thread} ->
+        WorkflowAgent.rebuild(storage, workflow_agent.state.run_id)
+
+      {:error, :conflict} ->
+        with {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, workflow_agent.state.run_id) do
+          append_terminal_failure_or_compensation(
+            runtime,
+            workflow_agent,
+            attempt,
+            definition,
+            error,
+            retries_left - 1
+          )
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp append_recomputed_terminal_failure_or_compensation(
+         _runtime,
+         _workflow_agent,
+         %ActionAttempt{},
+         _definition,
+         _error,
+         0
+       ),
+       do: {:error, :conflict}
 
   defp retry_runnable_for_failure(
          definition,
@@ -2158,6 +2319,7 @@ defmodule SquidMesh.Runtime.Journal.Executor do
 
     MapSet.member?(WorkflowAgent.applied_runnable_keys(workflow_agent), attempt.runnable_key) or
       Enum.member?(WorkflowAgent.planned_runnable_keys(workflow_agent), retry_key) or
+      Compensation.planned_for_failure?(workflow_agent, attempt.runnable_key) or
       workflow_agent.state.projection.terminal_status in [:completed, :failed, :cancelled]
   end
 

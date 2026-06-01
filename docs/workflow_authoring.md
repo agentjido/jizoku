@@ -1057,8 +1057,10 @@ then releases inventory. Failed steps are not compensated because their forward
 effect did not complete.
 
 Compensation callbacks use the same step module contract as normal workflow
-steps. They receive the original payload, current run context, the completed
-step's input and output, and the terminal failure:
+steps. Squid Mesh schedules them as internal dynamic runnables named
+`compensate:<completed_step>`. Their input includes the completed step's name,
+runnable key, input, output, applied timestamp, and the terminal failure that
+started rollback:
 
 ```elixir
 def run(%{step: %{output: %{inventory_reservation: reservation}}}, _context) do
@@ -1066,12 +1068,16 @@ def run(%{step: %{output: %{inventory_reservation: reservation}}}, _context) do
 end
 ```
 
-`inspect_run(..., include_history: true)` exposes compensation status and output
-under each completed step's `recovery.compensation` field. Compensation callbacks
-are not governed by the forward step's retry policy; forward retries exhaust
-before rollback starts, and callback failures are persisted under
-`recovery.compensation` for inspection. Write callbacks to be idempotent so a
-host app can safely redeliver or repair failed compensation work.
+`inspect_run(..., include_history: true)` exposes compensation work through
+`planned_runnables`, `visible_attempts`, and `attempts`. `inspect_run_graph/2`
+adds `compensate:<step>` nodes while rollback is pending or completed, and
+`explain_run/2` includes their recovery policy evidence. Callback outputs are
+applied to run context like normal step outputs after the callback completes.
+
+Compensation callbacks are not governed by the forward step's retry policy;
+forward retries exhaust before rollback starts. Callback failures are persisted
+as failed compensation attempts. Write callbacks to be idempotent so a host app
+can safely redeliver or repair failed compensation work.
 
 ## Compensation And Undo Routes
 

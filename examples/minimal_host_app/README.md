@@ -188,7 +188,8 @@ step :capture_payment, MinimalHostApp.Steps.CapturePayment, retry: [max_attempts
 The capture step fails after its retry policy is exhausted, then Squid Mesh
 voids the payment authorization and releases inventory in reverse completion
 order. The smoke task verifies those compensation results through
-`inspect_run(..., include_history: true)`.
+`inspect_run(..., include_history: true)`, including the internal
+`compensate:authorize_payment` and `compensate:reserve_inventory` attempts.
 
 The same workflow routes exhausted gateway failures to a compensation step:
 

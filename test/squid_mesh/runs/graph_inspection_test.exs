@@ -104,6 +104,57 @@ defmodule SquidMesh.Runs.GraphInspectionTest do
     assert %{child_links: []} = GraphInspection.to_map(graph)
   end
 
+  test "surfaces string-keyed pending dispatches as current pending graph nodes" do
+    snapshot = %Snapshot{
+      run_id: @run_id,
+      workflow: "MissingWorkflow",
+      queue: "default",
+      status: :running,
+      reason: :planned_dispatch_pending_schedule,
+      terminal?: false,
+      terminal_status: nil,
+      thread_revisions: %{run: 2, dispatch: 0},
+      dynamic_work: [
+        %{
+          "dynamic_key" => "compensation",
+          "nodes" => [
+            %{
+              "id" => "compensate:authorize_payment",
+              "action" => "compensation.authorize_payment",
+              "status" => "waiting"
+            }
+          ]
+        }
+      ],
+      pending_dispatches: [
+        %{
+          "step" => "compensate:authorize_payment",
+          "runnable_key" => "#{@run_id}:compensate:authorize_payment:1",
+          "recovery" => %{
+            "irreversible?" => false,
+            "compensatable?" => false,
+            "replay" => "manual_review_required",
+            "recovery" => "manual_intervention"
+          }
+        }
+      ]
+    }
+
+    graph = GraphInspection.from_snapshot(snapshot, source: :read_model)
+    nodes_by_id = Map.new(graph.nodes, &{&1.id, &1})
+
+    assert graph.current_node_ids == ["compensate:authorize_payment"]
+    assert nodes_by_id["compensate:authorize_payment"].current?
+    assert nodes_by_id["compensate:authorize_payment"].status == :pending
+
+    assert nodes_by_id["compensate:authorize_payment"].recovery == %{
+             irreversible?: false,
+             compensatable?: false,
+             replay: :manual_review_required,
+             recovery: :manual_intervention
+           }
+  end
+
   test "exposes stable action identity from planned runnable metadata" do
     snapshot = %Snapshot{
       run_id: @run_id,

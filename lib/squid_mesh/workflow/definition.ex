@@ -839,7 +839,8 @@ defmodule SquidMesh.Workflow.Definition do
             input: canonical_input_mapping(Keyword.get(step.opts, :input)),
             output: Keyword.get(step.opts, :output),
             after: canonical_dependency_list(Keyword.get(step.opts, :after)),
-            retry: Keyword.get(step.opts, :retry)
+            retry: Keyword.get(step.opts, :retry),
+            recovery: serialize_recovery_policy(recovery_policy(step))
           }
         end),
       transitions:
