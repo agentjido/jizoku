@@ -3,8 +3,64 @@
 All notable changes to Squid Mesh will be documented in this file.
 
 The format is based on Keep a Changelog and the project follows Semantic
-Versioning, including prerelease tags while the runtime remains in early
-development.
+Versioning.
+
+## [0.1.0] - 2026-06-01
+
+### Breaking
+- The concise runtime API is now canonical.
+
+### Added
+- Runtime command signals, the Jido signal adapter, and signal-interpreter
+  routing for run controls.
+- Durable command receipts and command history in run inspection, including
+  actor, metadata, idempotency, and occurrence details.
+- Numeric transition conditions for workflow routing.
+- Workflow definition version metadata on started runs and inspection surfaces.
+- The safe action registry for executable runtime-authored workflow specs.
+- Runtime-authored workflow start APIs through normalized specs, with safe action
+  registry boundaries and host-app example coverage.
+- Durable child workflow runs and child-run graph links for parent/child
+  inspection.
+- Saga compensation callbacks and compensation recovery metadata for failure
+  recovery inspection.
+- Public dynamic work recording, dynamic work inspection metadata, executable
+  dynamic work scheduling, and validation for dynamic work actions.
+- Dynamic work preview APIs, preview overlays, and graph overlays for visual
+  workflow tooling.
+- Visual editor spec round trips, editor spec action-key validation, and editor
+  draft diffing.
+- Actor-scoped read visibility, node redaction, and comprehensive actor
+  visibility documentation.
+- Deferred continuation runtime semantics and regression coverage for deferred
+  continuation lifecycle behavior.
+- Executor-owned journal heartbeats for long-running claimed attempts.
+- SLA deadline contracts for workflow steps, including persisted deadline
+  metadata, due-soon and escalation timestamps, read-model summaries, graph
+  inspection output, explanations, and host-app example coverage.
+- Bedrock host-app integration coverage for queue delivery, leases, heartbeats,
+  retries, cron delivery, and SLA metadata.
+
+### Changed
+- Install snippets now reference `0.1.0`.
+- Public status wording now describes the supported `0.1.x` journal runtime
+  instead of using the previous evaluation-only warning.
+- README setup guidance now distinguishes the built-in journal runtime from
+  optional external queue/leasing backends such as Bedrock.
+- Host leasing and Bedrock setup docs now describe the executor, queue, lease,
+  heartbeat, retry, and dead-letter boundaries more explicitly.
+- The README, first-run path, workflow examples, and core docs were tightened
+  around current journal runtime usage.
+- Getting Started Livebook dependency setup no longer pins Squid Mesh to a local
+  prerelease dependency.
+- The storage adapter contract and Jido primitive/signal boundaries are now
+  documented explicitly.
+
+### Fixed
+- Retry scheduling tolerates invalid deadline metadata by omitting inspection-only
+  retry deadline data instead of crashing the executor failure path.
+- Cron window signal identity and runtime signal validation edges have dedicated
+  regression coverage.
 
 ## [0.1.0-beta.3] - 2026-05-25
 

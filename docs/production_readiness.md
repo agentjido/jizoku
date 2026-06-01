@@ -1,10 +1,12 @@
 # Production Readiness
 
-Squid Mesh is still marked as early development.
+Squid Mesh provides a supported `0.1.x` journal runtime for embedded host-app
+workflows.
 
-That warning remains until the checklist below is satisfied and reviewed as a
-whole. The goal is to keep the public contract aligned with the verification
-that has actually been run.
+Production adoption should still be treated as an application-owned integration:
+choose a queue/leasing strategy, run the host-app verification paths, and keep
+operational ownership explicit. The goal is to keep the public contract aligned
+with the verification that has actually been run.
 
 ## Current Status
 
@@ -17,7 +19,7 @@ What exists today:
 - paused-run resume semantics now verified across restart boundaries in the example host app
 - explicit recovery and operational boundaries in the docs
 
-Why the warning still remains:
+What remains application-owned:
 
 - support is still defined from a narrow verified baseline
 - soak/load validation is bounded verification, not long-term operational evidence
@@ -25,14 +27,14 @@ Why the warning still remains:
 
 ## Readiness Checklist
 
-Before removing the warning, the project should have:
+Before broader production rollout, each host app should have:
 
 - a documented supported baseline for the current release line
 - a production operations guide
 - restart and deploy resilience verification
 - soak/load validation on the journal-backed runtime
 - no known unresolved correctness bug in the core runtime
-- at least one round of real host-app dogfooding under normal deploy workflows
+- at least one round of host-app dogfooding under normal deploy workflows
 
 ## Example Verification Entry Points
 
@@ -53,14 +55,12 @@ These checks are meant to answer different questions:
 
 ## Decision Rule
 
-The warning should be removed only when:
+Adopt Squid Mesh in production only when:
 
-1. the checklist above is complete,
+1. the checklist above is complete for the host app,
 2. the verification paths are green on the supported baseline,
-3. maintainers are ready to support the documented contract in production host apps.
+3. the team is ready to own the documented queue, lease, retry, and operations
+   boundaries.
 
-Until then, Squid Mesh should continue to describe itself as suitable for:
-
-- evaluation
-- local development
-- internal integration work
+For initial rollout, prefer a bounded workflow class with clear operator
+inspection needs and well-understood side effects.

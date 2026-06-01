@@ -34,8 +34,8 @@ Squid Mesh manages workflow progression, transition routing, retry semantics, pa
 
 The runtime builds on [Jido](https://github.com/agentjido/jido) for actions, execution, and journaling; [Runic](https://github.com/dark-trench/runic) for workflow planning; and [Spark](https://github.com/ash-project/spark) for the DSL authoring surface.
 
-> **Warning**
-> Squid Mesh is in early development. The runtime is suitable for evaluation, local development, and integration work, but is not production-ready. See [Production Readiness](docs/production_readiness.md) for the current status and remaining work.
+> **Adoption status**
+> Squid Mesh provides a supported `0.1.x` journal runtime for embedded host-app workflows. Treat production rollout as an application-owned integration: run the host-app smoke and resilience checks, review the operational boundaries, and adopt the queue/leasing strategy that matches your deployment. See [Production Readiness](docs/production_readiness.md) for the current baseline.
 
 ## Start Here
 
@@ -92,7 +92,7 @@ Add Squid Mesh to your dependencies:
 ```elixir
 defp deps do
   [
-    {:squid_mesh, "~> 0.1.0-beta.3"}
+    {:squid_mesh, "~> 0.1.0"}
   ]
 end
 ```
@@ -103,7 +103,7 @@ If your host application defines raw `Jido.Action` modules directly, add `:jido`
 defp deps do
   [
     {:jido, "~> 2.0"},
-    {:squid_mesh, "~> 0.1.0-beta.3"}
+    {:squid_mesh, "~> 0.1.0"}
   ]
 end
 ```
