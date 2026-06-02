@@ -53,9 +53,16 @@ when a host needs a non-default journal setup.
 
 ## Status Terms
 
-- Supported: available in the journal-backed runtime and covered by repository docs
-  and tests.
-- Out of scope: intentionally not part of Squid Mesh's product surface.
+Status labels describe current adoption readiness, not roadmap intent.
+
+- Supported: available in the journal-backed runtime, covered by repository docs
+  and tests, and stable enough to treat as part of the current product surface.
+- Supported, evolving: available for real use today, but the surrounding API,
+  examples, or documentation may still tighten through the `0.1.x` release
+  line. Use these capabilities when their notes match your workflow, but expect
+  integration details to be less settled than plain supported rows.
+- Out of scope: intentionally not part of Squid Mesh's product surface, even if
+  a host application may integrate a separate tool for that concern.
 
 ## Capability Map
 
