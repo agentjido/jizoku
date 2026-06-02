@@ -608,27 +608,58 @@ Use `schedule_dynamic_work/3` instead when the dynamic nodes should execute:
   )
 ```
 
-`preview_dynamic_work/3`, `record_dynamic_work/3`, and
-`schedule_dynamic_work/3` share validation for stable ids, origin metadata,
-nodes, and optional edges against the current run snapshot. Scheduled dynamic
-work requires `:action_registry`; each executable dynamic node must include an
-approved action key and may include an `:input` map for its attempt. The origin
-runnable must already be applied before executable dynamic work can be
-scheduled.
-Preview returns the normalized dynamic work plus a graph overlay without
-appending a journal fact. It also exposes stable overlay metadata for visual
-editors: the producer node id, added node ids, added edge ids, whether recording
-would append a new durable fact, and warnings such as duplicate dynamic work.
-Recording appends only the durable inspection fact. Scheduling appends that fact
-and planned runnable intents in one run-thread write; the normal
-`execute_next/1` worker path claims, executes, retries, applies, and inspects the
-dynamic attempts. A scheduled dynamic node may opt into persisted retry with
+Think of dynamic work as a late graph patch attached to an already-applied
+runnable. The three public calls all validate the same proposal; they differ in
+how much of that proposal becomes durable.
+
+| Call | Journal write | Runnable work | Best fit |
+| --- | --- | --- | --- |
+| `preview_dynamic_work/3` | None | None | Show the proposed graph change before committing it |
+| `record_dynamic_work/3` | Inspection fact | None | Make generated structure visible to operators and dashboards |
+| `schedule_dynamic_work/3` | Inspection fact and runnable intents | Yes | Add executable dynamic nodes to the run |
+
+```mermaid
+flowchart LR
+  Origin[Applied origin runnable] --> Proposal[Dynamic work proposal]
+  Proposal --> Preview[preview_dynamic_work/3]
+  Proposal --> Record[record_dynamic_work/3]
+  Proposal --> Schedule[schedule_dynamic_work/3]
+  Preview --> Overlay[Graph overlay]
+  Record --> Fact[Durable inspection fact]
+  Schedule --> Fact
+  Schedule --> Intents[Runnable intents]
+  Intents --> Executor[execute_next/1]
+```
+
+Every proposal is checked against the current run snapshot:
+
+| Rule | Why it matters |
+| --- | --- |
+| Stable `dynamic_key`, node ids, and optional edge ids | Prevents duplicate or drifting graph patches |
+| Origin metadata with runnable key, step, and attempt | Ties the patch to the work that produced it |
+| Applied origin runnable for scheduling | Prevents executable work from appearing before its producer finished |
+| `:action_registry` for scheduling | Keeps executable action keys behind a host-owned allowlist |
+| Terminal run rejection | Keeps completed runs closed to new work |
+
+Preview returns normalized dynamic work plus a graph overlay. Visual editors get
+stable metadata from that overlay: producer node id, added node ids, added edge
+ids, whether recording would append a durable fact, and warnings such as
+duplicate dynamic work.
+
+Recording and scheduling are alternatives, not a promotion flow. Recording
+stores only the inspection fact. Scheduling stores that fact and the runnable
+intents in one run-thread write; the normal `execute_next/1` path then claims,
+executes, retries, applies, and inspects the dynamic attempts.
+
+Executable dynamic nodes must use approved action keys and may include an
+`input` map for the attempt. They can opt into persisted retry with
 `retry: [max_attempts: n]`. Dynamic edges are graph-inspection metadata for now;
-scheduled dynamic nodes are queued as independent runnable intents. Dynamic
-steps are replay-unsafe by default and require manual review before irreversible
-replay. Recording and scheduling the same dynamic node are alternatives, not a
-promotion flow; scheduling an already-recorded node with the same id is rejected
-by duplicate-node validation. Terminal runs reject new dynamic work.
+scheduled dynamic nodes are queued as independent runnable intents.
+
+Dynamic steps are replay-unsafe by default and require manual review before
+irreversible replay. Scheduling an already-recorded node with the same id is
+rejected by duplicate-node validation.
+
 `inspect_run_graph/2` also exposes `dynamic_work_overlays` so dashboards and
 visual editors can show producer nodes, added node ids, and added edge ids
 without reconstructing them from raw dynamic-work records.
