@@ -132,6 +132,32 @@ The runtime is intentionally asymmetric:
 - execution stays in worker processes and Jido actions
 - inspection stays read-only and projection-backed
 
+## Jido Primitive Boundary
+
+Squid Mesh uses Jido as an internal runtime foundation while keeping the public
+workflow API focused on Squid Mesh concepts. Runtime contributors should know
+which Jido primitives sit behind that boundary:
+
+| Jido primitive | Squid Mesh use |
+| --- | --- |
+| `Jido.Agent` | Rebuildable workflow and dispatch coordination state |
+| `Jido.Action` | Step execution interop, including raw Jido action modules and the native `SquidMesh.Step` adapter |
+| `Jido.Storage` | Journal and checkpoint persistence boundary |
+| `Jido.Thread` / `Jido.Thread.Entry` | Durable journal facts for run, dispatch, index, and catalog threads |
+| `Jido.Exec` | Action execution inside the journal executor |
+| `Jido.Signal` | Interop envelope for Squid Mesh runtime command signals |
+
+Support code also uses lower-level primitives such as
+`Jido.Thread.EntryNormalizer` and validates built-in storage adapters like
+`Jido.Storage.File` and `Jido.Storage.Redis`. Workflow authors do not need to
+use those primitives directly; public callers stay on Squid Mesh APIs and host
+apps adapt to Jido only at explicit runtime integration boundaries.
+
+Runtime command signals use `SquidMesh.Runtime.Signal` as the stable contract.
+`SquidMesh.Runtime.Signal.JidoAdapter` converts between Squid Mesh signal structs
+and `Jido.Signal` envelopes for advanced integration. Command receipt and
+inspection details are covered in the next section.
+
 ## Runtime Command Signals
 
 `SquidMesh.Runtime.Signal` is the Squid Mesh-native command envelope for
