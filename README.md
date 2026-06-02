@@ -247,12 +247,12 @@ capacity choice for this example:
 
 ```mermaid
 flowchart LR
-  Bedrock[Bedrock leases payload job] --> Callback[Host perform/2 callback]
-  Callback --> Payload[Runner.perform(payload)]
-  Callback --> Choice{Host drain choice}
-  Choice --> Once[execute_next/1 once]
-  Choice --> Loop[bounded execute_next/1 loop]
-  Once --> Journal[Squid Mesh journal]
+  Bedrock["Bedrock leases payload job"] --> Callback["Host perform/2 callback"]
+  Callback --> Payload["Runner.perform(payload)"]
+  Callback --> Choice{"Host drain choice"}
+  Choice --> Once["execute_next/1 once"]
+  Choice --> Loop["bounded execute_next/1 loop"]
+  Once --> Journal["Squid Mesh journal"]
   Loop --> Journal
 ```
 
