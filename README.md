@@ -168,13 +168,13 @@ modules.
 
 If the supervised worker loop above can call `SquidMesh.execute_next/1` often
 enough for your workload, start there. Add Bedrock only when the host needs a
-durable job runner to own payload delivery, delayed visibility, worker leases,
+durable job backend for payload delivery, delayed visibility, worker leases,
 and redelivery after worker or node failure.
 
 #### 1. Configure Squid Mesh
 
-Point Squid Mesh at the host repo. Use the same queue your Bedrock payload
-worker will drain:
+Point Squid Mesh at the host repo. Use the same queue your host payload worker
+passes to `SquidMesh.execute_next/1`:
 
 ```elixir
 config :squid_mesh,
@@ -235,10 +235,26 @@ defmodule MyApp.SquidMeshDeliveryAdapter do
 end
 ```
 
-#### 5. Add A Payload Worker
+#### 5. Add A Host Payload Worker
 
-The Bedrock job delivers the payload, then drains visible Squid Mesh journal
-attempts while the Bedrock job lease is held:
+Bedrock leases a payload job and invokes the host callback. From there, the
+code is host-owned: `perform/2` delivers the Squid Mesh payload, then this
+example runs a bounded drain loop while the Bedrock job lease is held.
+
+The loop comes from the host callback, not from Bedrock. A host can call
+`SquidMesh.execute_next/1` once per job instead; bounded draining is just a
+capacity choice for this example:
+
+```mermaid
+flowchart LR
+  Bedrock[Bedrock leases payload job] --> Callback[Host perform/2 callback]
+  Callback --> Payload[Runner.perform(payload)]
+  Callback --> Choice{Host drain choice}
+  Choice --> Once[execute_next/1 once]
+  Choice --> Loop[bounded execute_next/1 loop]
+  Once --> Journal[Squid Mesh journal]
+  Loop --> Journal
+```
 
 ```elixir
 defmodule MyApp.Jobs.SquidMeshPayload do
@@ -251,22 +267,24 @@ defmodule MyApp.Jobs.SquidMeshPayload do
 
   def perform(payload, _meta) when is_map(payload) do
     case Runner.perform(payload) do
-      :ok -> drain_journal("tenant_a", 0)
-      {:ok, _snapshot} -> drain_journal("tenant_a", 0)
+      :ok -> drain_journal_attempts("tenant_a", 0)
+      {:ok, _snapshot} -> drain_journal_attempts("tenant_a", 0)
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp drain_journal(_queue, 50), do: {:error, :journal_drain_limit_exceeded}
+  defp drain_journal_attempts(_queue, 50) do
+    {:error, :journal_drain_limit_exceeded}
+  end
 
-  defp drain_journal(queue, count) do
+  defp drain_journal_attempts(queue, count) do
     case SquidMesh.execute_next(
            queue: queue,
            owner_id: "my-app-bedrock-worker",
            heartbeat_interval_ms: 10_000
          ) do
       {:ok, :none} -> :ok
-      {:ok, _snapshot} -> drain_journal(queue, count + 1)
+      {:ok, _snapshot} -> drain_journal_attempts(queue, count + 1)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -288,10 +306,10 @@ Do not enqueue one Bedrock job per workflow step, and do not model workflow
 step retries as Bedrock job retries. A normal step failure, retry, or terminal
 run is durable Squid Mesh state returned by `SquidMesh.execute_next/1`.
 
-Treat `{:ok, snapshot}` from `execute_next/1` as successful job progress even
-when the snapshot describes a failed workflow run. Return `{:error, reason}` to
-Bedrock only when payload delivery or journal drain itself failed and should be
-redelivered.
+Treat `{:ok, snapshot}` from `execute_next/1` as successful host-worker
+progress even when the snapshot describes a failed workflow run. Return
+`{:error, reason}` to Bedrock only when payload delivery or the host drain
+itself failed and should be redelivered.
 
 For the concrete setup, see
 [Bedrock Lease Backend Setup](docs/host_app_integration.md#bedrock-lease-backend-setup)
