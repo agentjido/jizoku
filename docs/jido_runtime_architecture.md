@@ -1,9 +1,9 @@
 # Jido Runtime Architecture
 
-This document describes the Squid Mesh runtime shape after the switchover to
-Jido-native coordination. It is written for new contributors and host-app
-maintainers who need to understand how the pieces fit together before reading
-individual modules.
+The Jido-native runtime keeps workflow truth in durable journal facts while
+host-owned workers provide execution capacity. Runtime processes can crash,
+restart, and rebuild their projections from storage without becoming the source
+of truth.
 
 Squid Mesh's runtime shape is:
 
@@ -15,33 +15,13 @@ Squid Mesh's runtime shape is:
 - optional cron payload delivery remains backend-neutral through
   `SquidMesh.Runtime.Runner.perform/2`
 
-If you only read three diagrams in this file, read the system overview, runtime
-shape, and inspection flow. The tables below are reference material for
-concrete boundaries.
+The core boundaries are stable:
 
-## Roadmap Alignment
-
-The current shape is anchored in the public issue roadmap:
-
-| Issue | Status | Architecture impact |
-| --- | --- | --- |
-| [#160](https://github.com/dark-trench/squid_mesh/issues/160) | Closed umbrella | Rebuild the core around Jido primitives, Runic planning, Spark workflow specs, and journal-backed runtime state |
-| [#161](https://github.com/dark-trench/squid_mesh/issues/161) | Closed | Defines the durable dispatch protocol over Jido thread journals |
-| [#162](https://github.com/dark-trench/squid_mesh/issues/162) | Closed | Adds the `Jido.Storage` journal and checkpoint boundary |
-| [#164](https://github.com/dark-trench/squid_mesh/issues/164) | Closed | Adds rebuildable workflow and dispatch agents |
-| [#165](https://github.com/dark-trench/squid_mesh/issues/165) | Closed | Compiles Spark workflow specs into Runic planner state |
-| [#170](https://github.com/dark-trench/squid_mesh/issues/170) | Closed | Adds backend-owned leases, heartbeats, and fencing for running attempts |
-| [#163](https://github.com/dark-trench/squid_mesh/issues/163) | Closed | Rebuilds inspection and explanation as projections over journals and checkpoints |
-| [#140](https://github.com/dark-trench/squid_mesh/issues/140) | Closed | Adds conditional and deferred continuation through durable planner facts |
-| [#141](https://github.com/dark-trench/squid_mesh/issues/141) | Open | Adds native child workflow starts with durable parent lineage and idempotent child identity |
-| [#109](https://github.com/dark-trench/squid_mesh/issues/109) | Open | Adds reference workflows that demonstrate the target product surface |
-
-The ground rule from #160 still applies: the core should keep workflow state in
-the journal and keep backend-specific delivery behind host boundaries. Dynamic
-child runs now use that rule by recording parent lineage as durable facts and
-starting each child as a normal journal run. Runtime-authored workflow specs,
-richer agent-step execution, and advanced reference workflows remain separate
-future work.
+- journal entries are authoritative lifecycle facts
+- checkpoints are rebuildable projection caches
+- host workers call `SquidMesh.execute_next/1` to claim visible work
+- host backends own delivery, leases, redelivery, and worker placement
+- inspection reads projections and never mutates workflow state
 
 ## System Overview
 
@@ -547,7 +527,7 @@ The closed `agent_step/3` issue
 [#138](https://github.com/dark-trench/squid_mesh/issues/138) explored an
 explicit metadata marker for agentic steps. With the workflow run itself now
 coordinated by a Jido agent, that separate DSL construct is not currently part
-of the core runtime roadmap.
+of the core runtime surface.
 
 A new construct would only be worth adding later if it has different lifecycle
 semantics from a normal step. Examples might include a child journal, independent

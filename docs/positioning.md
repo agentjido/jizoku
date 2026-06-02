@@ -32,9 +32,9 @@ That boundary is deliberate. The host application keeps its domain contexts,
 database, supervision tree, observability stack, and job infrastructure. Squid
 Mesh adds the durable workflow contract above those pieces.
 
-## Runtime Direction
+## Runtime Shape
 
-The long-term runtime shape is:
+The current runtime shape is:
 
 1. Spark defines the authoring DSL and normalized workflow spec.
 2. Runic plans dependency readiness and runnable workflow work.
@@ -47,20 +47,14 @@ The long-term runtime shape is:
    backend-owned leases today, while Squid Mesh keeps the core dispatch
    contract backend-neutral.
 
-Squid Mesh now uses Spark, Runic, Jido-compatible step execution, durable
-dispatch journals, and rebuildable workflow and dispatch agents for the
-Jido-native core. Host applications get the journal runtime, projection read
-model, and inferred Ecto storage by default; storage and queue remain explicit
-boundary options when a host needs a non-default journal setup.
+Host applications get the journal runtime, projection read model, and inferred
+Ecto storage by default. Storage and queue remain explicit boundary options
+when a host needs a non-default journal setup.
 
 ## Status Terms
 
 - Supported: available in the journal-backed runtime and covered by repository docs
   and tests.
-- In progress: implemented as a protocol or foundation, but not wired through
-  the full journal-backed runtime yet.
-- Planned: accepted roadmap direction linked to an issue, but not a runtime
-  guarantee today.
 - Out of scope: intentionally not part of Squid Mesh's product surface.
 
 ## Capability Map
@@ -81,11 +75,11 @@ boundary options when a host needs a non-default journal setup.
 | Scheduled-start metadata | Supported, evolving | Intended schedule windows are stored in durable run context for journal cron starts and exposed to steps through `context.state.schedule`. |
 | Conditional and deferred continuation | Supported, evolving | Durable planner facts and deferred wakeups are tracked in [#140](https://github.com/dark-trench/squid_mesh/issues/140). |
 | Fan-out and fan-in contract | Supported, evolving | Runic-backed dependency ordering and join semantics are defined for the current static workflow graph; [#142](https://github.com/dark-trench/squid_mesh/issues/142) captured the closed design clarification. |
-| Runtime-authored workflow specs | Supported, evolving | `start_spec/3` and `start_spec/4` can start validated UI-authored or DB-authored specs through the journal runtime. The resolved definition is persisted with the run for execution and graph inspection; replay support remains future work. |
+| Runtime-authored workflow specs | Supported, evolving | `start_spec/3` and `start_spec/4` can start validated UI-authored or DB-authored specs through the journal runtime. The resolved definition is persisted with the run for execution and graph inspection; replay support is not yet available for these runs. |
 | Safe action registry | Supported, evolving | `validate_spec/2`, `resolve_spec_actions/2`, and `start_spec/3`/`4` let host apps allowlist runtime-authored action keys before activation. |
 | UI graph serialization | Supported, evolving | `SquidMesh.Runs.GraphInspection.to_map/1` exposes stable node, edge, status, output, and selected-edge data for dashboards and CLIs. `SquidMesh.Workflow.EditorSpec` supports JSON-safe spec round trips and draft graph previews for visual editors. |
 | Actor-scoped read views | Supported, evolving | `SquidMesh.ReadModel.Visibility.redact/2` and `/3` let host apps derive external, operator, or auditor views from existing listing, inspection, graph, and explanation read models without mutating durable history. |
-| Dynamic child runs | Supported, evolving | Native steps can start idempotent child workflow runs with durable parent lineage through `SquidMesh.start_child_run/4` and `SquidMesh.start_child_run/5`; richer visual-editor expansion remains future work. |
+| Dynamic child runs | Supported, evolving | Native steps can start idempotent child workflow runs with durable parent lineage through `SquidMesh.start_child_run/4` and `SquidMesh.start_child_run/5`; visual-editor dynamic expansion is separate from the current child-run API. |
 | Oban-specific core | Out of scope | Host apps may choose Oban behind the delivery boundary, but Squid Mesh core is not Oban-centric. |
 | Exactly-once external side effects | Out of scope | Squid Mesh can provide durable workflow state and fencing semantics, but external systems still require idempotency. |
 | Bundled workflow dashboard | Out of scope | Squid Mesh exposes inspection data; host apps own their operator UI. |
@@ -182,35 +176,31 @@ Choose another layer when:
 - a separate workflow service is a better operational boundary than embedding
   workflow state in the host application.
 
-## Reading the Roadmap
+## Adoption Boundary
 
-Read the capability map as a contract boundary, not just a feature list.
-Supported rows are available in the journal-backed runtime and are the right
-surface for host applications to adopt today. Supported, evolving rows are
-usable now, but still gaining sharper documentation, examples, or API polish
-through the `0.1.x` release line.
+Supported rows are available in the journal-backed runtime. Supported, evolving
+rows are also usable now, with API polish, examples, or documentation still
+settling through the `0.1.x` release line.
 
-For current application work, start with the configured journal runtime. It
-provides the workflow DSL, persisted run and dispatch facts, journal dispatch
-claims, retries, approvals, pause/resume controls, replay, cancellation,
-projection-backed inspection, and UI-friendly graph output.
+The configured journal runtime provides the workflow DSL, persisted run and
+dispatch facts, journal dispatch claims, retries, approvals, pause/resume
+controls, replay, cancellation, projection-backed inspection, and UI-friendly
+graph output.
 
-Planned rows describe accepted direction, not runtime guarantees.
 Runtime-authored workflow activation for UI-authored or DB-authored workflow
 systems is now available through `SquidMesh.start_spec/3` and
 `SquidMesh.start_spec/4`, with the safe action registry as the allowlist
 boundary for executable actions. Full replay support for runtime-authored specs
-remains future work. Visual editor spec round trips are available today through
+is not yet available. Visual editor spec round trips are available today through
 `SquidMesh.Workflow.EditorSpec`, and inspected run graph serialization is
 available through `SquidMesh.Runs.GraphInspection.to_map/1`.
 
-Treat the durable dispatch protocol as the architectural foundation under those
-features. It defines the vocabulary for runnable intent, claim fencing, leases,
-heartbeats, retries, terminal-run behavior, and parent-child lineage. The
-workflow and dispatch agents can rebuild that state from durable journals.
+The durable dispatch protocol defines the vocabulary for runnable intent, claim
+fencing, leases, heartbeats, retries, terminal-run behavior, and parent-child
+lineage. Workflow and dispatch agents rebuild that state from durable journals.
 Runtime-safe child workflow starts are exposed through `start_child_run/4` and
-`start_child_run/5`; richer visual-editor expansion remains separate future
-work.
+`start_child_run/5`; visual-editor dynamic expansion remains a separate
+surface.
 
 Oban can still be a practical scheduler or job backend in a host application.
 It is an implementation detail, not the core Squid Mesh runtime model.

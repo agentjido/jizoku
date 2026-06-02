@@ -92,8 +92,8 @@ Important edge cases are intentionally handled in the runtime protocol:
   remains explainable from the queue thread
 
 The current recovery smoke proves replay from persisted entries after checkpoint
-loss. A literal mid-run VM or OS-process restart remains a stronger follow-up
-for the switchover, especially once the journal runtime becomes the default.
+loss. A literal mid-run VM or OS-process restart remains stronger production
+hardening coverage for the journal runtime.
 
 For production adapters, the required storage properties are summarized here and
 defined in full in [Storage strategy](storage_strategy.md):

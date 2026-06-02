@@ -86,8 +86,8 @@ to reason about runtime durability.
 - [Architecture](architecture.md) - high-level components, responsibilities,
   execution flow, and recovery boundary.
 - [Jido runtime architecture](jido_runtime_architecture.md) - journal runtime,
-  agents, projections, dispatch, leases, failure handling, and roadmap
-  alignment.
+  agents, projections, dispatch, leases, failure handling, and Jido primitive
+  boundaries.
 - [Storage strategy](storage_strategy.md) - storage-adapter boundary,
   production guarantees, and Bedrock storage direction.
 - [Durable dispatch protocol](durable_dispatch_protocol.md) - journal threads,
