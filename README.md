@@ -120,9 +120,9 @@ Mesh service; it is just a supervised process in your application that asks
 Squid Mesh for the next visible workflow attempt.
 
 This example uses a `GenServer` because it is a small OTP shape for scheduling
-the next drain. A queue worker, cron process, Broadway consumer, or existing
-host scheduler can own the same `SquidMesh.execute_next/1` call. Hosts can use
-Bedrock, Oban, a custom queue, or any other executor they already operate:
+the next drain. A queue worker, cron process, or existing host scheduler can
+own the same `SquidMesh.execute_next/1` call. Hosts can use Bedrock, Oban, a
+custom queue, or any other executor they already operate:
 
 ```elixir
 defmodule MyApp.SquidMeshWorker do
