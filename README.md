@@ -33,8 +33,9 @@ replay and recovery policy, durable execution history, and graph inspection.
 Queue delivery, worker supervision, and backend leasing remain host-owned
 concerns. Storage portability is defined by the journal storage adapter
 contract; the production relational implementation uses a Postgres-compatible
-Ecto adapter. See the [documentation index](docs/index.md) for storage,
-integration, and operations guides.
+Ecto adapter. See the
+[documentation guide](https://hexdocs.pm/squid_mesh/documentation.html) for
+storage, integration, and operations topics.
 
 > **Adoption status**
 > Squid Mesh provides a supported `0.1.x` journal runtime for embedded host-app
@@ -54,7 +55,7 @@ workflow, starting a durable run, executing work, and inspecting the result.
 
 | Goal | Resource |
 | --- | --- |
-| Find the right guide | [Documentation index](docs/index.md) |
+| Find the right guide | [Documentation guide](https://hexdocs.pm/squid_mesh/documentation.html) |
 | Run a guided interactive example | [Getting Started Livebook](docs/getting_started.livemd) |
 | Integrate Squid Mesh into an existing application | [Getting Started guide](docs/getting_started.md) |
 | Review a complete working example | [Minimal host app](examples/minimal_host_app/README.md) |
