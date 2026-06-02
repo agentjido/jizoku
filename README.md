@@ -8,51 +8,60 @@
 
 ---
 
-Squid Mesh is an embedded durable workflow runtime for Elixir applications. Workflows are declared as Elixir modules through a DSL, persisted through Jido journals, and executed by host-owned workers calling `SquidMesh.execute_next/1`.
+Squid Mesh is an embedded durable workflow runtime for Elixir applications.
 
-The runtime stores workflow state, step attempts, retries, approvals, transitions, audit events, and recovery history in the host application's database through `Jido.Storage` and the default Ecto adapter. Squid Mesh does not run as a separate service, broker, or orchestration cluster. The host application retains its existing supervision tree, deployment model, repository, schedulers, and queue backend.
+Define workflow modules, persist runs in your application database, and execute
+visible work from host-owned workers with `SquidMesh.execute_next/1`.
 
-Storage portability is defined by the journal storage adapter contract, not arbitrary database compatibility. The production relational implementation uses a Postgres-compatible Ecto adapter. See the [storage strategy](docs/storage_strategy.md) for adapter guarantees.
+```elixir
+{:ok, run} =
+  SquidMesh.start(MyApp.Workflows.Checkout, :manual, %{order_id: "order_123"})
 
-Squid Mesh manages workflow progression, transition routing, retry semantics, pause and approval handling, replay and recovery policy, durable execution history, and graph inspection. Queue delivery, worker supervision, and backend leasing remain host-owned concerns.
+{:ok, _snapshot} = SquidMesh.execute_next(owner_id: "checkout-worker-1")
+```
 
-The runtime builds on [Jido](https://github.com/agentjido/jido) for actions, execution, and journaling; [Runic](https://github.com/dark-trench/runic) for workflow planning; and [Spark](https://github.com/ash-project/spark) for the DSL authoring surface.
+Squid Mesh stores workflow state, step attempts, retries, approvals,
+transitions, audit events, and recovery history in the host application's
+database. It does not run as a separate service, broker, or orchestration
+cluster.
+
+The host application keeps its supervision tree, deployment model, repository,
+schedulers, queue backend, and operator surfaces. Squid Mesh owns workflow
+progression, transition routing, retry semantics, pause and approval handling,
+replay and recovery policy, durable execution history, and graph inspection.
+
+Queue delivery, worker supervision, and backend leasing remain host-owned
+concerns. Storage portability is defined by the journal storage adapter
+contract; the production relational implementation uses a Postgres-compatible
+Ecto adapter. See the [documentation index](docs/index.md) for storage,
+integration, and operations guides.
 
 > **Adoption status**
-> Squid Mesh provides a supported `0.1.x` journal runtime for embedded host-app workflows. Treat production rollout as an application-owned integration: run the host-app smoke and resilience checks, review the operational boundaries, and adopt the queue/leasing strategy that matches your deployment. See [Production Readiness](docs/production_readiness.md) for the current baseline.
+> Squid Mesh provides a supported `0.1.x` journal runtime for embedded host-app
+> workflows.
+>
+> Treat production rollout as an application-owned integration: run the host-app
+> smoke and resilience checks, review the operational boundaries, and adopt the
+> queue/leasing strategy that matches your deployment. See
+> [Production Readiness](docs/production_readiness.md) for the current baseline.
 
 ## Start Here
 
-The fastest way to start is the guided Livebook. It demonstrates creating a workflow, starting a journal-backed run, executing work with `SquidMesh.execute_next/1`, and inspecting the durable result.
+The fastest way to start is the guided Livebook. It demonstrates creating a
+workflow, starting a durable run, executing work, and inspecting the result.
 
 [![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fdark-trench%2Fsquid_mesh%2Fblob%2Fmain%2Fdocs%2Fgetting_started.livemd)
 
 | Goal | Resource |
 | --- | --- |
+| Find the right guide | [Documentation index](docs/index.md) |
 | Run a guided interactive example | [Getting Started Livebook](docs/getting_started.livemd) |
 | Integrate Squid Mesh into an existing application | [Getting Started guide](docs/getting_started.md) |
 | Review a complete working example | [Minimal host app](examples/minimal_host_app/README.md) |
+| Add backend-owned delivery and leases | [Bedrock minimal host app](examples/bedrock_minimal_host_app/README.md) |
 
-The written guide covers installation, workflow creation, journal execution, run inspection, retries, manual gates, cron triggers, and Bedrock-backed leases.
-
-## Jido Primitive Boundary
-
-Squid Mesh uses Jido as an internal runtime foundation while keeping the public workflow API focused on Squid Mesh concepts. The runtime uses these Jido primitives:
-
-| Jido primitive | Squid Mesh use |
-| --- | --- |
-| `Jido.Agent` | Rebuildable workflow and dispatch coordination state |
-| `Jido.Action` | Step execution interop, including raw Jido action modules and the native `SquidMesh.Step` adapter |
-| `Jido.Storage` | Journal and checkpoint persistence boundary |
-| `Jido.Thread` / `Jido.Thread.Entry` | Durable journal facts for run, dispatch, index, and catalog threads |
-| `Jido.Exec` | Action execution inside the journal executor |
-| `Jido.Signal` | Interop boundary envelope for Squid Mesh runtime command signals |
-
-Support code uses lower-level primitives such as `Jido.Thread.EntryNormalizer` and validates built-in storage adapters like `Jido.Storage.File` and `Jido.Storage.Redis`. Workflow authors do not need to use these primitives directly.
-
-Runtime command signals use `SquidMesh.Runtime.Signal` as the stable contract. `SquidMesh.Runtime.Signal.JidoAdapter` converts between `SquidMesh.Runtime.Signal` structs and `Jido.Signal` envelopes for advanced runtime integration. Public callers use Squid Mesh APIs directly and do not need to construct raw `Jido.Signal` values.
-
-Journal-backed runtime commands are persisted as run-thread command receipts before their lifecycle facts. `SquidMesh.inspect_run/2` exposes command history through `snapshot.command_history`, including signal type, payload, actor and comment when supplied, redacted metadata, idempotency key when relevant, and occurrence time.
+The written guide covers installation, workflow creation, execution, run
+inspection, retries, manual gates, cron triggers, and Bedrock-backed leases.
 
 ## Getting Started
 
@@ -67,7 +76,6 @@ Documentation and examples:
 | [Minimal Host App](examples/minimal_host_app/README.md) | Executable example application |
 | [Bedrock Minimal Host App](examples/bedrock_minimal_host_app/README.md) | Backend-owned delivery with leases and retry requeue |
 | [Architecture](docs/architecture.md) | Runtime flow and component boundaries |
-| [Positioning Guide](docs/positioning.md) | Comparison with adjacent projects |
 
 ## Installation
 
@@ -76,17 +84,6 @@ Add Squid Mesh to your dependencies:
 ```elixir
 defp deps do
   [
-    {:squid_mesh, "~> 0.1.0"}
-  ]
-end
-```
-
-If your host application defines raw `Jido.Action` modules directly, add `:jido` explicitly as well:
-
-```elixir
-defp deps do
-  [
-    {:jido, "~> 2.0"},
     {:squid_mesh, "~> 0.1.0"}
   ]
 end
@@ -108,7 +105,8 @@ mix squid_mesh.install
 mix ecto.migrate
 ```
 
-To keep workflow modules formatted consistently as DSL-style declarations, import Squid Mesh formatter rules in `.formatter.exs`:
+To keep workflow modules formatted consistently as DSL-style declarations,
+import Squid Mesh formatter rules in `.formatter.exs`:
 
 ```elixir
 [
@@ -117,7 +115,48 @@ To keep workflow modules formatted consistently as DSL-style declarations, impor
 ]
 ```
 
-Finally, start one supervised worker loop. See [Host App Integration](docs/host_app_integration.md) for a minimal worker shape.
+Finally, start one host-owned executor loop. The loop is not a separate Squid
+Mesh service; it is just a supervised process in your application that asks
+Squid Mesh for the next visible workflow attempt.
+
+This example uses a `GenServer` because it is a small OTP shape for scheduling
+the next drain. A queue worker, cron process, or existing host scheduler can
+own the same `SquidMesh.execute_next/1` call. Hosts can use Bedrock, Oban, a
+custom queue, or any other executor they already operate:
+
+```elixir
+defmodule MyApp.SquidMeshWorker do
+  use GenServer
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  def init(opts) do
+    owner_id = Keyword.get(opts, :owner_id, "my-app-squid-mesh")
+    {:ok, %{owner_id: owner_id}, {:continue, :drain}}
+  end
+
+  def handle_continue(:drain, state), do: {:noreply, drain_once(state)}
+  def handle_info(:drain, state), do: {:noreply, drain_once(state)}
+
+  defp drain_once(state) do
+    interval =
+      case SquidMesh.execute_next(owner_id: state.owner_id) do
+        {:ok, :none} -> 100
+        {:ok, _snapshot} -> 0
+        {:error, _reason} -> 1_000
+      end
+
+    Process.send_after(self(), :drain, interval)
+    state
+  end
+end
+```
+
+Add capacity limits, metrics, shutdown policy, and placement rules around the
+same `SquidMesh.execute_next/1` boundary. See
+[Host App Integration](docs/host_app_integration.md) for the full host shape.
 
 ### Optional: Bedrock Job Runner And Leases
 
@@ -126,71 +165,86 @@ visibility, job leases, heartbeat/lease extension, retry requeue, and recovery.
 Keep workflow modules backend-neutral; Bedrock belongs behind host adapter
 modules.
 
-If a simple supervised process can call `SquidMesh.execute_next/1` often enough
-for your workload, start there. Add Bedrock only when the host needs a durable
-job runner to own payload delivery, delayed visibility, worker leases, and
-redelivery after worker or node failure.
+If the supervised worker loop above can call `SquidMesh.execute_next/1` often
+enough for your workload, start there. Add Bedrock only when the host needs a
+durable job runner to own payload delivery, delayed visibility, worker leases,
+and redelivery after worker or node failure.
 
-At a high level:
+#### 1. Configure Squid Mesh
 
-1. Configure Squid Mesh with the host repo and the journal queue used by the
-   Bedrock payload worker.
-2. Configure a Bedrock queue for Squid Mesh payload delivery.
-3. Start the host repo, Bedrock cluster, and Bedrock job queue under the host
-   application's supervision tree.
-4. Add a delivery adapter that maps cron payloads to Bedrock jobs.
-5. Add a payload worker that calls `SquidMesh.execute_next/1` while the Bedrock
-   job lease is held.
-6. Configure both lease layers: the Bedrock job lease for payload delivery and
-   `heartbeat_interval_ms` for Squid Mesh journal attempt claims.
-
-Those leases are separate. The Bedrock lease protects job delivery; the Squid
-Mesh heartbeat protects the workflow attempt claimed by `execute_next/1`.
-
-The payload worker is the executor boundary. Keep these responsibilities
-separate:
-
-| Concern | Owner |
-| --- | --- |
-| Persisted workflow state, step attempts, step retry policy, terminal run status | Squid Mesh |
-| Claiming and executing the next visible workflow attempt | `SquidMesh.execute_next/1` |
-| Keeping a long-running workflow attempt claim alive | `heartbeat_interval_ms` passed to `execute_next/1` |
-| Payload delivery, delayed visibility, job leases, and redelivery after worker failure | Bedrock |
-
-Do not enqueue one Bedrock job per workflow step, and do not model workflow step
-retries as Bedrock job retries. A normal step failure, retry, or terminal run is
-durable Squid Mesh state returned by `SquidMesh.execute_next/1`. Bedrock should
-retry only job-level delivery failures, such as a crashed payload worker or a
-transient backend error before the worker can finish draining journal attempts.
-
-The payload worker should usually treat `{:ok, snapshot}` from
-`execute_next/1` as successful job progress even when the snapshot describes a
-failed workflow run. Return `{:error, reason}` to Bedrock only when the payload
-delivery or journal drain itself failed and should be redelivered.
-
-The host-owned wiring looks like this in shape:
+Point Squid Mesh at the host repo. Use the same queue your Bedrock payload
+worker will drain:
 
 ```elixir
-# config/config.exs
 config :squid_mesh,
   repo: MyApp.Repo,
   queue: "tenant_a"
+```
 
+#### 2. Configure Payload Delivery
+
+Keep the delivery adapter in the host app. It maps Squid Mesh cron activations
+or drain requests into Bedrock jobs:
+
+```elixir
 config :my_app, MyApp.SquidMeshDeliveryAdapter,
   queue_id: "tenant_a",
   topic: "squid_mesh:payload"
-
-config :my_app, MyApp.Jobs.SquidMeshPayload,
-  journal_heartbeat_interval_ms: 10_000,
-  max_journal_attempts: 50
 ```
+
+#### 3. Start The Host Runtime
+
+Start the repo, Bedrock cluster, and Bedrock queue under the host supervision
+tree:
+
+```elixir
+children = [
+  MyApp.Repo,
+  {MyApp.BedrockCluster, []},
+  {MyApp.JobQueue, concurrency: 5, batch_size: 10}
+]
+
+Supervisor.start_link(children, strategy: :one_for_one, name: MyApp.Supervisor)
+```
+
+#### 4. Add A Delivery Adapter
+
+The adapter owns Bedrock job enqueueing. Workflow modules should not know
+Bedrock exists:
+
+```elixir
+defmodule MyApp.SquidMeshDeliveryAdapter do
+  alias SquidMesh.Executor.Payload
+
+  def enqueue_cron(_config, workflow, trigger, opts) do
+    payload =
+      Payload.cron(
+        workflow,
+        trigger,
+        Keyword.take(opts, [:signal_id, :intended_window])
+      )
+
+    MyApp.JobQueue.insert(%{
+      topic: "squid_mesh:payload",
+      queue_id: "tenant_a",
+      payload: payload,
+      scheduled_in: opts[:schedule_in]
+    })
+  end
+end
+```
+
+#### 5. Add A Payload Worker
+
+The Bedrock job delivers the payload, then drains visible Squid Mesh journal
+attempts while the Bedrock job lease is held:
 
 ```elixir
 defmodule MyApp.Jobs.SquidMeshPayload do
   use Bedrock.JobQueue.Job,
     topic: "squid_mesh:payload",
-    # Job retry covers payload delivery only. Step retry lives in the workflow DSL.
-    max_retries: 3
+    max_retries: 3,
+    priority: 100
 
   alias SquidMesh.Runtime.Runner
 
@@ -211,15 +265,32 @@ defmodule MyApp.Jobs.SquidMeshPayload do
            heartbeat_interval_ms: 10_000
          ) do
       {:ok, :none} -> :ok
-      # The snapshot may be completed, failed, paused, or still running.
-      # It is still successful job progress because Squid Mesh persisted it.
       {:ok, _snapshot} -> drain_journal(queue, count + 1)
-      # Return an error only for executor/drain failures Bedrock should redeliver.
       {:error, reason} -> {:error, reason}
     end
   end
 end
 ```
+
+#### 6. Configure Both Lease Layers
+
+The Bedrock lease protects job delivery. The Squid Mesh heartbeat protects the
+workflow attempt claimed by `execute_next/1`:
+
+```elixir
+config :my_app, MyApp.Jobs.SquidMeshPayload,
+  journal_heartbeat_interval_ms: 10_000,
+  max_journal_attempts: 50
+```
+
+Do not enqueue one Bedrock job per workflow step, and do not model workflow
+step retries as Bedrock job retries. A normal step failure, retry, or terminal
+run is durable Squid Mesh state returned by `SquidMesh.execute_next/1`.
+
+Treat `{:ok, snapshot}` from `execute_next/1` as successful job progress even
+when the snapshot describes a failed workflow run. Return `{:error, reason}` to
+Bedrock only when payload delivery or journal drain itself failed and should be
+redelivered.
 
 For the concrete setup, see
 [Bedrock Lease Backend Setup](docs/host_app_integration.md#bedrock-lease-backend-setup)
@@ -228,9 +299,14 @@ and the
 
 ## Workflows
 
-Workflows are Elixir modules. A trigger declares the entrypoint and validates the payload before the run is persisted. Steps declare their inputs, outputs, retry policy, and compensation behavior. Transitions wire them together.
+Workflows are Elixir modules. A trigger declares the entrypoint and validates
+the payload before the run is persisted.
 
-This workflow demonstrates manual gates, approval flows, conditional routing, retries, saga compensation, and irreversible steps:
+Steps declare their inputs, outputs, retry policy, and compensation behavior.
+Transitions wire them together.
+
+This workflow demonstrates manual gates, approval flows, conditional routing,
+retries, saga compensation, and irreversible steps:
 
 ```elixir
 defmodule MiddleEarth.Workflows.RingErrand do
@@ -657,7 +733,7 @@ visibility policy:
 
 External/operator views preserve node ids, status, current state, recovery
 availability, dynamic-work shape, and safe edge topology while removing node
-payloads, errors, attempt internals, command history, and sensitive metadata.
+payloads, errors, attempt details, command history, and sensitive metadata.
 
 ## Actor Visibility
 
