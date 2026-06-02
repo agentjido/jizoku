@@ -34,8 +34,8 @@ Queue delivery, worker supervision, and backend leasing remain host-owned
 concerns. Storage portability is defined by the journal storage adapter
 contract; the production relational implementation uses a Postgres-compatible
 Ecto adapter. See the
-[documentation guide](https://hexdocs.pm/squid_mesh/documentation.html) for
-storage, integration, and operations topics.
+[storage strategy](https://github.com/dark-trench/squid_mesh/blob/main/docs/storage_strategy.md)
+for adapter guarantees.
 
 > **Adoption status**
 > Squid Mesh provides a supported `0.1.x` journal runtime for embedded host-app
