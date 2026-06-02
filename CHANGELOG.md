@@ -5,6 +5,22 @@ All notable changes to Squid Mesh will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.1.1] - 2026-06-02
+
+### Changed
+- Polished README setup and positioning around the embedded runtime, host-owned
+  executor loops, and optional Bedrock-backed delivery.
+- Clarified Bedrock queue, lease, heartbeat, retry, and dead-letter setup with
+  step-by-step examples.
+- Moved Jido primitive boundary guidance into the Jido runtime architecture
+  guide and removed stale roadmap/refactor wording from architecture docs.
+- Expanded production readiness guidance into a feature readiness map focused on
+  adoption planning, operational ownership, and rollout evidence.
+- Linked storage adapter guidance directly to the storage strategy document.
+- Split dense dynamic-work README guidance into visual and tabular reference
+  material.
+- Excluded local Dialyzer PLT artifacts from the Hex package file list.
+
 ## [0.1.0] - 2026-06-01
 
 ### Breaking

@@ -4,7 +4,7 @@ defmodule SquidMesh.MixProject do
   def project do
     [
       app: :squid_mesh,
-      version: "0.1.0",
+      version: "0.1.1",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
@@ -56,7 +56,7 @@ defmodule SquidMesh.MixProject do
       maintainers: ["Cristiano Carvalho"],
       licenses: ["Apache-2.0"],
       files:
-        ~w(lib priv docs usage-rules usage-rules.md .formatter.exs mix.exs mix.lock README* CHANGELOG* LICENSE* CONTRIBUTING* CODE_OF_CONDUCT*),
+        ~w(lib priv/repo docs usage-rules usage-rules.md .formatter.exs mix.exs mix.lock README* CHANGELOG* LICENSE* CONTRIBUTING* CODE_OF_CONDUCT*),
       links: %{"GitHub" => "https://github.com/dark-trench/squid_mesh"}
     ]
   end
@@ -78,6 +78,7 @@ defmodule SquidMesh.MixProject do
         "docs/tool_adapters.md",
         "docs/observability.md",
         "docs/actor_visibility.md",
+        "docs/storage_strategy.md",
         "docs/workflow_authoring.md",
         "docs/graph_inspection.md",
         "docs/reference_workflows.md",
@@ -115,6 +116,7 @@ defmodule SquidMesh.MixProject do
           "docs/reference_workflows.md",
           "docs/tool_adapters.md",
           "docs/compatibility.md",
+          "docs/storage_strategy.md",
           "docs/production_readiness.md"
         ],
         Internals: [
