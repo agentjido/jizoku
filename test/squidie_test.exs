@@ -1859,6 +1859,11 @@ defmodule SquidieTest do
                    end
     end
 
+    test "reports invalid repo configuration separately from missing repo config" do
+      assert {:error, {:invalid_config, [repo: :invalid]}} =
+               Squidie.config(repo: "not_a_repo")
+    end
+
     test "journal-only configuration still rejects unsupported runtimes" do
       assert {:error, {:invalid_config, [runtime: :unsupported]}} =
                Squidie.config(repo: Squidie.Test.Repo, runtime: :unsupported)

@@ -160,6 +160,9 @@ defmodule Squidie.Config do
             {:error, {:invalid_config, [journal_storage: reason]}}
         end
 
+      {:ok, _invalid_repo} ->
+        {:error, {:invalid_config, [repo: :invalid]}}
+
       _missing_repo ->
         {:error, {:missing_config, [:repo]}}
     end
