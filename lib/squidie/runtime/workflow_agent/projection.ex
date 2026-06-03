@@ -48,6 +48,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
           dynamic_work: [map()],
           manual_state: manual_state() | nil,
           terminal_status: atom() | nil,
+          terminal_error: map() | nil,
           anomalies: [anomaly()]
         }
 
@@ -70,6 +71,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
             dynamic_work: [],
             manual_state: nil,
             terminal_status: nil,
+            terminal_error: nil,
             anomalies: []
 
   @doc false
@@ -102,6 +104,10 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   @doc false
   @spec terminal_status(t()) :: atom() | nil
   def terminal_status(%__MODULE__{terminal_status: terminal_status}), do: terminal_status
+
+  @doc false
+  @spec terminal_error(t()) :: map() | nil
+  def terminal_error(%__MODULE__{terminal_error: terminal_error}), do: terminal_error
 
   @doc false
   @spec manual_state(t()) :: manual_state() | nil
@@ -229,6 +235,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Map.put_new(:command_history, [])
     |> Map.put_new(:child_runs, [])
     |> Map.put_new(:dynamic_work, [])
+    |> Map.put_new(:terminal_error, nil)
   end
 
   @doc false
@@ -345,7 +352,8 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
         | run_id: projection.run_id || Map.fetch!(data, :run_id),
           status: status,
           manual_state: nil,
-          terminal_status: status
+          terminal_status: status,
+          terminal_error: terminal_error_from_data(data)
       }
     else
       add_anomaly(projection, entry, :malformed_entry)
@@ -367,6 +375,13 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       |> maybe_put(:comment, Map.get(data, :comment))
 
     Map.update(projection, :command_history, [command], &[command | &1])
+  end
+
+  defp terminal_error_from_data(data) when is_map(data) do
+    case Map.get(data, :error) || Map.get(data, "error") do
+      error when is_map(error) -> error
+      _other -> nil
+    end
   end
 
   defp definition_metadata_value(data, key) when is_map(data) and is_atom(key) do

@@ -189,9 +189,19 @@ defmodule Squidie.ReadModel.Explanation do
   end
 
   defp explanation_parts(%Snapshot{reason: :terminal} = snapshot) do
+    details =
+      maybe_put(
+        %{
+          terminal?: snapshot.terminal?,
+          terminal_status: snapshot.terminal_status
+        },
+        :terminal_error,
+        snapshot.terminal_error
+      )
+
     {
       "The run is terminal according to the run journal.",
-      %{terminal?: snapshot.terminal?, terminal_status: snapshot.terminal_status},
+      details,
       [:inspect_terminal_run],
       nil
     }
@@ -233,6 +243,7 @@ defmodule Squidie.ReadModel.Explanation do
       definition_version: snapshot.definition_version,
       thread_revisions: snapshot.thread_revisions,
       terminal_status: snapshot.terminal_status,
+      terminal_error: snapshot.terminal_error,
       manual_state: snapshot.manual_state,
       parent_run: snapshot.parent_run,
       child_runs: snapshot.child_runs,
@@ -438,4 +449,7 @@ defmodule Squidie.ReadModel.Explanation do
 
   defp maybe_put_non_empty(map, _key, []), do: map
   defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

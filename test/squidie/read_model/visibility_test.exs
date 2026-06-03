@@ -39,6 +39,7 @@ defmodule Squidie.ReadModel.VisibilityTest do
     assert redacted.input == nil
     assert redacted.context == %{}
     assert redacted.command_history == []
+    assert redacted.terminal_error == nil
 
     assert redacted.manual_state == %{
              step: "review_payment",
@@ -342,6 +343,7 @@ defmodule Squidie.ReadModel.VisibilityTest do
       diagnostic()
       | details: %{
           safe_count: 1,
+          terminal_error: %{code: "missing_input_path", path: ["secret"]},
           nested: %{visible: true, secret: "internal"},
           attempts: [%{status: :available, error: %{message: "internal"}}]
         },
@@ -458,6 +460,7 @@ defmodule Squidie.ReadModel.VisibilityTest do
       reason: :manual_intervention_required,
       terminal?: false,
       terminal_status: nil,
+      terminal_error: %{code: "missing_input_path", path: ["draft", "drafts"]},
       manual_state: %{
         step: "review_payment",
         kind: "approval",

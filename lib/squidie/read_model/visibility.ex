@@ -161,6 +161,7 @@ defmodule Squidie.ReadModel.Visibility do
       snapshot
       | input: nil,
         context: %{},
+        terminal_error: nil,
         parent_run: summarize_run(snapshot.parent_run),
         child_runs: Enum.map(snapshot.child_runs, &summarize_run/1),
         dynamic_work: Enum.map(snapshot.dynamic_work, &summarize_dynamic_work/1),
@@ -387,7 +388,9 @@ defmodule Squidie.ReadModel.Visibility do
     if manual_details?(details) do
       summarize_manual_state(details)
     else
-      remove_sensitive_nested(details)
+      details
+      |> remove_sensitive_nested()
+      |> Map.drop([:terminal_error, "terminal_error"])
     end
   end
 
