@@ -5,21 +5,21 @@ host-owned workers provide execution capacity. Runtime processes can crash,
 restart, and rebuild their projections from storage without becoming the source
 of truth.
 
-Squid Mesh's runtime shape is:
+Squidie's runtime shape is:
 
-- workflow authors keep using the Squid Mesh DSL for business workflows
+- workflow authors keep using the Squidie DSL for business workflows
 - custom step modules run through Jido action contracts
 - runtime coordination rebuilds from Jido-backed journals
 - workflow runs and dispatch queues are represented by Jido agents
-- step execution is pulled through `SquidMesh.execute_next/1`
+- step execution is pulled through `Squidie.execute_next/1`
 - optional cron payload delivery remains backend-neutral through
-  `SquidMesh.Runtime.Runner.perform/2`
+  `Squidie.Runtime.Runner.perform/2`
 
 The core boundaries are stable:
 
 - journal entries are authoritative lifecycle facts
 - checkpoints are rebuildable projection caches
-- host workers call `SquidMesh.execute_next/1` to claim visible work
+- host workers call `Squidie.execute_next/1` to claim visible work
 - host backends own delivery, leases, redelivery, and worker placement
 - inspection reads projections and never mutates workflow state
 
@@ -34,7 +34,7 @@ flowchart TB
         Workers[Worker processes]
     end
 
-    subgraph Core[Squid Mesh core]
+    subgraph Core[Squidie core]
         API[Public API]
         Planner[Workflow planner]
         Policies[Retry, cancellation, replay, mapping]
@@ -82,17 +82,17 @@ crash and restart because their projections can be rebuilt from durable facts.
 | Component | Owns | Does not own |
 | --- | --- | --- |
 | Workflow DSL | Business triggers, payload contracts, step graph, retry declarations | Queue leases, worker lifecycle, storage adapter details |
-| Squid Mesh core | Validation, planning, replay/cancellation semantics, inspection model | Host scheduling infrastructure or external side-effect idempotency |
+| Squidie core | Validation, planning, replay/cancellation semantics, inspection model | Host scheduling infrastructure or external side-effect idempotency |
 | Runtime journal | Append-only facts, thread revisions, checkpoints through `Jido.Storage` | Business decisions hidden outside entries |
 | `WorkflowAgent` | Per-run coordination projection, planned runnables, applied results, manual state, terminal state | Executing step code directly |
 | `DispatchAgent` | Queue projection, visible attempts, claims, leases, heartbeats, completions, failures | Choosing the workflow graph |
-| Optional lease backend | Waking workers and integrating durable delivery, claim, heartbeat, retry, and recovery mechanics | Rewriting Squid Mesh workflow semantics |
+| Optional lease backend | Waking workers and integrating durable delivery, claim, heartbeat, retry, and recovery mechanics | Rewriting Squidie workflow semantics |
 | Jido actions | Step callback contract and action execution boundary | Whole-workflow orchestration |
-| Host app | Domain code, repo, deployment, external APIs, permissions | Squid Mesh runtime invariants |
+| Host app | Domain code, repo, deployment, external APIs, permissions | Squidie runtime invariants |
 
 ```mermaid
 flowchart LR
-    Author[Workflow author] --> DSL[Squid Mesh DSL]
+    Author[Workflow author] --> DSL[Squidie DSL]
     DSL --> Plan[Planner and runtime journal]
     Plan --> RunAgent[WorkflowAgent]
     RunAgent --> DispatchAgent[DispatchAgent]
@@ -114,35 +114,35 @@ The runtime is intentionally asymmetric:
 
 ## Jido Primitive Boundary
 
-Squid Mesh uses Jido as an internal runtime foundation while keeping the public
-workflow API focused on Squid Mesh concepts. Runtime contributors should know
+Squidie uses Jido as an internal runtime foundation while keeping the public
+workflow API focused on Squidie concepts. Runtime contributors should know
 which Jido primitives sit behind that boundary:
 
-| Jido primitive | Squid Mesh use |
+| Jido primitive | Squidie use |
 | --- | --- |
 | `Jido.Agent` | Rebuildable workflow and dispatch coordination state |
-| `Jido.Action` | Step execution interop, including raw Jido action modules and the native `SquidMesh.Step` adapter |
+| `Jido.Action` | Step execution interop, including raw Jido action modules and the native `Squidie.Step` adapter |
 | `Jido.Storage` | Journal and checkpoint persistence boundary |
 | `Jido.Thread` / `Jido.Thread.Entry` | Durable journal facts for run, dispatch, index, and catalog threads |
 | `Jido.Exec` | Action execution inside the journal executor |
-| `Jido.Signal` | Interop envelope for Squid Mesh runtime command signals |
+| `Jido.Signal` | Interop envelope for Squidie runtime command signals |
 
 Support code also uses lower-level primitives such as
 `Jido.Thread.EntryNormalizer` and validates built-in storage adapters like
 `Jido.Storage.File` and `Jido.Storage.Redis`. Workflow authors do not need to
-use those primitives directly; public callers stay on Squid Mesh APIs and host
+use those primitives directly; public callers stay on Squidie APIs and host
 apps adapt to Jido only at explicit runtime integration boundaries.
 
-Runtime command signals use `SquidMesh.Runtime.Signal` as the stable contract.
-`SquidMesh.Runtime.Signal.JidoAdapter` converts between Squid Mesh signal structs
+Runtime command signals use `Squidie.Runtime.Signal` as the stable contract.
+`Squidie.Runtime.Signal.JidoAdapter` converts between Squidie signal structs
 and `Jido.Signal` envelopes for advanced integration. Command receipt and
 inspection details are covered in the next section.
 
 ## Runtime Command Signals
 
-`SquidMesh.Runtime.Signal` is the Squid Mesh-native command envelope for
+`Squidie.Runtime.Signal` is the Squidie-native command envelope for
 runtime requests. These structs sit above backend primitives:
-`SquidMesh.Runtime.Signal.JidoAdapter` can translate them into `Jido.Signal`
+`Squidie.Runtime.Signal.JidoAdapter` can translate them into `Jido.Signal`
 envelopes at the boundary when agents, signal routers, or other Jido primitives
 need to exchange runtime commands or events. Workflow authors and host apps
 should not need to construct raw Jido signals for normal workflow control.
@@ -160,22 +160,22 @@ should not need to construct raw Jido signals for normal workflow control.
 All command signals carry `metadata`, `occurred_at`, and an optional
 `idempotency_key`. Runtime code should adapt these product-level signals at the
 Jido boundary instead of leaking backend signal shapes into public APIs. The
-signal path is first-class inside Squid Mesh; raw `Jido.Signal` is the interop
-envelope, not a replacement for the Squid Mesh signal taxonomy.
+signal path is first-class inside Squidie; raw `Jido.Signal` is the interop
+envelope, not a replacement for the Squidie signal taxonomy.
 
 Public workflow-control functions normalize caller input into these signals and
-then hand them to the journal signal interpreter. `SquidMesh.apply_signal/2`
+then hand them to the journal signal interpreter. `Squidie.apply_signal/2`
 uses the same path for starts, cron starts, replays, cancellation, and manual
-decisions. That keeps public callers on Squid Mesh concepts while host apps that
+decisions. That keeps public callers on Squidie concepts while host apps that
 already normalize commands at their own boundary can pass a
-`SquidMesh.Runtime.Signal` directly. The named helpers remain the ergonomic API
+`Squidie.Runtime.Signal` directly. The named helpers remain the ergonomic API
 for ordinary application code; `apply_signal/2` is the envelope API for agents,
 routers, schedulers, webhooks, and Jido interop boundaries.
 
-Workflow definitions are authored with the Squid Mesh DSL. Runtime signals
+Workflow definitions are authored with the Squidie DSL. Runtime signals
 start, replay, cancel, or resolve runs of those definitions.
 
-When a command reaches the journal runtime, Squid Mesh records a
+When a command reaches the journal runtime, Squidie records a
 `:run_signal_received` fact in the run thread before the command's lifecycle
 facts. Starts, cron starts, manual approvals, rejections, resumes,
 cancellations, and replays all use that audit shape. The fact stores the signal
@@ -195,11 +195,11 @@ operator-facing command audit surface; `include_history: true` still controls
 the detailed step and manual audit events.
 
 The Jido adapter uses CloudEvents-compatible envelopes with source
-`/squid_mesh/runtime/commands`, type names such as
-`squid_mesh.runtime.command.start_run`, and content type
-`application/vnd.squid-mesh.runtime-signal+json`. The envelope `data` holds the
-Squid Mesh command type, payload, metadata, occurrence timestamp, and
-idempotency key. `from_jido/1` accepts only the known Squid Mesh source and
+`/squidie/runtime/commands`, type names such as
+`squidie.runtime.command.start_run`, and content type
+`application/vnd.squidie.runtime-signal+json`. The envelope `data` holds the
+Squidie command type, payload, metadata, occurrence timestamp, and
+idempotency key. `from_jido/1` accepts only the known Squidie source and
 command types, and maps serialized string command names through an explicit
 whitelist rather than creating atoms from input.
 
@@ -313,10 +313,10 @@ erDiagram
 
 | Thread | Example Jido thread id | Purpose |
 | --- | --- | --- |
-| Run thread | `squid_mesh:run:<run-id>` | Workflow lifecycle facts for one run |
-| Dispatch thread | `squid_mesh:dispatch:<queue>` | Queue-visible attempts, claims, heartbeats, retries, completions, and failures |
-| Run index thread | `squid_mesh:run_index:<workflow>` | Rebuildable lookup facts for host-facing run discovery |
-| Run catalog thread | `squid_mesh:run_catalog:all` | Global lookup facts for all-run discovery |
+| Run thread | `squidie:run:<run-id>` | Workflow lifecycle facts for one run |
+| Dispatch thread | `squidie:dispatch:<queue>` | Queue-visible attempts, claims, heartbeats, retries, completions, and failures |
+| Run index thread | `squidie:run_index:<workflow>` | Rebuildable lookup facts for host-facing run discovery |
+| Run catalog thread | `squidie:run_catalog:all` | Global lookup facts for all-run discovery |
 
 Each append uses the current thread revision as an optimistic fence. A stale
 caller that tries to append based on an old projection receives a conflict
@@ -358,7 +358,7 @@ from inspection projections.
 
 ## Agents
 
-Squid Mesh uses Jido agents as rebuildable runtime coordinators, not as a new
+Squidie uses Jido agents as rebuildable runtime coordinators, not as a new
 business workflow authoring surface.
 
 ```mermaid
@@ -430,7 +430,7 @@ Heartbeat rules:
 
 For long-running steps, this heartbeat path lets the runtime distinguish "still
 alive" from "needs recovery". A lease-capable backend should own the concrete
-lease mechanics when a host needs backend-owned worker fencing, with Squid Mesh
+lease mechanics when a host needs backend-owned worker fencing, with Squidie
 translating the resulting lifecycle facts into its dispatch projection.
 
 ## Recovery Flow
@@ -449,7 +449,7 @@ stateDiagram-v2
     Conflict --> RebuildWorkflowAgent
 ```
 
-`SquidMesh.Runtime.AgentRecovery` drains two restart-safe windows in order:
+`Squidie.Runtime.AgentRecovery` drains two restart-safe windows in order:
 
 1. Planned-but-unscheduled runnables are written to the dispatch thread.
 2. Completed-but-unapplied dispatch results are written back to the run thread.
@@ -472,7 +472,7 @@ projection.
 ## Where Backend Leases Fit
 
 Backend leases are optional runtime infrastructure. They are not the place
-where Squid Mesh workflow semantics move.
+where Squidie workflow semantics move.
 
 ```mermaid
 flowchart LR
@@ -483,7 +483,7 @@ flowchart LR
     Adapter --> DispatchAgent
 ```
 
-| Squid Mesh concept | Backend-facing concept |
+| Squidie concept | Backend-facing concept |
 | --- | --- |
 | Runnable intent | Durable work item, job, or intent |
 | `runnable_key` | Backend key, idempotency key, or lineage metadata |
@@ -502,7 +502,7 @@ to Bedrock APIs.
 ## AI-Backed Steps
 
 In the journal-backed runtime, the workflow run is coordinated by a `WorkflowAgent`.
-That means Squid Mesh does not need a separate step kind just because a step
+That means Squidie does not need a separate step kind just because a step
 implementation uses an LLM, calls tools, or delegates some local decision-making
 to Jido.
 
@@ -524,7 +524,7 @@ That keeps the important contract visible:
   primitive
 
 The closed `agent_step/3` issue
-[#138](https://github.com/dark-trench/squid_mesh/issues/138) explored an
+[#138](https://github.com/dark-trench/squidie/issues/138) explored an
 explicit metadata marker for agentic steps. With the workflow run itself now
 coordinated by a Jido agent, that separate DSL construct is not currently part
 of the core runtime surface.
@@ -551,7 +551,7 @@ Design questions before adding such a construct:
 | Question | Direction |
 | --- | --- |
 | Does this need a child journal, or is a normal step enough? | Prefer a normal step unless separate durable state is required |
-| How much child state should appear in `SquidMesh.explain_run/2`? | Surface high-signal checkpoints and links, not every internal token |
+| How much child state should appear in `Squidie.explain_run/2`? | Surface high-signal checkpoints and links, not every internal token |
 | How are permissions applied inside child work? | Host app policy should remain the trust boundary |
 | Can child work be replayed safely? | Require explicit replay contracts and side-effect idempotency |
 | Can child work outlive its parent run? | Default no; terminal parent runs should fence child work |
@@ -560,10 +560,10 @@ Design questions before adding such a construct:
 
 | Area | Current path | Notes |
 | --- | --- | --- |
-| Workflow authoring | Squid Mesh DSL | Workflow authors do not need to write Jido agents directly |
-| Step execution | `SquidMesh.Step` and `Jido.Action` interop | Workers claim visible attempts with `SquidMesh.execute_next/1`; both paths receive safe attempt metadata in context |
+| Workflow authoring | Squidie DSL | Workflow authors do not need to write Jido agents directly |
+| Step execution | `Squidie.Step` and `Jido.Action` interop | Workers claim visible attempts with `Squidie.execute_next/1`; both paths receive safe attempt metadata in context |
 | Durable run state | Jido-backed run threads plus projections | The default Ecto adapter stores threads, entries, and checkpoints in the host repo |
-| Dispatch | Dispatch agent plus journal attempts | Live wakeups go through `SquidMesh.Runtime.DispatchNotifier`; backend-owned leases can be layered through `SquidMesh.Executor.Leases` |
+| Dispatch | Dispatch agent plus journal attempts | Live wakeups go through `Squidie.Runtime.DispatchNotifier`; backend-owned leases can be layered through `Squidie.Executor.Leases` |
 | Long-running recovery | Lease heartbeat, expired claim recovery, journal rebuild | Timeout-based step reclaim is not part of the public config |
 | Inspection | Projection-backed snapshots and explanations | Inspection rebuilds from journal facts |
 | Storage | `Jido.Storage` adapters | Postgres-compatible Ecto storage is the default supported path |
@@ -579,8 +579,8 @@ run-catalog projection rebuilds all-run lookup state without scanning adapter
 internals. Both facts retain the queue each run was dispatched through and keep
 malformed or conflicting facts visible as anomalies. The projected explanation
 layer derives deterministic reason-specific details and next actions from the
-inspection snapshot. The public `SquidMesh.inspect_run/2`,
-`SquidMesh.list_runs/2`, and `SquidMesh.explain_run/2` APIs expose this read
+inspection snapshot. The public `Squidie.inspect_run/2`,
+`Squidie.list_runs/2`, and `Squidie.explain_run/2` APIs expose this read
 model by default and infer Ecto storage from the configured repo. Host apps can
 still pass explicit `journal_storage:` or `queue:` overrides when a test or
 integration boundary needs a non-default journal boundary. Public start,
@@ -600,9 +600,9 @@ configured journal runtime.
 | Feature | Issue | Runtime dependency |
 | --- | --- | --- |
 | Projection-backed inspection and explanation hardening | No active issue | Additional coverage for ambiguous attempt states and operator-facing edge cases |
-| Conditional paths and deferred continuation | [#140](https://github.com/dark-trench/squid_mesh/issues/140) | Durable planner facts and wakeup metadata |
-| Dynamic child runs | [#141](https://github.com/dark-trench/squid_mesh/issues/141) | Stable parent runnable keys, idempotent child keys, inspectable parent-child lineage |
-| Advanced reference workflows | [#109](https://github.com/dark-trench/squid_mesh/issues/109) | Implemented target features only, without Oban-specific assumptions |
+| Conditional paths and deferred continuation | [#140](https://github.com/dark-trench/squidie/issues/140) | Durable planner facts and wakeup metadata |
+| Dynamic child runs | [#141](https://github.com/dark-trench/squidie/issues/141) | Stable parent runnable keys, idempotent child keys, inspectable parent-child lineage |
+| Advanced reference workflows | [#109](https://github.com/dark-trench/squidie/issues/109) | Implemented target features only, without Oban-specific assumptions |
 | Child-agent step lifecycle | No active core issue | Only relevant if normal steps are insufficient because child journal semantics are required |
 
 ## Reading Order

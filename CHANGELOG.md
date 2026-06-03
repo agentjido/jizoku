@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Squid Mesh will be documented in this file.
+All notable changes to Squidie will be documented in this file.
 
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
@@ -67,7 +67,7 @@ Versioning.
   heartbeat, retry, and dead-letter boundaries more explicitly.
 - The README, first-run path, workflow examples, and core docs were tightened
   around current journal runtime usage.
-- Getting Started Livebook dependency setup no longer pins Squid Mesh to a local
+- Getting Started Livebook dependency setup no longer pins Squidie to a local
   prerelease dependency.
 - The storage adapter contract and Jido primitive/signal boundaries are now
   documented explicitly.
@@ -89,7 +89,7 @@ Versioning.
 
 ### Added
 - UI-friendly graph inspection map serialization through
-  `SquidMesh.Runs.GraphInspection.to_map/1`, including documented node and edge
+  `Squidie.Runs.GraphInspection.to_map/1`, including documented node and edge
   shapes for dashboards, CLIs, and visual workflow tools.
 - Reference workflow documentation for approval, recovery, dependency, saga,
   and scheduled workflow examples in the minimal host app.
@@ -119,11 +119,11 @@ Versioning.
 ## [0.1.0-beta.1] - 2026-05-24
 
 ### Added
-- Opt-in journal executor runtime through `SquidMesh.execute_next/1`, including
+- Opt-in journal executor runtime through `Squidie.execute_next/1`, including
   durable `:run_queued` dispatch markers, journal-backed attempt execution,
   dependency progression, retry scheduling, stale-definition fencing through
-  `SquidMesh.Workflow.Definition.fingerprint/1`, and `Journal.*` runtime
-  modules under `SquidMesh.Runtime.Journal`.
+  `Squidie.Workflow.Definition.fingerprint/1`, and `Journal.*` runtime
+  modules under `Squidie.Runtime.Journal`.
 - Durable dispatch-agent claim lifecycle APIs through `DispatchAgent.claim_next/4`,
   `DispatchAgent.heartbeat/6`, `DispatchAgent.complete/7`, and
   `DispatchAgent.fail/7`, including optimistic dispatch-thread fencing,
@@ -151,7 +151,7 @@ Versioning.
 ### Added
 - Pluggable executor boundary for step execution, delayed scheduling,
   redelivery, and cron activation.
-- Native `SquidMesh.Step` modules with raw `Jido.Action` support retained as an
+- Native `Squidie.Step` modules with raw `Jido.Action` support retained as an
   explicit interop path.
 - Durable dispatch protocol documentation and runtime projection invariants for
   dispatch-oriented state.
@@ -162,7 +162,7 @@ Versioning.
   runtime adoption.
 
 ### Changed
-- Example workflows now use native Squid Mesh steps instead of raw actions by
+- Example workflows now use native Squidie steps instead of raw actions by
   default.
 - README and host app setup snippets now reference `0.1.0-beta.1`.
 - Dependency join explanations and workflow-centric examples were tightened for
@@ -220,10 +220,10 @@ Versioning.
   default.
 - Persisted recovery policy on step runs, exposed through run inspection,
   declared step state, and run explanations.
-- Replay safety checks that block `SquidMesh.replay_run/2` after completed
+- Replay safety checks that block `Squidie.replay_run/2` after completed
   irreversible or non-compensatable steps unless the caller passes
   `allow_irreversible: true`.
-- Exported formatter rules for Squid Mesh workflow DSL calls, plus host app
+- Exported formatter rules for Squidie workflow DSL calls, plus host app
   setup guidance for importing them.
 
 ### Changed
@@ -241,13 +241,13 @@ Versioning.
 
 ### Notes
 - This remains an alpha release. Existing alpha host apps that already installed
-  earlier Squid Mesh migrations should reinstall from the current schema or
+  earlier Squidie migrations should reinstall from the current schema or
   apply an equivalent local migration before writing new step runs.
 
 ## [0.1.0-alpha.4] - 2026-05-10
 
 ### Added
-- Run explanation diagnostics through `SquidMesh.explain_run/2`, including
+- Run explanation diagnostics through `Squidie.explain_run/2`, including
   current reason, valid next actions, and supporting evidence for host app
   dashboards or CLIs.
 - Multiple workflow triggers per workflow, with any mix of manual and cron
@@ -256,7 +256,7 @@ Versioning.
   started manually or by cron.
 
 ### Changed
-- `mix squid_mesh.install` now installs one fresh current-schema Squid Mesh
+- `mix squidie.install` now installs one fresh current-schema Squidie
   migration instead of copying the historical split migration set.
 
 ### Fixed
@@ -265,16 +265,16 @@ Versioning.
 
 ### Notes
 - This release intentionally does not provide a compatibility path for older
-  split Squid Mesh migrations. Existing evaluation apps should reinstall from
+  split Squidie migrations. Existing evaluation apps should reinstall from
   the current schema while the project remains in alpha.
 
 ## [0.1.0-alpha.3] - 2026-05-07
 
 ### Added
 - Human-in-the-loop workflow support with paused runs and
-  `SquidMesh.unblock_run/2`.
+  `Squidie.unblock_run/2`.
 - Approval workflow primitives with `approval_step/2`,
-  `SquidMesh.approve_run/3`, and `SquidMesh.reject_run/3`.
+  `Squidie.approve_run/3`, and `Squidie.reject_run/3`.
 - Manual audit history for pause, resume, approval, and rejection actions when
   inspecting runs with `include_history: true`.
 - Operations documentation for idempotent side-effect design and stale running
@@ -338,9 +338,9 @@ Versioning.
 - Compatibility, operations, and production-readiness documentation.
 
 ### Changed
-- Clarified the runtime boundary between Squid Mesh, Oban, Jido, and host
+- Clarified the runtime boundary between Squidie, Oban, Jido, and host
   applications across the README and docs.
-- Disabled Jido's internal action retries at the Squid Mesh boundary so one
+- Disabled Jido's internal action retries at the Squidie boundary so one
   workflow attempt maps to one persisted step attempt.
 
 ### Notes

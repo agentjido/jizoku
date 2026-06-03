@@ -1,16 +1,16 @@
 defmodule MinimalHostApp.CronPlugin do
   @moduledoc """
-  Host-owned Oban cron plugin for the example app's Squid Mesh workflows.
+  Host-owned Oban cron plugin for the example app's Squidie workflows.
   """
 
   @behaviour Oban.Plugin
 
   use Supervisor
 
-  alias MinimalHostApp.SquidMeshDeliveryAdapter
-  alias MinimalHostApp.Workers.SquidMeshWorker
-  alias SquidMesh.Executor.Payload
-  alias SquidMesh.Workflow.Definition, as: WorkflowDefinition
+  alias MinimalHostApp.SquidieDeliveryAdapter
+  alias MinimalHostApp.Workers.SquidieWorker
+  alias Squidie.Executor.Payload
+  alias Squidie.Workflow.Definition, as: WorkflowDefinition
 
   @type option ::
           Oban.Plugin.option()
@@ -62,7 +62,7 @@ defmodule MinimalHostApp.CronPlugin do
 
     children =
       workflows
-      |> build_crontabs(SquidMeshDeliveryAdapter.queue(), reboot_activation_id)
+      |> build_crontabs(SquidieDeliveryAdapter.queue(), reboot_activation_id)
       |> Enum.map(fn {timezone, crontab} ->
         opts = [conf: conf, crontab: crontab, timezone: timezone]
         Supervisor.child_spec({Oban.Plugins.Cron, opts}, id: {:cron, timezone})
@@ -126,7 +126,7 @@ defmodule MinimalHostApp.CronPlugin do
       opts = [args: payload]
 
       case Oban.Plugins.Cron.validate(
-             crontab: [{expression, SquidMeshWorker, opts}],
+             crontab: [{expression, SquidieWorker, opts}],
              timezone: timezone
            ) do
         :ok -> :ok
@@ -150,7 +150,7 @@ defmodule MinimalHostApp.CronPlugin do
 
       entry = {
         trigger.config.expression,
-        SquidMeshWorker,
+        SquidieWorker,
         [args: payload, queue: queue]
       }
 

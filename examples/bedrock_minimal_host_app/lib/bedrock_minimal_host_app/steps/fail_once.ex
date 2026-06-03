@@ -2,12 +2,12 @@ defmodule BedrockMinimalHostApp.Steps.FailOnce do
   @moduledoc """
   Example step that fails once per run and succeeds on the next attempt.
 
-  The production-readiness harness uses this step to verify Squid Mesh retry
+  The production-readiness harness uses this step to verify Squidie retry
   semantics without depending on transport-level retry behavior in external
   clients.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :fail_once,
     description: "Fails once per run and then succeeds",
     input_schema: [
@@ -18,8 +18,8 @@ defmodule BedrockMinimalHostApp.Steps.FailOnce do
     ]
 
   @impl true
-  @spec run(map(), SquidMesh.Step.Context.t()) :: {:ok, map()} | {:retry, map()}
-  def run(%{attempt_id: attempt_id}, %SquidMesh.Step.Context{run_id: run_id})
+  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()} | {:retry, map()}
+  def run(%{attempt_id: attempt_id}, %Squidie.Step.Context{run_id: run_id})
       when is_binary(run_id) do
     key = {__MODULE__, run_id}
 

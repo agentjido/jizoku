@@ -1,16 +1,16 @@
-defmodule SquidMesh.MixProject do
+defmodule Squidie.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :squid_mesh,
+      app: :squidie,
       version: "0.1.1",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       description: description(),
-      source_url: "https://github.com/dark-trench/squid_mesh",
-      homepage_url: "https://github.com/dark-trench/squid_mesh",
+      source_url: "https://github.com/dark-trench/squidie",
+      homepage_url: "https://github.com/dark-trench/squidie",
       docs: docs(),
       package: package(),
       aliases: aliases(),
@@ -33,7 +33,7 @@ defmodule SquidMesh.MixProject do
   def application do
     [
       extra_applications: [:logger],
-      mod: {SquidMesh.Application, []}
+      mod: {Squidie.Application, []}
     ]
   end
 
@@ -52,12 +52,12 @@ defmodule SquidMesh.MixProject do
 
   defp package do
     [
-      name: "squid_mesh",
+      name: "squidie",
       maintainers: ["Cristiano Carvalho"],
       licenses: ["Apache-2.0"],
       files:
         ~w(lib priv/repo docs usage-rules usage-rules.md .formatter.exs mix.exs mix.lock README* CHANGELOG* LICENSE* CONTRIBUTING* CODE_OF_CONDUCT*),
-      links: %{"GitHub" => "https://github.com/dark-trench/squid_mesh"}
+      links: %{"GitHub" => "https://github.com/dark-trench/squidie"}
     ]
   end
 

@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Steps.LoadInvoice do
   Example step that loads invoice context for a recovery run.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :load_invoice,
     description: "Loads invoice context",
     input_schema: [
@@ -16,7 +16,7 @@ defmodule BedrockMinimalHostApp.Steps.LoadInvoice do
     ]
 
   @impl true
-  @spec run(map(), SquidMesh.Step.Context.t()) :: {:ok, map()}
+  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()}
   def run(%{account_id: account_id, invoice_id: invoice_id, attempt_id: attempt_id}, _context) do
     {:ok,
      %{

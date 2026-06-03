@@ -6,7 +6,7 @@ defmodule MinimalHostApp.Steps.ReserveInventory do
   if a downstream checkout step fails after retries are exhausted.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :reserve_inventory,
     description: "Reserves inventory for an order",
     input_schema: [

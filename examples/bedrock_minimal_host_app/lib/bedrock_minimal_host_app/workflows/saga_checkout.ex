@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Workflows.SagaCheckout do
   Example saga workflow that rolls back completed steps after downstream failure.
   """
 
-  use SquidMesh.Workflow
+  use Squidie.Workflow
 
   workflow do
     trigger :saga_checkout do

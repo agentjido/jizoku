@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Steps.DeliverInvite do
   Example child workflow step that records an invite delivery.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :deliver_invite,
     description: "Records an invite delivery for a nested workflow",
     input_schema: [
@@ -16,10 +16,10 @@ defmodule BedrockMinimalHostApp.Steps.DeliverInvite do
     ]
 
   @impl true
-  @spec run(map(), SquidMesh.Step.Context.t()) :: {:ok, map()} | {:retry, map()}
+  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()} | {:retry, map()}
   def run(
         %{party_id: party_id, guest_id: guest_id} = input,
-        %SquidMesh.Step.Context{attempt: attempt}
+        %Squidie.Step.Context{attempt: attempt}
       ) do
     if Map.get(input, :fail_child_once, false) and attempt == 1 do
       {:retry, %{message: "retry child invite delivery", code: "retry_child_invite"}}

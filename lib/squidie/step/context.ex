@@ -1,0 +1,47 @@
+defmodule Squidie.Step.Context do
+  @moduledoc """
+  Durable runtime context passed to native Squidie steps.
+
+  The context intentionally exposes Squidie concepts only. It gives steps the
+  current run identity, workflow module, step name, attempt number, and the
+  durable run state available before the current attempt started.
+  """
+
+  @enforce_keys [:run_id, :workflow, :step, :attempt, :state]
+  defstruct [
+    :run_id,
+    :workflow,
+    :step,
+    :attempt,
+    :runnable_key,
+    :idempotency_key,
+    :claim_id,
+    state: %{}
+  ]
+
+  @type t :: %__MODULE__{
+          run_id: Ecto.UUID.t(),
+          workflow: module(),
+          step: atom(),
+          runnable_key: String.t() | nil,
+          idempotency_key: String.t() | nil,
+          claim_id: String.t() | nil,
+          attempt: pos_integer() | nil,
+          state: map()
+        }
+
+  @doc false
+  @spec from_map(map()) :: t()
+  def from_map(context) when is_map(context) do
+    %__MODULE__{
+      run_id: Map.fetch!(context, :run_id),
+      workflow: Map.fetch!(context, :workflow),
+      step: Map.fetch!(context, :step),
+      attempt: Map.get(context, :attempt),
+      runnable_key: Map.get(context, :runnable_key),
+      idempotency_key: Map.get(context, :idempotency_key),
+      claim_id: Map.get(context, :claim_id),
+      state: Map.get(context, :state, %{})
+    }
+  end
+end

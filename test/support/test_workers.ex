@@ -1,7 +1,7 @@
-defmodule SquidMesh.Test.StepWorker do
+defmodule Squidie.Test.StepWorker do
   @moduledoc false
 
-  alias SquidMesh.Runtime.Runner
+  alias Squidie.Runtime.Runner
 
   @spec perform(%{args: map()}) :: term()
   def perform(%{args: %{"kind" => _kind} = args}) do
@@ -13,10 +13,10 @@ defmodule SquidMesh.Test.StepWorker do
   end
 end
 
-defmodule SquidMesh.Test.CronTriggerWorker do
+defmodule Squidie.Test.CronTriggerWorker do
   @moduledoc false
 
-  alias SquidMesh.Runtime.Runner
+  alias Squidie.Runtime.Runner
 
   @spec perform(%{args: map()}) :: term()
   def perform(%{args: %{"kind" => "cron"} = args}) do

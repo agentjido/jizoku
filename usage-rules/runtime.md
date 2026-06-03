@@ -1,4 +1,4 @@
-# Squid Mesh Runtime Usage Rules
+# Squidie Runtime Usage Rules
 
 ## Journal Runtime
 
@@ -33,9 +33,9 @@
 
 ## Execution
 
-- Execute visible work through `SquidMesh.execute_next/1`.
+- Execute visible work through `Squidie.execute_next/1`.
 - Use a stable `owner_id` for workers when possible.
-- Use `heartbeat_interval_ms` on `SquidMesh.execute_next/1` for long-running
+- Use `heartbeat_interval_ms` on `Squidie.execute_next/1` for long-running
   steps that may exceed the journal claim lease window. Keep intervals at or
   above the runtime minimum and large enough to avoid unnecessary journal write
   volume.
@@ -57,7 +57,7 @@
 - Previewing or recording dynamic work must not schedule dispatch attempts,
   change dependency readiness, or mutate terminal-state decisions.
 - Scheduling dynamic work must use durable planned runnable intents and the
-  normal `SquidMesh.execute_next/1` claim, completion, failure, and application
+  normal `Squidie.execute_next/1` claim, completion, failure, and application
   path.
 - Dynamic node retry must be persisted in the planned runnable metadata; do not
   recover retry behavior from current host code alone.
@@ -65,12 +65,12 @@
 
 ## Runtime Command Signals
 
-- Treat `SquidMesh.Runtime.Signal` as the Squid Mesh-native command envelope for
+- Treat `Squidie.Runtime.Signal` as the Squidie-native command envelope for
   runtime control.
-- Public control APIs and `SquidMesh.apply_signal/2` must apply signals through
+- Public control APIs and `Squidie.apply_signal/2` must apply signals through
   the journal runtime, including starts, cron starts, replays, cancellation, and
   manual controls.
-- Use `SquidMesh.Runtime.Signal.JidoAdapter` only at the Jido interop boundary
+- Use `Squidie.Runtime.Signal.JidoAdapter` only at the Jido interop boundary
   for agents, routers, or other Jido primitives. Do not leak raw `Jido.Signal`
   into normal workflow authoring.
 - Preserve `:run_signal_received` command history for applied commands.
@@ -79,7 +79,7 @@
 
 ## Storage
 
-- Keep `SquidMesh.Runtime.Journal.Storage` as the Squid Mesh-owned storage
+- Keep `Squidie.Runtime.Journal.Storage` as the Squidie-owned storage
   boundary.
 - Default to Ecto/Postgres-backed Jido storage for documented host setup.
 - Keep the boundary database-agnostic, but require production adapters to

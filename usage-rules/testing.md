@@ -1,4 +1,4 @@
-# Squid Mesh Testing Usage Rules
+# Squidie Testing Usage Rules
 
 ## Test Scope
 

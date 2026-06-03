@@ -6,7 +6,7 @@ defmodule BedrockMinimalHostApp.Steps.CapturePayment do
   terminal failure persistence, compensation dispatch, and rollback inspection.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :capture_payment,
     description: "Captures an authorized payment"
 

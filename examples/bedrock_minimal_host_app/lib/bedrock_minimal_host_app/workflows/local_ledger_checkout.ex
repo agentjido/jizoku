@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Workflows.LocalLedgerCheckout do
   Example workflow for a same-process local repo transaction group.
   """
 
-  use SquidMesh.Workflow
+  use Squidie.Workflow
 
   workflow do
     trigger :local_ledger_checkout do

@@ -1,6 +1,6 @@
 ---
 name: Documentation
-about: Suggest improvements or report issues in Squid Mesh documentation
+about: Suggest improvements or report issues in Squidie documentation
 labels: documentation
 ---
 

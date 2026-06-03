@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Steps.RecordRejection do
   Example step that records a manual rejection decision after review.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :record_rejection,
     description: "Records a rejected manual review result",
     input_schema: [
@@ -12,7 +12,7 @@ defmodule MinimalHostApp.Steps.RecordRejection do
     ]
 
   @impl true
-  @spec run(map(), SquidMesh.Step.Context.t()) :: {:ok, map()}
+  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()}
   def run(%{account_id: account_id, approval: approval}, _context) do
     {:ok,
      approval

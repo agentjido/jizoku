@@ -40,7 +40,7 @@ reviews:
   path_instructions:
     - path: "**/*"
       instructions: |
-        Review Squid Mesh as an embeddable Elixir workflow/runtime library. Prioritize
+        Review Squidie as an embeddable Elixir workflow/runtime library. Prioritize
         blocking findings for behavior regressions, broken public contracts, invalid
         persisted data handling, duplicate delivery, stale definitions, race conditions,
         missing rollback behavior, swallowed errors, unsafe atom creation, secrets, and
@@ -57,13 +57,13 @@ reviews:
         duplicate delivery behavior, terminal-state handling, and restart implications.
         Verify side effects stay at boundaries and that domain logic does not leak into
         delivery adapters.
-    - path: "lib/squid_mesh/runtime/**/*.ex"
+    - path: "lib/squidie/runtime/**/*.ex"
       instructions: |
         Review process, retry, dependency dispatch, pause/resume, cancellation, and
         terminal-state transitions aggressively. Flag unlocked read-before-write races,
         non-idempotent replay paths, missing audit or telemetry terminal symmetry, and
         ordering bugs between step completion, run completion, and successor dispatch.
-    - path: "lib/squid_mesh/workflow/**/*.ex"
+    - path: "lib/squidie/workflow/**/*.ex"
       instructions: |
         Check DSL and planner changes for deterministic compilation, serializable workflow
         specs, stale or incompatible workflow definitions, dependency graph correctness,
@@ -79,7 +79,7 @@ reviews:
     - path: "examples/**"
       instructions: |
         Treat examples as executable integration documentation. Verify they continue to
-        use public Squid Mesh APIs and remain aligned with README and docs guidance.
+        use public Squidie APIs and remain aligned with README and docs guidance.
     - path: "docs/**/*.md"
       instructions: |
         Check documentation for accuracy, stale API references, and consistency with the

@@ -1,7 +1,7 @@
 # Reference Workflows
 
 The minimal host app contains executable reference workflows for the product
-lane described in [Positioning](positioning.md). They use Squid Mesh workflow
+lane described in [Positioning](positioning.md). They use Squidie workflow
 and step APIs in the happy path, keep host scheduling and delivery outside the
 workflow definition, and run through the same smoke and resilience harnesses as
 the rest of the example app.
@@ -72,7 +72,7 @@ transition :wait_for_approval, on: :error, to: :record_rejection
 
 The approval step is durable state in the journal. It is not a process waiting
 in memory. Host code resolves the boundary through public APIs such as
-`SquidMesh.approve/2` or `SquidMesh.reject/2`, and inspection history
+`Squidie.approve/2` or `Squidie.reject/2`, and inspection history
 keeps the pause and resolution facts visible for operator tools.
 
 ## Dependency Recovery
@@ -112,7 +112,7 @@ step :authorize_payment, MinimalHostApp.Steps.AuthorizePayment,
 step :capture_payment, MinimalHostApp.Steps.CapturePayment, retry: [max_attempts: 2]
 ```
 
-When capture exhausts its retry policy, Squid Mesh keeps the completed
+When capture exhausts its retry policy, Squidie keeps the completed
 side-effecting steps and their declared rollback callbacks visible through run
 inspection, graph inspection, and explanation. The example keeps each external
 effect behind a step module, while the workflow definition remains the place

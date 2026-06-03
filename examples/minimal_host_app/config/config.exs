@@ -14,13 +14,13 @@ config :minimal_host_app, Oban,
   plugins: [
     {MinimalHostApp.CronPlugin, workflows: [MinimalHostApp.Workflows.DailyDigest]}
   ],
-  queues: [squid_mesh: 5]
+  queues: [squidie: 5]
 
-config :minimal_host_app, MinimalHostApp.SquidMeshDeliveryAdapter,
+config :minimal_host_app, MinimalHostApp.SquidieDeliveryAdapter,
   oban_name: Oban,
-  queue: :squid_mesh
+  queue: :squidie
 
-config :squid_mesh,
+config :squidie,
   repo: MinimalHostApp.Repo
 
 import_config "#{config_env()}.exs"

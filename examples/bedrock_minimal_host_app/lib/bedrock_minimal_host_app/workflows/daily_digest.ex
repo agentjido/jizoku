@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Workflows.DailyDigest do
   Example workflow with manual and cron triggers sharing one graph.
   """
 
-  use SquidMesh.Workflow
+  use Squidie.Workflow
 
   workflow do
     trigger :manual_digest do

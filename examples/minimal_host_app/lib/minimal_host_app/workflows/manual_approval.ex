@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.ManualApproval do
   Example workflow that waits for an explicit operator approval or rejection.
   """
 
-  use SquidMesh.Workflow
+  use Squidie.Workflow
 
   workflow do
     trigger :manual_approval do

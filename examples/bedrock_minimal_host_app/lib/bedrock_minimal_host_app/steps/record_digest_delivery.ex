@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Steps.RecordDigestDelivery do
   Example step that records digest delivery metadata.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :record_digest_delivery,
     description: "Records digest delivery metadata",
     input_schema: [
@@ -15,7 +15,7 @@ defmodule BedrockMinimalHostApp.Steps.RecordDigestDelivery do
     ]
 
   @impl true
-  @spec run(map(), SquidMesh.Step.Context.t()) :: {:ok, map()}
+  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()}
   def run(%{channel: channel, digest_date: digest_date}, _context) do
     {:ok,
      %{

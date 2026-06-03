@@ -6,7 +6,7 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
   alias BedrockMinimalHostApp.Workflows.PaymentRecovery
 
   test "validates runtime-authored specs through host-owned action keys" do
-    spec = %SquidMesh.Workflow.Spec{
+    spec = %Squidie.Workflow.Spec{
       workflow: BedrockMinimalHostApp.RuntimeAuthoredPaymentRecovery,
       triggers: [
         %{
@@ -42,10 +42,10 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
       "payment.notify_customer" => Steps.NotifyCustomer
     }
 
-    assert :ok = SquidMesh.Workflow.validate_spec(spec, action_registry: registry)
+    assert :ok = Squidie.Workflow.validate_spec(spec, action_registry: registry)
 
     assert {:ok, resolved} =
-             SquidMesh.Workflow.resolve_spec_actions(spec, action_registry: registry)
+             Squidie.Workflow.resolve_spec_actions(spec, action_registry: registry)
 
     assert Enum.map(resolved.steps, &{&1.name, &1.module, &1.metadata.action}) == [
              {:load_invoice, Steps.LoadInvoice, "payment.load_invoice"},
@@ -69,12 +69,12 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
     assert run.definition_version == "bedrock-minimal-host-runtime-digest-v1"
     assert [%{step: "record_digest_delivery", status: :available}] = run.visible_attempts
 
-    assert {:ok, completed_run} = SquidMesh.execute_next(journal_storage: storage)
+    assert {:ok, completed_run} = Squidie.execute_next(journal_storage: storage)
     assert completed_run.status == :completed
   end
 
   test "compiled payment recovery workflow exposes numeric gateway routing condition" do
-    assert {:ok, spec} = SquidMesh.Workflow.to_spec(PaymentRecovery)
+    assert {:ok, spec} = Squidie.Workflow.to_spec(PaymentRecovery)
 
     assert Enum.any?(spec.transitions, fn
              %{

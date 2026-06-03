@@ -2,10 +2,10 @@
 
 ## Project Structure & Module Organization
 
-Squid Mesh is an Elixir library for durable workflow execution. Core source
-lives in `lib/squid_mesh`, with Mix tasks under `lib/mix`. Database schema and
+Squidie is an Elixir library for durable workflow execution. Core source
+lives in `lib/squidie`, with Mix tasks under `lib/mix`. Database schema and
 migrations live in `priv/repo`. Tests mirror the source layout under
-`test/squid_mesh`, with shared helpers in `test/support`. Project docs are in
+`test/squidie`, with shared helpers in `test/support`. Project docs are in
 `docs`, and `examples/minimal_host_app` is the executable host-app harness used
 for integration and smoke testing.
 
@@ -36,7 +36,7 @@ external input, list index access, hidden global state, and swallowing errors.
 ## Testing Guidelines
 
 Tests use ExUnit. Name test files with `_test.exs` and place them near the
-behavior they verify, for example `test/squid_mesh/runtime/step_worker_test.exs`.
+behavior they verify, for example `test/squidie/runtime/step_worker_test.exs`.
 Add regression coverage with behavior-focused assertions, especially for retries,
 pause/resume, cancellation, dependency ordering, stale workflow definitions,
 input/output mapping, persistence, and error routing.
@@ -56,19 +56,19 @@ include the verification commands run.
 ## Security & Configuration Tips
 
 Do not commit secrets, local machine paths, hostnames, or user-specific config.
-Review dependency and lockfile changes carefully because Squid Mesh is embedded
+Review dependency and lockfile changes carefully because Squidie is embedded
 inside host applications.
 
-## Squid Mesh Runtime Rules
+## Squidie Runtime Rules
 
 - Treat the Jido journal runtime as the only execution path.
-- Execute visible work through `SquidMesh.execute_next/1`.
+- Execute visible work through `Squidie.execute_next/1`.
 - Keep workflow modules backend-neutral; Bedrock, Oban, or another backend
   belongs behind host adapter modules.
-- Cron activation may use `SquidMesh.Executor.Payload.cron/3` delivered through
-  `SquidMesh.Runtime.Runner.perform/2`; step and compensation payloads are not
+- Cron activation may use `Squidie.Executor.Payload.cron/3` delivered through
+  `Squidie.Runtime.Runner.perform/2`; step and compensation payloads are not
   part of the current runner boundary.
 - Preserve public tooling surfaces needed by dashboards and visual editors:
-  `SquidMesh.list_runs/2`, `SquidMesh.inspect_run/2`,
-  `SquidMesh.inspect_run_graph/2`, `SquidMesh.explain_run/2`, and normalized
+  `Squidie.list_runs/2`, `Squidie.inspect_run/2`,
+  `Squidie.inspect_run_graph/2`, `Squidie.explain_run/2`, and normalized
   workflow specs.

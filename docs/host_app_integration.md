@@ -16,7 +16,7 @@ Current CI and onboarding smoke tests run with:
 
 ## Installation
 
-Add `:squid_mesh` to the host application's dependencies and fetch dependencies
+Add `:squidie` to the host application's dependencies and fetch dependencies
 as usual with Mix.
 
 Preferred Hex dependency:
@@ -24,7 +24,7 @@ Preferred Hex dependency:
 ```elixir
 defp deps do
   [
-    {:squid_mesh, "~> 0.1.0"}
+    {:squidie, "~> 0.1.0"}
   ]
 end
 ```
@@ -37,19 +37,19 @@ dependency:
 defp deps do
   [
     {:jido, "~> 2.0"},
-    {:squid_mesh, "~> 0.1.0"}
+    {:squidie, "~> 0.1.0"}
   ]
 end
 ```
 
-Then install Squid Mesh's library-owned migrations into the host app:
+Then install Squidie's library-owned migrations into the host app:
 
 ```sh
-mix squid_mesh.install
+mix squidie.install
 mix ecto.migrate
 ```
 
-`mix squid_mesh.install` creates one current-schema Squid Mesh migration in the
+`mix squidie.install` creates one current-schema Squidie migration in the
 host application's `priv/repo/migrations` directory. It does not install or run
 migrations for the host application's job backend.
 
@@ -57,23 +57,23 @@ migrations for the host application's job backend.
 
 Start with three pieces:
 
-1. Squid Mesh config points at the host repo and runtime boundary.
-2. The journal runtime owns its dispatch queue through Squid Mesh config; the
-   host app only needs a worker process that calls `SquidMesh.execute_next/1`.
-3. Journal workers call `SquidMesh.execute_next/1` to claim and execute visible
+1. Squidie config points at the host repo and runtime boundary.
+2. The journal runtime owns its dispatch queue through Squidie config; the
+   host app only needs a worker process that calls `Squidie.execute_next/1`.
+3. Journal workers call `Squidie.execute_next/1` to claim and execute visible
    attempts.
 
-The host application configures Squid Mesh under the `:squid_mesh` application:
+The host application configures Squidie under the `:squidie` application:
 
 ```elixir
-config :squid_mesh,
+config :squidie,
   repo: MyApp.Repo,
   queue: "default"
 ```
 
 Required keys:
 
-- `:repo` - the Ecto repo Squid Mesh uses for persisted runtime state
+- `:repo` - the Ecto repo Squidie uses for persisted runtime state
 
 Optional keys:
 
@@ -82,7 +82,7 @@ Optional keys:
 - `:read_model` - `:read_model` by default; routes inspection, graph
   inspection, and explanation through journal projections
 - `:journal_storage` - optional for the default Ecto-backed setup; when omitted,
-  Squid Mesh uses `{SquidMesh.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}`.
+  Squidie uses `{Squidie.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}`.
   Set it only to override the storage adapter. Explicit `nil` is rejected for
   journal-backed runtime or read-model paths.
 - `:queue` - `"default"` by default; selects the journal dispatch queue used by
@@ -93,7 +93,7 @@ lease system.
 
 For most host apps, the inferred Ecto storage is the recommended starting point
 when `MyApp.Repo` uses Postgres or a Postgres-compatible Ecto adapter. It
-persists Jido threads and checkpoints in Squid Mesh's installed tables and keeps
+persists Jido threads and checkpoints in Squidie's installed tables and keeps
 journal storage in the same transactional database boundary as the host app. The
 boundary remains adapter-shaped, so other Jido-compatible stores can be used
 later, but production stores must still provide ordered per-thread appends,
@@ -103,7 +103,7 @@ compatibility expectations.
 
 The current journal default covers start, cron start, cancellation, replay,
 global and workflow-filtered `list_runs/2`, inspect, explain, graph inspection,
-manual resume/approval controls, and `SquidMesh.execute_next/1`. Journal listing
+manual resume/approval controls, and `Squidie.execute_next/1`. Journal listing
 is backed by a durable run catalog fact rather than a storage-adapter scan, and
 returns redacted summaries; use `inspect_run/2` for one run when a caller needs
 inputs, outputs, attempts, or claim metadata. Dashboards can call
@@ -119,29 +119,29 @@ keys, and claim identifiers before returning the payload. See
 
 ## Runtime Boundaries
 
-Most host apps can use Squid Mesh without writing Jido agents, storage calls, or
+Most host apps can use Squidie without writing Jido agents, storage calls, or
 Bedrock code. The public integration boundary is:
 
 - workflow modules declare triggers, payloads, steps, transitions, retries, and
   manual controls
-- host code starts runs and exposes inspection through `SquidMesh.start/3`,
-  `SquidMesh.list_runs/2`, `SquidMesh.inspect_run/2`,
-  `SquidMesh.inspect_run_graph/2`, and `SquidMesh.explain_run/2`
-- host workers provide execution capacity by calling `SquidMesh.execute_next/1`
+- host code starts runs and exposes inspection through `Squidie.start/3`,
+  `Squidie.list_runs/2`, `Squidie.inspect_run/2`,
+  `Squidie.inspect_run_graph/2`, and `Squidie.explain_run/2`
+- host workers provide execution capacity by calling `Squidie.execute_next/1`
 - host schedulers may deliver cron activations with
-  `SquidMesh.Executor.Payload.cron/3` and `SquidMesh.Runtime.Runner.perform/2`
+  `Squidie.Executor.Payload.cron/3` and `Squidie.Runtime.Runner.perform/2`
 
-Jido is the runtime foundation behind that boundary. Squid Mesh uses Jido
+Jido is the runtime foundation behind that boundary. Squidie uses Jido
 journals, storage callbacks, actions, and rebuildable agents internally so run
 state can be reconstructed from durable facts. Users only need to learn those
 details when they are contributing to the runtime, replacing the default journal
 storage adapter, or debugging low-level runtime behavior.
 
 Bedrock is optional. Use the basic `execute_next/1` worker loop when a host only
-needs Squid Mesh to claim visible journal work from the configured storage. Use
+needs Squidie to claim visible journal work from the configured storage. Use
 Bedrock or another lease-capable backend when the host needs backend-owned
 delivery, delayed visibility, worker leases, heartbeats, retry requeue,
-dead-letter handling, or stale-worker recovery outside the Squid Mesh journal.
+dead-letter handling, or stale-worker recovery outside the Squidie journal.
 Those backend concerns belong in adapter modules, not workflow modules.
 
 ## Journal Worker Contract
@@ -150,7 +150,7 @@ Step execution is pulled by host-owned workers. A minimal worker can be a small
 GenServer loop under the host supervision tree:
 
 ```elixir
-defmodule MyApp.SquidMeshWorker do
+defmodule MyApp.SquidieWorker do
   use GenServer
 
   def start_link(opts \\ []) do
@@ -158,7 +158,7 @@ defmodule MyApp.SquidMeshWorker do
   end
 
   def init(opts) do
-    {:ok, %{owner_id: Keyword.get(opts, :owner_id, "my-app-squid-mesh")}, {:continue, :drain}}
+    {:ok, %{owner_id: Keyword.get(opts, :owner_id, "my-app-squidie")}, {:continue, :drain}}
   end
 
   def handle_continue(:drain, state), do: {:noreply, drain_once(state)}
@@ -166,7 +166,7 @@ defmodule MyApp.SquidMeshWorker do
 
   defp drain_once(state) do
     interval =
-      case SquidMesh.execute_next(
+      case Squidie.execute_next(
              owner_id: state.owner_id,
              lease_for: 30,
              heartbeat_interval_ms: 10_000
@@ -184,14 +184,14 @@ end
 
 This loop is intentionally small. Production hosts can add capacity limits,
 back-pressure, node placement, metrics, and shutdown policy around the same
-public call. Squid Mesh still owns the journaled claim, completion, retry,
+public call. Squidie still owns the journaled claim, completion, retry,
 manual-control, and terminal-state facts.
 
 `lease_for` and `heartbeat_interval_ms` are journal executor controls, not an
 external backend requirement. Hosts without Bedrock or another leased job
 backend may still pass them when steps can run longer than a claim window. Oban
 OSS workers fall into this plain-host category for this purpose: keep Oban job
-delivery concerns separate and let `SquidMesh.execute_next/1` maintain the
+delivery concerns separate and let `Squidie.execute_next/1` maintain the
 journal claim lease. Short step workers can omit `heartbeat_interval_ms`. Hosts
 that also use a backend lease must maintain that backend lease separately from
 the journal claim lease. The runtime rejects intervals below 50ms to keep
@@ -199,15 +199,15 @@ heartbeat write volume bounded.
 
 ## Cron Payload Contract
 
-Cron starts are the `SquidMesh.Executor` payload boundary. Hosts
-that already have a scheduler can enqueue `SquidMesh.Executor.Payload.cron/3`
-and deliver the stored payload to `SquidMesh.Runtime.Runner.perform/2`:
+Cron starts are the `Squidie.Executor` payload boundary. Hosts
+that already have a scheduler can enqueue `Squidie.Executor.Payload.cron/3`
+and deliver the stored payload to `Squidie.Runtime.Runner.perform/2`:
 
 ```elixir
-defmodule MyApp.SquidMeshCronExecutor do
-  @behaviour SquidMesh.Executor
+defmodule MyApp.SquidieCronExecutor do
+  @behaviour Squidie.Executor
 
-  alias SquidMesh.Executor.Payload
+  alias Squidie.Executor.Payload
 
   def enqueue_cron(_config, workflow, trigger, opts) do
     workflow
@@ -230,7 +230,7 @@ defmodule MyApp.SquidMeshCronExecutor do
   defp queue do
     :my_app
     |> Application.get_env(__MODULE__, [])
-    |> Keyword.get(:queue, :squid_mesh)
+    |> Keyword.get(:queue, :squidie)
   end
 end
 ```
@@ -245,13 +245,13 @@ Return `{:ok, metadata}` after enqueueing. Metadata is returned to the caller an
 can be included in host-owned logs or telemetry, so useful values are `:job_id`,
 `:queue`, `:worker`, and `:scheduled_at`.
 
-The queued job should deliver the stored payload back to Squid Mesh without
+The queued job should deliver the stored payload back to Squidie without
 knowing workflow details:
 
 ```elixir
-defmodule MyApp.SquidMeshJob do
+defmodule MyApp.SquidieJob do
   def perform(%{payload: payload}) do
-    SquidMesh.Runtime.Runner.perform(payload)
+    Squidie.Runtime.Runner.perform(payload)
   end
 end
 ```
@@ -259,7 +259,7 @@ end
 `MyApp.JobQueue` is intentionally a placeholder. In a real host app, replace it
 with the app's durable job backend. Cron activation is host-owned; the host
 scheduler should call `enqueue_cron/4` or enqueue
-`SquidMesh.Executor.Payload.cron/3`.
+`Squidie.Executor.Payload.cron/3`.
 
 When a scheduler can provide deterministic schedule metadata, pass it with the
 cron payload instead of adding it to workflow input:
@@ -274,7 +274,7 @@ Payload.cron(MyApp.Workflows.DailyStandup, :daily_standup,
 )
 ```
 
-Squid Mesh persists this under `run.context.schedule` before workflow
+Squidie persists this under `run.context.schedule` before workflow
 processing. Steps can read it from `context.state.schedule`, and inspection or
 explanation surfaces can show the intended window separately from actual worker
 receive time.
@@ -283,14 +283,14 @@ If the workflow declares `cron ..., idempotency: :return_existing_run` or
 `idempotency: :skip_duplicate`, the scheduler identity also becomes the start
 idempotency key. Duplicate delivery of the same workflow, trigger, and key will
 not insert a second run. Idempotent cron starts must include `signal_id` or a
-complete `intended_window`; otherwise Squid Mesh returns
+complete `intended_window`; otherwise Squidie returns
 `{:error, {:missing_schedule_idempotency_key, trigger_name}}`.
 
 With the journal default, cron payload delivery through
-`SquidMesh.Runtime.Runner.perform/2` starts a journal run and persists the
+`Squidie.Runtime.Runner.perform/2` starts a journal run and persists the
 schedule context on the `:run_started` journal fact. Only cron payloads are
 accepted because step execution is claimed through
-`SquidMesh.execute_next/1`.
+`Squidie.execute_next/1`.
 
 That is the whole execution contract for the journal-backed runtime. Workflow
 modules, context modules, and controllers should not need to know which job
@@ -299,17 +299,17 @@ backend the scheduler uses.
 ## Optional Lease Contract
 
 Backends that expose worker leases can also implement
-`SquidMesh.Executor.Leases`. This is separate from the queue delivery adapter: it claims
+`Squidie.Executor.Leases`. This is separate from the queue delivery adapter: it claims
 visible work, heartbeats active claims, completes delivered work, and returns
 failed work to the backend's retry or dead-letter policy.
 
 The journal-backed runtime does not require a lease adapter. The behavior exists so
 Bedrock or another durable backend can expose lease semantics through a stable
-Squid Mesh boundary without changing workflow modules.
+Squidie boundary without changing workflow modules.
 
 ## Bedrock Lease Backend Setup
 
-Squid Mesh stays backend-neutral: workflow modules and runtime state do not
+Squidie stays backend-neutral: workflow modules and runtime state do not
 depend on Bedrock APIs. For hosts that want backend-owned leasing today, Bedrock
 is the recommended reference backend because it already owns durable delivery,
 delayed visibility, leases, heartbeats, retry timing, and recovery. That same
@@ -320,30 +320,30 @@ node boundaries.
 Use `examples/bedrock_minimal_host_app` as the concrete setup guide. The example
 keeps the storage and lease boundaries explicit:
 
-- `BedrockMinimalHostApp.Repo` stores Squid Mesh workflow and attempt state.
+- `BedrockMinimalHostApp.Repo` stores Squidie workflow and attempt state.
 - `BedrockMinimalHostApp.JobQueue` stores queue items, delayed visibility,
   leases, retries, and queue metadata.
-- `BedrockMinimalHostApp.SquidMeshDeliveryAdapter` adapts cron activations to Bedrock
+- `BedrockMinimalHostApp.SquidieDeliveryAdapter` adapts cron activations to Bedrock
   Job Queue payloads.
-- `BedrockMinimalHostApp.SquidMeshLeaseAdapter` adapts Bedrock claims,
-  heartbeats, completion, and failure to `SquidMesh.Executor.Leases`.
-- `BedrockMinimalHostApp.Jobs.SquidMeshPayload` delivers cron payloads and then
+- `BedrockMinimalHostApp.SquidieLeaseAdapter` adapts Bedrock claims,
+  heartbeats, completion, and failure to `Squidie.Executor.Leases`.
+- `BedrockMinimalHostApp.Jobs.SquidiePayload` delivers cron payloads and then
   drains visible journal attempts while the Bedrock lease is held.
 
 There are two independent lease layers in that setup. The Bedrock lease belongs
 to the host job backend and controls whether the payload job can be redelivered.
-The Squid Mesh journal claim lease belongs to `SquidMesh.execute_next/1` and
+The Squidie journal claim lease belongs to `Squidie.execute_next/1` and
 controls whether another workflow worker can reclaim a journal attempt. The
 Bedrock example passes `journal_heartbeat_interval_ms` into `execute_next/1` so
-long-running journal steps keep their Squid Mesh claim alive while the Bedrock
+long-running journal steps keep their Squidie claim alive while the Bedrock
 payload job is executing. That option does not renew the Bedrock job lease; the
 host backend must size and renew its own lease separately.
 
-The payload worker is the executor boundary. It should deliver a Squid Mesh
-payload, then drain visible journal attempts with `SquidMesh.execute_next/1`.
+The payload worker is the executor boundary. It should deliver a Squidie
+payload, then drain visible journal attempts with `Squidie.execute_next/1`.
 Do not enqueue one Bedrock job per workflow step. Do not use Bedrock job retry
 settings to represent workflow step retry policy. Step retry, terminal failure,
-pause, approval, and compensation routing are Squid Mesh runtime facts driven by
+pause, approval, and compensation routing are Squidie runtime facts driven by
 the workflow DSL and persisted by `execute_next/1`.
 
 Treat `{:ok, snapshot}` from `execute_next/1` as successful job progress even
@@ -353,7 +353,7 @@ be redelivered by the backend.
 
 A host app using the same shape should:
 
-1. Configure `:squid_mesh` with the host repo and journal queue.
+1. Configure `:squidie` with the host repo and journal queue.
 2. Configure the cron adapter's Bedrock queue id and topic.
 3. Start the host repo, Bedrock cluster, and Bedrock job queue under
    supervision.
@@ -366,15 +366,15 @@ A host app using the same shape should:
 The example config shape is:
 
 ```elixir
-config :my_app, MyApp.SquidMeshDeliveryAdapter,
+config :my_app, MyApp.SquidieDeliveryAdapter,
   queue_id: "tenant_a",
-  topic: "squid_mesh:payload"
+  topic: "squidie:payload"
 
-config :squid_mesh,
+config :squidie,
   repo: MyApp.Repo,
   queue: "tenant_a"
 
-config :my_app, MyApp.Jobs.SquidMeshPayload,
+config :my_app, MyApp.Jobs.SquidiePayload,
   journal_heartbeat_interval_ms: 10_000,
   max_journal_attempts: 50
 ```
@@ -384,12 +384,12 @@ To verify the reference path locally:
 ```sh
 cd examples/bedrock_minimal_host_app
 mix setup
-MIX_ENV=test mix test test/bedrock_job_queue_stress_test.exs test/bedrock_minimal_host_app/squid_mesh_lease_adapter_test.exs
+MIX_ENV=test mix test test/bedrock_job_queue_stress_test.exs test/bedrock_minimal_host_app/squidie_lease_adapter_test.exs
 ```
 
 That test path covers Bedrock queue behavior plus the lease adapter contract.
-It does not make Bedrock a required Squid Mesh dependency; another durable
-delivery adapter can use the same Squid Mesh boundaries if it provides equivalent
+It does not make Bedrock a required Squidie dependency; another durable
+delivery adapter can use the same Squidie boundaries if it provides equivalent
 delivery, lease, heartbeat, retry, and recovery semantics.
 
 For background on why durable workflow systems often benefit from queueing close
@@ -401,14 +401,14 @@ paper.
 
 For a new integration, the shortest path to a successful first run is:
 
-1. Add `:squid_mesh` to the host app's dependencies.
+1. Add `:squidie` to the host app's dependencies.
 2. Add or confirm a working Postgres-backed `Repo`.
-3. Run `mix squid_mesh.install`.
+3. Run `mix squidie.install`.
 4. Run `mix ecto.migrate`.
-5. Configure `:squid_mesh` with the host app's `Repo`.
+5. Configure `:squidie` with the host app's `Repo`.
 6. Start the host app's `Repo` under supervision.
 7. Start one workflow through the public API, execute visible attempts with
-   `SquidMesh.execute_next/1`, and inspect it with history enabled.
+   `Squidie.execute_next/1`, and inspect it with history enabled.
 
 Add a host job system only when the app needs one for cron scheduling,
 backend-owned leases, or other application work.
@@ -417,23 +417,23 @@ backend-owned leases, or other application work.
 
 For an existing Phoenix or OTP application:
 
-1. Add the `:squid_mesh` dependency.
+1. Add the `:squidie` dependency.
 2. Configure `:repo` to point at the app's existing repo.
-3. Call `SquidMesh.config!/0` during boot or integration setup to verify the
+3. Call `Squidie.config!/0` during boot or integration setup to verify the
    required contract is present.
-4. Integrate Squid Mesh from the host application's contexts, services,
+4. Integrate Squidie from the host application's contexts, services,
    controllers, or internal APIs.
 
 The host application is responsible for:
 
 - database setup and migrations
-- journal worker lifecycle for `SquidMesh.execute_next/1`
+- journal worker lifecycle for `Squidie.execute_next/1`
 - any HTTP or internal API endpoints exposed to end users
 
 That means the embedded install path assumes:
 
 - the host app already owns its `Repo`
-- the host app starts workers that call `SquidMesh.execute_next/1`
+- the host app starts workers that call `Squidie.execute_next/1`
 - the host app adds job-backend tables only for its own scheduler or lease backend
 
 ## Minimal OTP Host Skeleton
@@ -442,9 +442,9 @@ For a plain OTP application, the minimum moving pieces are:
 
 - a `Repo` module
 - `Repo` in the application supervision tree
-- a supervised worker that periodically calls `SquidMesh.execute_next/1`
-- `:squid_mesh` configuration pointing at that `Repo`
-- one host-facing module that calls `SquidMesh`
+- a supervised worker that periodically calls `Squidie.execute_next/1`
+- `:squidie` configuration pointing at that `Repo`
+- one host-facing module that calls `Squidie`
 
 Dependency shape:
 
@@ -453,7 +453,7 @@ defp deps do
   [
     {:ecto_sql, "~> 3.13"},
     {:postgrex, "~> 0.20"},
-    {:squid_mesh, "~> 0.1.0"}
+    {:squidie, "~> 0.1.0"}
   ]
 end
 ```
@@ -474,29 +474,29 @@ Host-facing boundary:
 ```elixir
 defmodule MyApp.WorkflowRuns do
   def start_payment_recovery(payload) do
-    SquidMesh.start(MyApp.Workflows.PaymentRecovery, :payment_recovery, payload)
+    Squidie.start(MyApp.Workflows.PaymentRecovery, :payment_recovery, payload)
   end
 
   def inspect_run(run_id) do
-    SquidMesh.inspect_run(run_id, include_history: true)
+    Squidie.inspect_run(run_id, include_history: true)
   end
 
   def resume(run_id, attrs \\ %{}) do
-    SquidMesh.resume(run_id, attrs)
+    Squidie.resume(run_id, attrs)
   end
 
   def approve(run_id, attrs) do
-    SquidMesh.approve(run_id, attrs)
+    Squidie.approve(run_id, attrs)
   end
 
   def reject(run_id, attrs) do
-    SquidMesh.reject(run_id, attrs)
+    Squidie.reject(run_id, attrs)
   end
 end
 ```
 
 If the host app exposes pause-resume or approval workflows, keep the latest
-Squid Mesh migrations applied before deploying the feature. Paused step runs
+Squidie migrations applied before deploying the feature. Paused step runs
 now persist internal resume metadata so `resume/2`, `approve/3`, and
 `reject/3` can continue with stable output and transition semantics after
 restarts or code changes.
@@ -529,14 +529,14 @@ run includes chronological `step_runs`, declared `steps` state, and durable
 ## Minimal Phoenix Host Skeleton
 
 A Phoenix application uses the same runtime contract. The main difference is
-that Squid Mesh usually sits behind a context or controller boundary.
+that Squidie usually sits behind a context or controller boundary.
 
 Typical shape:
 
-- add `:squid_mesh` to the Phoenix app
+- add `:squidie` to the Phoenix app
 - keep using the Phoenix app's existing `Repo`
-- start a supervised worker that calls `SquidMesh.execute_next/1`
-- configure `:squid_mesh` to use that `Repo`
+- start a supervised worker that calls `Squidie.execute_next/1`
+- configure `:squidie` to use that `Repo`
 - expose workflow operations through a context or controller
 
 Add `:jido` explicitly only when the Phoenix app defines raw `Jido.Action`
@@ -547,23 +547,23 @@ Context boundary:
 ```elixir
 defmodule MyApp.WorkflowRuns do
   def start_payment_recovery(attrs) do
-    SquidMesh.start(MyApp.Workflows.PaymentRecovery, :payment_recovery, attrs)
+    Squidie.start(MyApp.Workflows.PaymentRecovery, :payment_recovery, attrs)
   end
 
   def inspect_run(run_id) do
-    SquidMesh.inspect_run(run_id, include_history: true)
+    Squidie.inspect_run(run_id, include_history: true)
   end
 
   def resume(run_id, attrs \\ %{}) do
-    SquidMesh.resume(run_id, attrs)
+    Squidie.resume(run_id, attrs)
   end
 
   def approve(run_id, attrs) do
-    SquidMesh.approve(run_id, attrs)
+    Squidie.approve(run_id, attrs)
   end
 
   def reject(run_id, attrs) do
-    SquidMesh.reject(run_id, attrs)
+    Squidie.reject(run_id, attrs)
   end
 end
 ```
@@ -584,7 +584,7 @@ For local development and examples, a minimal host app can provide:
 
 - a local Postgres-backed repo
 - a local background job setup
-- direct application code calls into Squid Mesh
+- direct application code calls into Squidie
 
 This uses the same configuration contract as an existing application setup.
 In that mode, the example app may also own its job-backend migrations because
@@ -596,13 +596,13 @@ install.
 Host applications can validate the contract directly:
 
 ```elixir
-{:ok, config} = SquidMesh.config()
+{:ok, config} = Squidie.config()
 ```
 
 Or raise on missing required keys:
 
 ```elixir
-config = SquidMesh.config!()
+config = Squidie.config!()
 ```
 
 ## Example Development Harness
@@ -628,18 +628,18 @@ The example app wires:
 
 - its own `MinimalHostApp.Repo`
 - journal runtime smoke paths that use inferred Ecto storage and
-  `SquidMesh.execute_next/1`, including cron activation through the journal
+  `Squidie.execute_next/1`, including cron activation through the journal
   runtime
-- cron activation smoke paths that deliver `SquidMesh.Executor.Payload.cron/3`
-  through `SquidMesh.Runtime.Runner.perform/1`
-- Squid Mesh through `MinimalHostApp.WorkflowRuns`
+- cron activation smoke paths that deliver `Squidie.Executor.Payload.cron/3`
+  through `Squidie.Runtime.Runner.perform/1`
+- Squidie through `MinimalHostApp.WorkflowRuns`
 
 ## Inspecting History
 
 For real host apps, `inspect_run/2` is most useful with history enabled:
 
 ```elixir
-SquidMesh.inspect_run(run_id, include_history: true)
+Squidie.inspect_run(run_id, include_history: true)
 ```
 
 That returns the top-level run plus:
@@ -655,7 +655,7 @@ Use `explain_run/2` when an operator surface needs the current reason and safe
 next actions instead of the full inspection snapshot:
 
 ```elixir
-{:ok, explanation} = SquidMesh.explain_run(run_id)
+{:ok, explanation} = Squidie.explain_run(run_id)
 
 %{
   status: explanation.status,

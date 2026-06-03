@@ -1,76 +1,76 @@
 # Architecture
 
-Squid Mesh is a workflow automation platform for Elixir applications. It runs
+Squidie is a workflow automation platform for Elixir applications. It runs
 inside a host application's supervision tree and infrastructure.
 
 ## Core Components
 
-`SquidMesh.Workflow`
+`Squidie.Workflow`
 
 - declarative DSL for triggers, payload, steps, transitions, and retries
 
-`SquidMesh`
+`Squidie`
 
 - public runtime API for starting, inspecting, listing, cancelling, and replaying runs
 
-`SquidMesh.Runtime.WorkflowAgent`
+`Squidie.Runtime.WorkflowAgent`
 
 - rebuilds per-run workflow coordination state from durable run-thread journal
   entries and checkpoints, including planned runnables, applied results,
   manual pause or approval state, and terminal status
 
-`SquidMesh.Runtime.DispatchAgent`
+`Squidie.Runtime.DispatchAgent`
 
 - rebuilds per-queue dispatch state from durable dispatch-thread journal
   entries and checkpoints, including visible attempts, running leases, retries,
   completed results, failures, and expired claims
 
-`SquidMesh.Runtime.DispatchProtocol`
+`Squidie.Runtime.DispatchProtocol`
 
 - defines append-only run, dispatch, and run-index journal entries for the
   journal-backed runtime; its claim and heartbeat vocabulary is compatible
   with lease-capable backend adapters and refers only to durable dispatch
   fencing metadata, not host-backend worker lifecycle management
 
-`SquidMesh.Runtime.Journal`
+`Squidie.Runtime.Journal`
 
 - persists dispatch protocol entries and projection checkpoints through
   `Jido.Storage`, preserving Jido thread revision pointers for rebuildable
   runtime projections
 
-`SquidMesh.Runtime.Journal.Storage`
+`Squidie.Runtime.Journal.Storage`
 
 - normalizes the trusted host-configured storage adapter for journal threads
   and checkpoints; the built-in production relational path is the
   Postgres-compatible Ecto adapter, while other adapters must provide the same
   ordering, conflict-detection, checkpoint, and rebuild guarantees
 
-`SquidMesh.Runtime.RunIndexProjection`
+`Squidie.Runtime.RunIndexProjection`
 
 - rebuilds workflow-scoped run lookup state from run-index journal entries,
   keeping duplicate index facts idempotent and surfacing malformed or
   conflicting index facts as anomalies
 
-`SquidMesh.Runtime.RunCatalogProjection`
+`Squidie.Runtime.RunCatalogProjection`
 
 - rebuilds global run lookup state from run-catalog journal entries, so
   host-facing tools can list all journal-backed runs without adapter-specific
   storage scans
 
-`SquidMesh.ReadModel.Inspection`
+`Squidie.ReadModel.Inspection`
 
 - rebuilds workflow and dispatch agent projections into a read-only inspection
   snapshot for the journal-backed runtime, including pending dispatches,
   unapplied results, scheduled attempts, visible attempts, expired claims,
   manual intervention state, terminal state, and projection anomalies
 
-`SquidMesh.ReadModel.Explanation`
+`Squidie.ReadModel.Explanation`
 
 - turns a projection-backed inspection snapshot into a deterministic operator
   explanation with reason-specific details, suggested runtime next actions, and
   evidence pointers back to durable journal revisions
 
-`SquidMesh.inspect_run/2` and `SquidMesh.explain_run/2`
+`Squidie.inspect_run/2` and `Squidie.explain_run/2`
 
 - use the journal read model as the default public behavior and infer Ecto
   storage from the configured repo
@@ -78,28 +78,28 @@ inside a host application's supervision tree and infrastructure.
   `queue:` when callers need to inspect or explain a non-default journal
   boundary
 
-`SquidMesh.Executor`
+`Squidie.Executor`
 
 - optional host-implemented behaviour for enqueueing cron activations when an
-  external scheduler wants to deliver `SquidMesh.Executor.Payload.cron/3`
+  external scheduler wants to deliver `Squidie.Executor.Payload.cron/3`
   payloads through a job backend
 
-`SquidMesh.Runtime.Runner`
+`Squidie.Runtime.Runner`
 
 - backend-neutral entrypoint that host jobs call when queued cron payloads are
   delivered
 
-`SquidMesh.Runtime.RetryPolicy`
+`Squidie.Runtime.RetryPolicy`
 
 - resolves step-level retry policy into retry decisions and backoff delays
 
-`SquidMesh.Tools`
+`Squidie.Tools`
 
 - shared boundary for external adapters such as HTTP
 
 ## Runtime Responsibilities
 
-Squid Mesh owns:
+Squidie owns:
 
 - workflow structure
 - payload validation
@@ -124,10 +124,10 @@ Postgres owns:
 ```mermaid
 flowchart TB
     api["Public API<br/>start / inspect_run / explain_run"]
-    runtime["Squid Mesh runtime<br/>plans work, applies results, retries, pauses, cancels, completes"]
+    runtime["Squidie runtime<br/>plans work, applies results, retries, pauses, cancels, completes"]
     journals["Jido journals<br/>runs, attempts, claims, heartbeats, completions, failures, terminal state"]
-    worker["Host workers<br/>SquidMesh.execute_next/1"]
-    leases["Lease boundary<br/>SquidMesh.Executor.Leases"]
+    worker["Host workers<br/>Squidie.execute_next/1"]
+    leases["Lease boundary<br/>Squidie.Executor.Leases"]
     adapter["Backend adapter<br/>queue, delay, cron delivery, lease mechanics"]
     storage["Backend storage<br/>jobs, leases, worker liveness, delivery metadata"]
 
@@ -142,27 +142,27 @@ flowchart TB
     adapter --> storage
 ```
 
-1. A host application starts a run through `SquidMesh.start/2`, `start/3`, or `start/4`.
-2. Squid Mesh validates the workflow definition and payload.
+1. A host application starts a run through `Squidie.start/2`, `start/3`, or `start/4`.
+2. Squidie validates the workflow definition and payload.
 3. The journal runtime appends run and runnable facts to the host repo through
    the configured journal storage adapter.
-4. A worker calls `SquidMesh.execute_next/1` to claim one visible attempt.
+4. A worker calls `Squidie.execute_next/1` to claim one visible attempt.
 5. Step output is appended back to the journal and projected into run state.
 6. The runtime decides whether the run completes, advances, retries, fails, or
    no-ops.
 7. If more work is required, successor runnable intent is appended before later
    workers can claim it.
 
-Delivered cron payloads use `SquidMesh.Runtime.Runner.perform/2` to start runs
+Delivered cron payloads use `Squidie.Runtime.Runner.perform/2` to start runs
 through the configured journal runtime. Step execution is claimed through
-`SquidMesh.execute_next/1`.
+`Squidie.execute_next/1`.
 
 ## Recovery Boundary
 
-Squid Mesh records claim, lease, and result facts in the Jido-native dispatch
+Squidie records claim, lease, and result facts in the Jido-native dispatch
 protocol for replay and recovery. A host can run a simple supervised worker that
-calls `SquidMesh.execute_next/1`; lease-capable backends can additionally expose
-backend-owned worker fencing through `SquidMesh.Executor.Leases`.
+calls `Squidie.execute_next/1`; lease-capable backends can additionally expose
+backend-owned worker fencing through `Squidie.Executor.Leases`.
 
 Current guarantees:
 

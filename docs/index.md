@@ -1,13 +1,13 @@
-# Squid Mesh Documentation
+# Squidie Documentation
 
-Squid Mesh is an embedded durable workflow runtime for Elixir applications. The
+Squidie is an embedded durable workflow runtime for Elixir applications. The
 docs are organized by how readers usually arrive: first learning the model,
 then installing it in a host app, then authoring workflows, operating them, and
 finally reading internals when contributing to the runtime.
 
 ## Start Here
 
-New to Squid Mesh:
+New to Squidie:
 
 1. [Getting started](getting_started.md) - learn the model, install the
    runtime, start a run, drain work, inspect state, and add reliability.
@@ -15,7 +15,7 @@ New to Squid Mesh:
    interactively and inspect the output.
 3. [Reference workflows](reference_workflows.md) - see realistic approval,
    recovery, dependency, saga, and scheduled workflows in the example host app.
-4. [Positioning](positioning.md) - understand where Squid Mesh sits relative to
+4. [Positioning](positioning.md) - understand where Squidie sits relative to
    Jido, Runic, Spark, job queues, Reactor, and workflow services.
 
 ## Learn By Doing
@@ -32,7 +32,7 @@ the resulting workflow state.
 
 ## Guides
 
-Use these when building or embedding Squid Mesh in an application.
+Use these when building or embedding Squidie in an application.
 
 - [Host app integration](host_app_integration.md) - installation,
   configuration, worker loops, cron payloads, Phoenix/OTP host shapes, and
@@ -96,7 +96,7 @@ to reason about runtime durability.
 
 ## AI Agent Usage Rules
 
-Package-style rules help coding agents use and modify Squid Mesh without
+Package-style rules help coding agents use and modify Squidie without
 guessing the runtime boundaries.
 
 - [Usage rules](../usage-rules.md)

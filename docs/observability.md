@@ -1,25 +1,25 @@
 # Observability
 
-Squid Mesh is observable through durable runtime state first. Host applications
+Squidie is observable through durable runtime state first. Host applications
 inspect the journal-backed read models, graph output, explanation diagnostics,
 and their own worker logs or metrics.
 
-Squid Mesh does not currently expose a public `:telemetry` event contract under
-the `[:squid_mesh, ...]` prefix. Treat telemetry event names and metric labels
+Squidie does not currently expose a public `:telemetry` event contract under
+the `[:squidie, ...]` prefix. Treat telemetry event names and metric labels
 as host-app concerns until a dedicated runtime telemetry API exists.
 
 ## Runtime State Surfaces
 
 Use these public APIs as the stable observability boundary:
 
-- `SquidMesh.list_runs/2` - redacted run index rows for dashboards and queue
+- `Squidie.list_runs/2` - redacted run index rows for dashboards and queue
   views.
-- `SquidMesh.inspect_run/2` - one run's durable state, including attempts,
+- `Squidie.inspect_run/2` - one run's durable state, including attempts,
   visible work, scheduled work, expired claims, manual state, context, and
   anomalies.
-- `SquidMesh.inspect_run_graph/2` - graph-oriented node and edge state for UI
+- `Squidie.inspect_run_graph/2` - graph-oriented node and edge state for UI
   builders.
-- `SquidMesh.explain_run/2` - operator-facing reason, details, evidence, and
+- `Squidie.explain_run/2` - operator-facing reason, details, evidence, and
   next actions.
 
 `list_runs/2` intentionally stays narrow. It exposes lookup and status fields
@@ -29,7 +29,7 @@ app's authorization rules.
 
 ## Redaction And Field Selection
 
-Treat Squid Mesh observability data as three tiers:
+Treat Squidie observability data as three tiers:
 
 | Tier | Examples | Suggested use |
 | --- | --- | --- |
@@ -39,13 +39,13 @@ Treat Squid Mesh observability data as three tiers:
 
 `inspect_run/2` and `inspect_run_graph/2` can expose host-domain data because
 step inputs, outputs, errors, manual metadata, and durable context come from the
-embedding application. Squid Mesh cannot know which fields are customer data,
+embedding application. Squidie cannot know which fields are customer data,
 provider responses, tokens, or internal notes. Apply an allow-list at the HTTP,
 LiveView, CLI, or API boundary instead of serializing the full snapshot by
 default.
 
-`SquidMesh.ReadModel.Visibility.redact/2` and
-`SquidMesh.ReadModel.Visibility.redact/3` provide the built-in projection
+`Squidie.ReadModel.Visibility.redact/2` and
+`Squidie.ReadModel.Visibility.redact/3` provide the built-in projection
 helper for that boundary. For comprehensive documentation on actor visibility
 and redaction patterns, see the [Actor Visibility Guide](./actor_visibility.md). The helper accepts an existing listing summary,
 inspection snapshot, graph inspection, or explanation diagnostic plus a
@@ -55,22 +55,22 @@ form accepts a host policy. Policies may return `:external`, `:operator`, or
 operator views keep high-level runtime status and current/manual task shape
 without payloads, command history, claim metadata, or attempt results.
 The helper also applies conservative nested redaction to JSON-ready maps, which
-is useful after calling `SquidMesh.Runs.GraphInspection.to_map/1`.
+is useful after calling `Squidie.Runs.GraphInspection.to_map/1`.
 
 ```elixir
-defmodule MyApp.SquidMeshVisibility do
+defmodule MyApp.SquidieVisibility do
   def visibility_scope(%{role: :auditor}, _view), do: :auditor
   def visibility_scope(%{role: :support}, _view), do: :operator
   def visibility_scope(_actor, _view), do: :external
 end
 
-{:ok, snapshot} = SquidMesh.inspect_run(run_id, include_history: true)
+{:ok, snapshot} = Squidie.inspect_run(run_id, include_history: true)
 
 {:ok, visible_snapshot} =
-  SquidMesh.ReadModel.Visibility.redact(
+  Squidie.ReadModel.Visibility.redact(
     snapshot,
     current_actor,
-    MyApp.SquidMeshVisibility
+    MyApp.SquidieVisibility
   )
 ```
 
@@ -126,7 +126,7 @@ signals:
 
 For dashboards, start with `list_runs/2`, then inspect selected runs with
 history only when the caller needs detailed attempts or audit evidence.
-Deadline alerting belongs at the host boundary: use Squid Mesh's deadline state
+Deadline alerting belongs at the host boundary: use Squidie's deadline state
 as durable evidence, then route notifications or operator actions through the
 host application's policy and authorization layer.
 
@@ -166,13 +166,13 @@ edges. It is useful when a host UI needs to show:
 - dependency edges and pending joins
 - manual-state detail when history is included
 
-For JSON or LiveView boundaries, call `SquidMesh.Runs.GraphInspection.to_map/1`
+For JSON or LiveView boundaries, call `Squidie.Runs.GraphInspection.to_map/1`
 after applying the host app's authorization and redaction policy. See
 [Graph inspection contract](graph_inspection.md) for the stable map shape.
 
 ## Logs
 
-Squid Mesh emits application logs only for explicit built-in `:log` workflow
+Squidie emits application logs only for explicit built-in `:log` workflow
 steps. It does not currently attach automatic logger metadata such as `run_id`,
 `workflow`, `step`, or `attempt` to every runtime log.
 
@@ -181,23 +181,23 @@ with its own logger metadata:
 
 ```elixir
 Logger.metadata(queue: queue, worker: worker_id)
-SquidMesh.execute_next(queue: queue, owner_id: worker_id)
+Squidie.execute_next(queue: queue, owner_id: worker_id)
 ```
 
 For step-specific external calls, prefer logging at the host boundary or inside
-native `SquidMesh.Step` modules, and avoid logging secrets, claim tokens,
+native `Squidie.Step` modules, and avoid logging secrets, claim tokens,
 payloads, or raw provider responses.
 
 ## Host Telemetry
 
-Host applications can still emit their own telemetry around Squid Mesh calls:
+Host applications can still emit their own telemetry around Squidie calls:
 
 ```elixir
 :telemetry.span(
-  [:my_app, :squid_mesh, :execute_next],
+  [:my_app, :squidie, :execute_next],
   %{queue: queue, worker: worker_id},
   fn ->
-    result = SquidMesh.execute_next(queue: queue, owner_id: worker_id)
+    result = Squidie.execute_next(queue: queue, owner_id: worker_id)
     {result, %{result: elem(result, 0)}}
   end
 )

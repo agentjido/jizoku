@@ -5,17 +5,17 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.RuntimeSignals
   alias MinimalHostApp.Smoke
   alias MinimalHostApp.Steps
-  alias MinimalHostApp.Workers.SquidMeshWorker
+  alias MinimalHostApp.Workers.SquidieWorker
   alias MinimalHostApp.WorkflowRuns
   alias MinimalHostApp.Workflows.DailyDigest
   alias MinimalHostApp.Workflows.PaymentRecovery
   alias Oban.Job
-  alias SquidMesh.ReadModel.Inspection.Snapshot
-  alias SquidMesh.ReadModel.Listing.Summary
-  alias SquidMesh.Runtime.Signal
+  alias Squidie.ReadModel.Inspection.Snapshot
+  alias Squidie.ReadModel.Listing.Summary
+  alias Squidie.Runtime.Signal
 
   defmodule InvalidRecurringIdempotentCronWorkflow do
-    use SquidMesh.Workflow
+    use Squidie.Workflow
 
     workflow do
       trigger :daily_digest do
@@ -39,15 +39,15 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     daily_digest_entities = Spark.Dsl.Extension.get_entities(DailyDigest, [:workflow])
 
     assert [
-             %SquidMesh.Workflow.TriggerSpec{
+             %Squidie.Workflow.TriggerSpec{
                name: :manual_digest,
-               definitions: [%SquidMesh.Workflow.TriggerDefinitionSpec{type: :manual}],
-               payload: [%SquidMesh.Workflow.PayloadSpec{fields: manual_fields}]
+               definitions: [%Squidie.Workflow.TriggerDefinitionSpec{type: :manual}],
+               payload: [%Squidie.Workflow.PayloadSpec{fields: manual_fields}]
              },
-             %SquidMesh.Workflow.TriggerSpec{
+             %Squidie.Workflow.TriggerSpec{
                name: :daily_digest,
                definitions: [
-                 %SquidMesh.Workflow.TriggerDefinitionSpec{
+                 %Squidie.Workflow.TriggerDefinitionSpec{
                    type: :cron,
                    config: %{
                      expression: "@reboot",
@@ -56,9 +56,9 @@ defmodule MinimalHostApp.WorkflowRunsTest do
                    }
                  }
                ],
-               payload: [%SquidMesh.Workflow.PayloadSpec{fields: cron_fields}]
+               payload: [%Squidie.Workflow.PayloadSpec{fields: cron_fields}]
              }
-           ] = Enum.filter(daily_digest_entities, &match?(%SquidMesh.Workflow.TriggerSpec{}, &1))
+           ] = Enum.filter(daily_digest_entities, &match?(%Squidie.Workflow.TriggerSpec{}, &1))
 
     assert Enum.map(manual_fields, & &1.name) == [:channel, :digest_date]
     assert Enum.map(cron_fields, & &1.name) == [:channel, :digest_date]
@@ -66,7 +66,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     payment_recovery_entities = Spark.Dsl.Extension.get_entities(PaymentRecovery, [:workflow])
 
     assert Enum.any?(payment_recovery_entities, fn
-             %SquidMesh.Workflow.TransitionSpec{
+             %Squidie.Workflow.TransitionSpec{
                from: :check_gateway_status,
                on: :ok,
                to: :notify_customer,
@@ -79,7 +79,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            end)
 
     assert Enum.any?(payment_recovery_entities, fn
-             %SquidMesh.Workflow.TransitionSpec{
+             %Squidie.Workflow.TransitionSpec{
                from: :check_gateway_status,
                on: :ok,
                to: :issue_gateway_credit,
@@ -92,7 +92,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            end)
 
     assert Enum.any?(payment_recovery_entities, fn
-             %SquidMesh.Workflow.TransitionSpec{
+             %Squidie.Workflow.TransitionSpec{
                from: :check_gateway_status,
                on: :error,
                to: :issue_gateway_credit,
@@ -106,7 +106,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "host app examples validate runtime-authored specs through a safe action registry" do
-    spec = %SquidMesh.Workflow.Spec{
+    spec = %Squidie.Workflow.Spec{
       workflow: MinimalHostApp.RuntimeAuthoredPaymentRecovery,
       triggers: [
         %{
@@ -142,10 +142,10 @@ defmodule MinimalHostApp.WorkflowRunsTest do
       "payment.notify_customer" => Steps.NotifyCustomer
     }
 
-    assert :ok = SquidMesh.Workflow.validate_spec(spec, action_registry: registry)
+    assert :ok = Squidie.Workflow.validate_spec(spec, action_registry: registry)
 
     assert {:ok, resolved} =
-             SquidMesh.Workflow.resolve_spec_actions(spec, action_registry: registry)
+             Squidie.Workflow.resolve_spec_actions(spec, action_registry: registry)
 
     assert Enum.map(resolved.steps, &{&1.name, &1.module, &1.metadata.action}) == [
              {:load_invoice, Steps.LoadInvoice, "payment.load_invoice"},
@@ -168,22 +168,22 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, completed_run} = MinimalHostApp.RuntimeHarness.await_terminal_run(run.run_id)
     assert completed_run.status == :completed
 
-    assert {:ok, graph} = SquidMesh.inspect_run_graph(run.run_id)
+    assert {:ok, graph} = Squidie.inspect_run_graph(run.run_id)
     assert Enum.map(graph.nodes, & &1.id) == ["record_digest_delivery"]
   end
 
   test "host app examples round-trip workflow specs through the editor JSON contract" do
-    assert {:ok, spec} = SquidMesh.Workflow.to_spec(PaymentRecovery)
+    assert {:ok, spec} = Squidie.Workflow.to_spec(PaymentRecovery)
 
     round_tripped =
       spec
-      |> SquidMesh.Workflow.EditorSpec.to_map()
+      |> Squidie.Workflow.EditorSpec.to_map()
       |> Jason.encode!()
       |> Jason.decode!()
 
-    assert :ok = SquidMesh.Workflow.EditorSpec.validate_map(round_tripped)
+    assert :ok = Squidie.Workflow.EditorSpec.validate_map(round_tripped)
 
-    assert {:ok, graph} = SquidMesh.Workflow.EditorSpec.preview_graph(round_tripped)
+    assert {:ok, graph} = Squidie.Workflow.EditorSpec.preview_graph(round_tripped)
 
     assert Enum.map(graph["nodes"], & &1["id"]) == [
              "load_invoice",
@@ -230,7 +230,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert [%{step: "load_invoice", status: :available}] = run.visible_attempts
 
     assert {:ok, advanced_run} =
-             SquidMesh.execute_next(owner_id: "minimal-host-app-sla-contract-test")
+             Squidie.execute_next(owner_id: "minimal-host-app-sla-contract-test")
 
     assert advanced_run.run_id == run.run_id
 
@@ -243,7 +243,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            ] = advanced_run.visible_attempts
 
     assert {:ok, [listed_run]} =
-             SquidMesh.list_runs([workflow: MinimalHostApp.Workflows.PaymentRecovery],
+             Squidie.list_runs([workflow: MinimalHostApp.Workflows.PaymentRecovery],
                now: DateTime.utc_now()
              )
 
@@ -251,8 +251,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert listed_run.deadline.status == :on_time
     assert listed_run.deadline.step == "check_gateway_status"
 
-    assert {:ok, graph} = SquidMesh.inspect_run_graph(run.run_id)
-    graph_nodes = Map.new(SquidMesh.Runs.GraphInspection.to_map(graph).nodes, &{&1.id, &1})
+    assert {:ok, graph} = Squidie.inspect_run_graph(run.run_id)
+    graph_nodes = Map.new(Squidie.Runs.GraphInspection.to_map(graph).nodes, &{&1.id, &1})
 
     assert graph_nodes["check_gateway_status"].deadline.status == :on_time
     assert graph_nodes["check_gateway_status"].deadline.escalation == %{outcome: :diagnostic}
@@ -386,7 +386,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert [%{step: "start_nested_invite", status: :available}] = run.visible_attempts
 
     assert {:ok, retried_parent} =
-             SquidMesh.execute_next(owner_id: "minimal-host-app-nested-parent-test")
+             Squidie.execute_next(owner_id: "minimal-host-app-nested-parent-test")
 
     assert retried_parent.status == :running
 
@@ -399,9 +399,9 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              }
            ] = retried_parent.child_runs
 
-    assert {:ok, parent_graph} = SquidMesh.inspect_run_graph(run.run_id)
+    assert {:ok, parent_graph} = Squidie.inspect_run_graph(run.run_id)
 
-    parent_graph_map = SquidMesh.Runs.GraphInspection.to_map(parent_graph)
+    parent_graph_map = Squidie.Runs.GraphInspection.to_map(parent_graph)
 
     assert [
              %{
@@ -427,17 +427,17 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert [%{step: "deliver_invite", status: :available}] =
              child_before_parent_retry.visible_attempts
 
-    Repo.delete_all("squid_mesh_journal_checkpoints")
+    Repo.delete_all("squidie_journal_checkpoints")
 
     assert {:ok, reconstructed_retried_parent} = WorkflowRuns.inspect_run(run.run_id)
 
     assert {:ok, reconstructed_waiting_child} =
              WorkflowRuns.inspect_run(child_run_id, queue: child_queue)
 
-    assert {:ok, reconstructed_parent_graph} = SquidMesh.inspect_run_graph(run.run_id)
+    assert {:ok, reconstructed_parent_graph} = Squidie.inspect_run_graph(run.run_id)
 
     reconstructed_parent_graph_map =
-      SquidMesh.Runs.GraphInspection.to_map(reconstructed_parent_graph)
+      Squidie.Runs.GraphInspection.to_map(reconstructed_parent_graph)
 
     assert [%{from: "start_nested_invite", to: ^child_run_id, type: :child_run}] =
              reconstructed_parent_graph_map.child_links
@@ -447,7 +447,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert reconstructed_waiting_child.status == :running
 
     assert {:ok, completed_parent} =
-             SquidMesh.execute_next(owner_id: "minimal-host-app-nested-parent-test")
+             Squidie.execute_next(owner_id: "minimal-host-app-nested-parent-test")
 
     assert completed_parent.status == :completed
 
@@ -455,7 +455,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert child_still_running.status == :running
 
     assert {:ok, child_retrying} =
-             SquidMesh.execute_next(
+             Squidie.execute_next(
                owner_id: "minimal-host-app-nested-child-test",
                queue: child_queue
              )
@@ -465,7 +465,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert [%{step: "deliver_invite", status: :retry_scheduled, attempt_number: 2}] =
              child_retrying.visible_attempts
 
-    Repo.delete_all("squid_mesh_journal_checkpoints")
+    Repo.delete_all("squidie_journal_checkpoints")
 
     assert {:ok, reconstructed_retrying_child} =
              WorkflowRuns.inspect_run(child_run_id, queue: child_queue)
@@ -474,7 +474,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert reconstructed_retrying_child.parent_run == child_before_parent_retry.parent_run
 
     assert {:ok, completed_child} =
-             SquidMesh.execute_next(
+             Squidie.execute_next(
                owner_id: "minimal-host-app-nested-child-test",
                queue: child_queue
              )
@@ -523,7 +523,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              metadata: %{guest_id: "guest_456"}
            }
 
-    Repo.delete_all("squid_mesh_journal_checkpoints")
+    Repo.delete_all("squidie_journal_checkpoints")
 
     assert {:ok, reconstructed_parent} = WorkflowRuns.inspect_run(run.run_id)
     assert {:ok, reconstructed_child} = WorkflowRuns.inspect_run(child_run_id, queue: child_queue)
@@ -536,20 +536,20 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert replayed_parent.child_runs == []
 
     assert {:ok, replayed_after_first_attempt} =
-             SquidMesh.execute_next(owner_id: "minimal-host-app-nested-replay-test")
+             Squidie.execute_next(owner_id: "minimal-host-app-nested-replay-test")
 
     assert [%{child_run_id: replayed_child_run_id}] = replayed_after_first_attempt.child_runs
     refute replayed_child_run_id == child_run_id
 
     assert {:ok, replayed_completed_parent} =
-             SquidMesh.execute_next(owner_id: "minimal-host-app-nested-replay-test")
+             Squidie.execute_next(owner_id: "minimal-host-app-nested-replay-test")
 
     assert replayed_completed_parent.status == :completed
     assert replayed_completed_parent.context.invite_child.run_id == replayed_child_run_id
     assert replayed_completed_parent.context.invite_child.reused_after_retry? == true
 
     assert {:ok, replayed_retrying_child} =
-             SquidMesh.execute_next(
+             Squidie.execute_next(
                owner_id: "minimal-host-app-nested-replay-child-test",
                queue: child_queue
              )
@@ -557,7 +557,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert replayed_retrying_child.status == :running
 
     assert {:ok, replayed_completed_child} =
-             SquidMesh.execute_next(
+             Squidie.execute_next(
                owner_id: "minimal-host-app-nested-replay-child-test",
                queue: child_queue
              )
@@ -611,16 +611,16 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   test "executes a dependency workflow through inferred Ecto journal defaults" do
     queue = "minimal-host-app-default-journal-#{System.unique_integer([:positive])}"
 
-    with_squid_mesh_env(
+    with_squidie_env(
       [
         repo: Repo,
         queue: queue
       ],
       fn ->
-        assert {:ok, config} = SquidMesh.config()
+        assert {:ok, config} = Squidie.config()
         assert config.runtime == :journal
         assert config.read_model == :read_model
-        assert config.journal_storage.adapter == SquidMesh.Runtime.Journal.Storage.Ecto
+        assert config.journal_storage.adapter == Squidie.Runtime.Journal.Storage.Ecto
         assert config.journal_storage.opts == [repo: Repo]
 
         attrs = %{
@@ -687,7 +687,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   test "cancels a dependency workflow through inferred Ecto journal defaults" do
     queue = "minimal-host-app-default-journal-cancel-#{System.unique_integer([:positive])}"
 
-    with_squid_mesh_env(
+    with_squidie_env(
       [
         repo: Repo,
         queue: queue
@@ -728,7 +728,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
         assert inspected_run.queue == queue
 
         assert {:ok, :none} =
-                 SquidMesh.execute_next(owner_id: "minimal-host-app-default-journal-cancel-test")
+                 Squidie.execute_next(owner_id: "minimal-host-app-default-journal-cancel-test")
       end
     )
   end
@@ -736,7 +736,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   test "replays a dependency workflow through inferred Ecto journal defaults" do
     queue = "minimal-host-app-default-journal-replay-#{System.unique_integer([:positive])}"
 
-    with_squid_mesh_env(
+    with_squidie_env(
       [
         repo: Repo,
         queue: queue
@@ -806,7 +806,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, run} = WorkflowRuns.start_manual_approval(%{account_id: "acct_approval_123"})
 
     assert {:ok, %Snapshot{status: :paused}} =
-             SquidMesh.execute_next(owner_id: "minimal-host-app-approval-test")
+             Squidie.execute_next(owner_id: "minimal-host-app-approval-test")
 
     assert {:ok, paused_run} = WorkflowRuns.inspect_run(run.run_id, include_history: true)
 
@@ -859,7 +859,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, run} = WorkflowRuns.start_manual_pause(%{account_id: "acct_pause_123"})
 
     assert {:ok, %Snapshot{status: :paused}} =
-             SquidMesh.execute_next(owner_id: "minimal-host-app-resume-test")
+             Squidie.execute_next(owner_id: "minimal-host-app-resume-test")
 
     assert {:ok, paused_run} = WorkflowRuns.inspect_run(run.run_id, include_history: true)
 
@@ -926,7 +926,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
       }
     }
 
-    assert :ok = MinimalHostApp.Workers.SquidMeshWorker.perform(job)
+    assert :ok = MinimalHostApp.Workers.SquidieWorker.perform(job)
 
     assert {:ok, runs} = WorkflowRuns.list_daily_digest_runs()
     run = Enum.find(runs, fn run -> not MapSet.member?(existing_run_ids, run.run_id) end)
@@ -943,8 +943,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "the host worker forwards non-cron payload errors from the runtime" do
-    assert {:error, {:invalid_squid_mesh_payload, %{"kind" => "step", "run_id" => _run_id}}} =
-             SquidMeshWorker.perform(%Job{
+    assert {:error, {:invalid_squidie_payload, %{"kind" => "step", "run_id" => _run_id}}} =
+             SquidieWorker.perform(%Job{
                args: %{
                  "kind" => "step",
                  "run_id" => Ecto.UUID.generate(),
@@ -955,16 +955,16 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
   test "the cron delivery adapter reports adapter metadata" do
     assert {:ok, metadata} =
-             MinimalHostApp.SquidMeshDeliveryAdapter.enqueue_cron(
+             MinimalHostApp.SquidieDeliveryAdapter.enqueue_cron(
                %{},
                DailyDigest,
                :daily_digest,
                signal_id: "minimal-host-app:metadata-test"
              )
 
-    assert metadata.adapter == MinimalHostApp.SquidMeshDeliveryAdapter
-    assert metadata.queue == :squid_mesh
-    assert metadata.worker == "MinimalHostApp.Workers.SquidMeshWorker"
+    assert metadata.adapter == MinimalHostApp.SquidieDeliveryAdapter
+    assert metadata.queue == :squidie
+    assert metadata.worker == "MinimalHostApp.Workers.SquidieWorker"
   end
 
   test "generates a new reboot signal id for each cron plugin boot" do
@@ -990,8 +990,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
       "signal_id" => signal_id
     }
 
-    assert :ok = SquidMeshWorker.perform(%Job{args: payload})
-    assert :ok = SquidMeshWorker.perform(%Job{args: payload})
+    assert :ok = SquidieWorker.perform(%Job{args: payload})
+    assert :ok = SquidieWorker.perform(%Job{args: payload})
     assert :ok = MinimalHostApp.RuntimeHarness.wait_for_execution()
 
     assert {:ok, runs} = WorkflowRuns.list_daily_digest_runs()
@@ -1019,7 +1019,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, run} = WorkflowRuns.start_manual_approval(%{account_id: "acct_review_123"})
 
     assert {:ok, %Snapshot{status: :paused}} =
-             SquidMesh.execute_next(owner_id: "minimal-host-app-rejection-test")
+             Squidie.execute_next(owner_id: "minimal-host-app-rejection-test")
 
     assert {:ok, paused_run} = WorkflowRuns.inspect_run(run.run_id, include_history: true)
 
@@ -1057,7 +1057,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert rejected_run_id == run.run_id
   end
 
-  test "applies inbound Jido command signals to real runs through Squid Mesh signals" do
+  test "applies inbound Jido command signals to real runs through Squidie signals" do
     assert {:ok, run} = WorkflowRuns.start_cancellable_wait(%{account_id: "acct_jido_cancel"})
 
     assert [%{step: "wait_for_cancellation", status: :available}] = run.visible_attempts
@@ -1091,8 +1091,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            ] = cancelled_run.command_history
 
     assert {:ok, invalid_jido_signal} =
-             Jido.Signal.new("squid_mesh.runtime.command.cancel_run", %{},
-               source: "/squid_mesh/runtime/commands",
+             Jido.Signal.new("squidie.runtime.command.cancel_run", %{},
+               source: "/squidie/runtime/commands",
                subject: run.run_id
              )
 
@@ -1182,11 +1182,11 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert replay_source_run_id == journal_replay.replayed_from_run_id
 
     assert %{
-             start: %SquidMesh.ReadModel.Inspection.Snapshot{
+             start: %Squidie.ReadModel.Inspection.Snapshot{
                status: :completed,
                command_history: [%{signal_type: "start_run"}]
              },
-             replay: %SquidMesh.ReadModel.Inspection.Snapshot{
+             replay: %Squidie.ReadModel.Inspection.Snapshot{
                status: :completed,
                command_history: [%{signal_type: "replay_run"}]
              }
@@ -1201,16 +1201,16 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert [%{signal_type: "start_cron"}] = journal_cron_digest.command_history
 
     assert %{
-             start_run: %SquidMesh.Runtime.Signal{type: :start_run},
-             start_cron: %SquidMesh.Runtime.Signal{
+             start_run: %Squidie.Runtime.Signal{type: :start_run},
+             start_cron: %Squidie.Runtime.Signal{
                type: :start_cron,
                idempotency_key: "minimal-host-app:smoke:daily_digest:" <> _
              },
-             approve_run: %SquidMesh.Runtime.Signal{type: :approve_run},
-             reject_run: %SquidMesh.Runtime.Signal{type: :reject_run},
-             resume_run: %SquidMesh.Runtime.Signal{type: :resume_run},
-             cancel_run: %SquidMesh.Runtime.Signal{type: :cancel_run},
-             replay_run: %SquidMesh.Runtime.Signal{
+             approve_run: %Squidie.Runtime.Signal{type: :approve_run},
+             reject_run: %Squidie.Runtime.Signal{type: :reject_run},
+             resume_run: %Squidie.Runtime.Signal{type: :resume_run},
+             cancel_run: %Squidie.Runtime.Signal{type: :cancel_run},
+             replay_run: %Squidie.Runtime.Signal{
                type: :replay_run,
                payload: %{allow_irreversible: true}
              }
@@ -1218,25 +1218,25 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     assert %{
              start_run: %Jido.Signal{
-               type: "squid_mesh.runtime.command.start_run",
-               source: "/squid_mesh/runtime/commands"
+               type: "squidie.runtime.command.start_run",
+               source: "/squidie/runtime/commands"
              },
              start_cron: %Jido.Signal{
-               type: "squid_mesh.runtime.command.start_cron",
-               source: "/squid_mesh/runtime/commands"
+               type: "squidie.runtime.command.start_cron",
+               source: "/squidie/runtime/commands"
              },
-             approve_run: %Jido.Signal{type: "squid_mesh.runtime.command.approve_run"},
-             reject_run: %Jido.Signal{type: "squid_mesh.runtime.command.reject_run"},
-             resume_run: %Jido.Signal{type: "squid_mesh.runtime.command.resume_run"},
-             cancel_run: %Jido.Signal{type: "squid_mesh.runtime.command.cancel_run"},
-             replay_run: %Jido.Signal{type: "squid_mesh.runtime.command.replay_run"}
+             approve_run: %Jido.Signal{type: "squidie.runtime.command.approve_run"},
+             reject_run: %Jido.Signal{type: "squidie.runtime.command.reject_run"},
+             resume_run: %Jido.Signal{type: "squidie.runtime.command.resume_run"},
+             cancel_run: %Jido.Signal{type: "squidie.runtime.command.cancel_run"},
+             replay_run: %Jido.Signal{type: "squidie.runtime.command.replay_run"}
            } = jido_command_signals
 
     assert Enum.all?(jido_command_signals, fn
              {_name,
               %Jido.Signal{
-                source: "/squid_mesh/runtime/commands",
-                datacontenttype: "application/vnd.squid-mesh.runtime-signal+json"
+                source: "/squidie/runtime/commands",
+                datacontenttype: "application/vnd.squidie.runtime-signal+json"
               }} ->
                true
 
@@ -1274,10 +1274,10 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
   test "smoke run clears stale journal rows before starting" do
     now = DateTime.utc_now(:microsecond)
-    thread_id = "squid_mesh:dispatch:stale-smoke-#{System.unique_integer([:positive])}"
-    unknown_atom_name = "squid_mesh_unknown_atom_#{System.unique_integer([:positive])}"
+    thread_id = "squidie:dispatch:stale-smoke-#{System.unique_integer([:positive])}"
+    unknown_atom_name = "squidie_unknown_atom_#{System.unique_integer([:positive])}"
 
-    Repo.insert_all("squid_mesh_journal_threads", [
+    Repo.insert_all("squidie_journal_threads", [
       %{
         id: thread_id,
         rev: 1,
@@ -1289,12 +1289,12 @@ defmodule MinimalHostApp.WorkflowRunsTest do
       }
     ])
 
-    Repo.insert_all("squid_mesh_journal_entries", [
+    Repo.insert_all("squidie_journal_entries", [
       %{
         id: Ecto.UUID.dump!(Ecto.UUID.generate()),
         thread_id: thread_id,
         seq: 0,
-        entry: :erlang.term_to_binary({:squid_mesh_ecto_term_v1, {:atom, unknown_atom_name}}),
+        entry: :erlang.term_to_binary({:squidie_ecto_term_v1, {:atom, unknown_atom_name}}),
         inserted_at: now,
         updated_at: now
       }
@@ -1305,7 +1305,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the journal run smoke path" do
-    assert %SquidMesh.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_run!()
+    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_run!()
 
     assert run.status == :completed
     assert run.workflow == "Elixir.MinimalHostApp.Workflows.DependencyRecovery"
@@ -1350,7 +1350,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "recovers the journal run smoke path from persisted entries" do
-    assert %SquidMesh.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_recovery!()
+    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_recovery!()
 
     assert run.status == :completed
     assert run.workflow == "Elixir.MinimalHostApp.Workflows.DependencyRecovery"
@@ -1358,7 +1358,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the journal cancellation smoke path" do
-    assert %SquidMesh.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_cancellation!()
+    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_cancellation!()
 
     assert run.status == :cancelled
     assert run.terminal?
@@ -1367,7 +1367,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the journal replay smoke path" do
-    assert %SquidMesh.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_replay!()
+    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_replay!()
 
     assert run.status == :completed
     assert run.replayed_from_run_id
@@ -1395,7 +1395,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the journal cron smoke path" do
-    assert %SquidMesh.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_cron_digest!()
+    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_cron_digest!()
 
     assert run.status == :completed
     assert run.trigger == "daily_digest"
@@ -1404,7 +1404,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the journal cron duplicate smoke path" do
-    assert %SquidMesh.ReadModel.Inspection.Snapshot{} =
+    assert %Squidie.ReadModel.Inspection.Snapshot{} =
              run = Smoke.run_journal_cron_duplicate_digest!()
 
     assert run.status == :completed
@@ -1413,7 +1413,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the cancellation smoke path" do
-    assert %SquidMesh.ReadModel.Inspection.Snapshot{} = run = Smoke.run_cancellation!()
+    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_cancellation!()
     assert run.status == :cancelled
   end
 
@@ -1430,7 +1430,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              CronPlugin.init(conf: oban_config(), workflows: [DailyDigest])
 
     %{start: {Oban.Plugins.Cron, :start_link, [opts]}} = child_spec
-    [{"@reboot", SquidMeshWorker, entry_opts}] = Keyword.fetch!(opts, :crontab)
+    [{"@reboot", SquidieWorker, entry_opts}] = Keyword.fetch!(opts, :crontab)
     payload = Keyword.fetch!(entry_opts, :args)
     Map.fetch!(payload, "signal_id")
   end
@@ -1455,26 +1455,26 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     )
   end
 
-  defp with_squid_mesh_env(config, fun) when is_list(config) and is_function(fun, 0) do
-    original_config = Application.get_all_env(:squid_mesh)
+  defp with_squidie_env(config, fun) when is_list(config) and is_function(fun, 0) do
+    original_config = Application.get_all_env(:squidie)
 
     try do
-      :squid_mesh
+      :squidie
       |> Application.get_all_env()
       |> Keyword.keys()
-      |> Enum.each(&Application.delete_env(:squid_mesh, &1))
+      |> Enum.each(&Application.delete_env(:squidie, &1))
 
-      Enum.each(config, fn {key, value} -> Application.put_env(:squid_mesh, key, value) end)
+      Enum.each(config, fn {key, value} -> Application.put_env(:squidie, key, value) end)
 
       fun.()
     after
-      :squid_mesh
+      :squidie
       |> Application.get_all_env()
       |> Keyword.keys()
-      |> Enum.each(&Application.delete_env(:squid_mesh, &1))
+      |> Enum.each(&Application.delete_env(:squidie, &1))
 
       Enum.each(original_config, fn {key, value} ->
-        Application.put_env(:squid_mesh, key, value)
+        Application.put_env(:squidie, key, value)
       end)
     end
   end
@@ -1500,12 +1500,12 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   defp drain_default_journal_run(_run_id, _queue, 0), do: {:error, :timeout}
 
   defp drain_default_journal_run(run_id, queue, attempts_remaining) when attempts_remaining > 0 do
-    case SquidMesh.inspect_run(run_id) do
+    case Squidie.inspect_run(run_id) do
       {:ok, %Snapshot{terminal?: true} = run} ->
         {:ok, run}
 
       {:ok, %Snapshot{}} ->
-        case SquidMesh.execute_next(
+        case Squidie.execute_next(
                owner_id: "minimal-host-app-default-journal-test",
                queue: queue
              ) do

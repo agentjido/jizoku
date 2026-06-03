@@ -10,20 +10,20 @@ defmodule MinimalHostApp.Smoke do
   alias MinimalHostApp.RuntimeHarness
   alias MinimalHostApp.Steps
   alias MinimalHostApp.WorkflowRuns
-  alias MinimalHostApp.Workers.SquidMeshWorker
-  alias SquidMesh.Executor.Payload
-  alias SquidMesh.Runtime.Journal
-  alias SquidMesh.Runtime.Journal.Storage.Ecto, as: JournalStorage
-  alias SquidMesh.Runtime.Runner
-  alias SquidMesh.Runtime.Signal
-  alias SquidMesh.Runtime.Signal.JidoAdapter
+  alias MinimalHostApp.Workers.SquidieWorker
+  alias Squidie.Executor.Payload
+  alias Squidie.Runtime.Journal
+  alias Squidie.Runtime.Journal.Storage.Ecto, as: JournalStorage
+  alias Squidie.Runtime.Runner
+  alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Signal.JidoAdapter
 
   @poll_attempts 20
   @journal_run_attempts 10
   @journal_run_queue_prefix "minimal-host-app-journal-smoke"
-  @journal_run_storage {SquidMesh.Runtime.Journal.Storage.Ecto, repo: Repo}
+  @journal_run_storage {Squidie.Runtime.Journal.Storage.Ecto, repo: Repo}
 
-  @spec run!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run! do
     RuntimeHarness.ensure_runtime_started()
     reset_runtime_state!()
@@ -46,7 +46,7 @@ defmodule MinimalHostApp.Smoke do
            :ok <- RuntimeHarness.wait_for_execution(),
            {:ok, inspected_run} <-
              RuntimeHarness.await_terminal_run(run.run_id, attempts: @poll_attempts),
-           {:ok, graph} <- SquidMesh.inspect_run_graph(run.run_id) do
+           {:ok, graph} <- Squidie.inspect_run_graph(run.run_id) do
         IO.puts("started run #{run.run_id} for #{inspect(run.workflow)}")
 
         unless inspected_run.run_id == run.run_id and inspected_run.status == :completed do
@@ -69,7 +69,7 @@ defmodule MinimalHostApp.Smoke do
 
   defp selected_gateway_success_route?(graph) do
     graph
-    |> SquidMesh.Runs.GraphInspection.to_map()
+    |> Squidie.Runs.GraphInspection.to_map()
     |> Map.fetch!(:edges)
     |> Enum.any?(fn
       %{
@@ -87,33 +87,33 @@ defmodule MinimalHostApp.Smoke do
   end
 
   @spec run_all!() :: %{
-          payment_recovery: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          deferred_payment_recovery: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          dependency_recovery: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          manual_approval: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          manual_digest: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          local_ledger_checkout: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          local_ledger_rollback: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          saga_checkout: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          nested_invite_delivery: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          nested_invite_child: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          journal_run: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          journal_recovery: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          journal_cancellation: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          journal_replay: SquidMesh.ReadModel.Inspection.Snapshot.t(),
+          payment_recovery: Squidie.ReadModel.Inspection.Snapshot.t(),
+          deferred_payment_recovery: Squidie.ReadModel.Inspection.Snapshot.t(),
+          dependency_recovery: Squidie.ReadModel.Inspection.Snapshot.t(),
+          manual_approval: Squidie.ReadModel.Inspection.Snapshot.t(),
+          manual_digest: Squidie.ReadModel.Inspection.Snapshot.t(),
+          local_ledger_checkout: Squidie.ReadModel.Inspection.Snapshot.t(),
+          local_ledger_rollback: Squidie.ReadModel.Inspection.Snapshot.t(),
+          saga_checkout: Squidie.ReadModel.Inspection.Snapshot.t(),
+          nested_invite_delivery: Squidie.ReadModel.Inspection.Snapshot.t(),
+          nested_invite_child: Squidie.ReadModel.Inspection.Snapshot.t(),
+          journal_run: Squidie.ReadModel.Inspection.Snapshot.t(),
+          journal_recovery: Squidie.ReadModel.Inspection.Snapshot.t(),
+          journal_cancellation: Squidie.ReadModel.Inspection.Snapshot.t(),
+          journal_replay: Squidie.ReadModel.Inspection.Snapshot.t(),
           journal_command_signals: %{
-            start: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-            replay: SquidMesh.ReadModel.Inspection.Snapshot.t()
+            start: Squidie.ReadModel.Inspection.Snapshot.t(),
+            replay: Squidie.ReadModel.Inspection.Snapshot.t()
           },
           dynamic_work_inspection: map(),
-          journal_cron_digest: SquidMesh.ReadModel.Inspection.Snapshot.t(),
+          journal_cron_digest: Squidie.ReadModel.Inspection.Snapshot.t(),
           command_signals: map(),
           jido_command_signals: map(),
-          action_registry: SquidMesh.Workflow.Spec.t(),
+          action_registry: Squidie.Workflow.Spec.t(),
           editor_spec_graph: map(),
           editor_action_registry_graph: map(),
           editor_spec_diff: map(),
-          daily_digest: SquidMesh.ReadModel.Inspection.Snapshot.t()
+          daily_digest: Squidie.ReadModel.Inspection.Snapshot.t()
         }
   def run_all! do
     action_registry = run_action_registry_validation!()
@@ -178,7 +178,7 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  @spec run_deferred_payment_recovery!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_deferred_payment_recovery!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_deferred_payment_recovery! do
     RuntimeHarness.ensure_runtime_started()
 
@@ -204,9 +204,9 @@ defmodule MinimalHostApp.Smoke do
            :ok <- RuntimeHarness.perform_scheduled_step!(run.run_id, "check_gateway_status"),
            {:ok, deferred_run} <- WorkflowRuns.inspect_run(run.run_id),
            :ok <- ensure_deferred_gateway_run(deferred_run),
-           {:ok, graph} <- SquidMesh.inspect_run_graph(run.run_id),
+           {:ok, graph} <- Squidie.inspect_run_graph(run.run_id),
            :ok <- ensure_deferred_gateway_graph(graph),
-           {:ok, diagnostic} <- SquidMesh.explain_run(run.run_id),
+           {:ok, diagnostic} <- Squidie.explain_run(run.run_id),
            :ok <- ensure_deferred_gateway_explanation(diagnostic),
            :ok <- RuntimeHarness.perform_scheduled_step!(run.run_id, "check_gateway_status"),
            {:ok, completed_run} <-
@@ -226,7 +226,7 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  defp ensure_deferred_gateway_run(%SquidMesh.ReadModel.Inspection.Snapshot{} = run) do
+  defp ensure_deferred_gateway_run(%Squidie.ReadModel.Inspection.Snapshot{} = run) do
     with :running <- run.status,
          :deferred_continuation <- run.reason,
          [%{step: "check_gateway_status", deferred: %{reason: %{status_code: 202}}}] <-
@@ -237,7 +237,7 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  defp ensure_deferred_gateway_graph(%SquidMesh.Runs.GraphInspection{} = graph) do
+  defp ensure_deferred_gateway_graph(%Squidie.Runs.GraphInspection{} = graph) do
     nodes = Map.new(graph.nodes, &{&1.id, &1})
 
     case Map.fetch(nodes, "check_gateway_status") do
@@ -246,7 +246,7 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  defp ensure_deferred_gateway_explanation(%SquidMesh.ReadModel.Explanation.Diagnostic{} = diagnostic) do
+  defp ensure_deferred_gateway_explanation(%Squidie.ReadModel.Explanation.Diagnostic{} = diagnostic) do
     case diagnostic do
       %{reason: :deferred_continuation, next_actions: [:wait_until_attempt_visible]} ->
         :ok
@@ -388,12 +388,12 @@ defmodule MinimalHostApp.Smoke do
   """
   @spec run_editor_spec_round_trip!() :: map()
   def run_editor_spec_round_trip! do
-    with {:ok, spec} <- SquidMesh.Workflow.to_spec(MinimalHostApp.Workflows.PaymentRecovery),
-         editor_map <- SquidMesh.Workflow.EditorSpec.to_map(spec),
+    with {:ok, spec} <- Squidie.Workflow.to_spec(MinimalHostApp.Workflows.PaymentRecovery),
+         editor_map <- Squidie.Workflow.EditorSpec.to_map(spec),
          {:ok, json} <- Jason.encode(editor_map),
          {:ok, round_tripped} <- Jason.decode(json),
-         :ok <- SquidMesh.Workflow.EditorSpec.validate_map(round_tripped),
-         {:ok, graph} <- SquidMesh.Workflow.EditorSpec.preview_graph(round_tripped) do
+         :ok <- Squidie.Workflow.EditorSpec.validate_map(round_tripped),
+         {:ok, graph} <- Squidie.Workflow.EditorSpec.preview_graph(round_tripped) do
       unless Enum.map(graph["nodes"], & &1["id"]) == [
                "load_invoice",
                "check_gateway_status",
@@ -415,13 +415,13 @@ defmodule MinimalHostApp.Smoke do
   """
   @spec run_editor_spec_diff!() :: map()
   def run_editor_spec_diff! do
-    with {:ok, spec} <- SquidMesh.Workflow.to_spec(MinimalHostApp.Workflows.PaymentRecovery),
-         editor_map <- SquidMesh.Workflow.EditorSpec.to_map(spec),
+    with {:ok, spec} <- Squidie.Workflow.to_spec(MinimalHostApp.Workflows.PaymentRecovery),
+         editor_map <- Squidie.Workflow.EditorSpec.to_map(spec),
          draft <- editor_diff_draft(editor_map),
          {:ok, json} <- Jason.encode(draft),
          {:ok, round_tripped} <- Jason.decode(json),
          {:ok, diff} <-
-           SquidMesh.Workflow.EditorSpec.diff(spec, round_tripped,
+           Squidie.Workflow.EditorSpec.diff(spec, round_tripped,
              action_registry: payment_action_registry()
            ) do
       unless diff["summary"]["nodes_added"] == 1 and
@@ -469,15 +469,15 @@ defmodule MinimalHostApp.Smoke do
   def run_editor_action_registry_preview! do
     registry = payment_action_registry()
 
-    with editor_map <- SquidMesh.Workflow.EditorSpec.to_map(action_registry_spec()),
+    with editor_map <- Squidie.Workflow.EditorSpec.to_map(action_registry_spec()),
          {:ok, json} <- Jason.encode(editor_map),
          {:ok, round_tripped} <- Jason.decode(json),
          :ok <-
-           SquidMesh.Workflow.EditorSpec.validate_map(round_tripped,
+           Squidie.Workflow.EditorSpec.validate_map(round_tripped,
              action_registry: registry
            ),
          {:ok, graph} <-
-           SquidMesh.Workflow.EditorSpec.preview_graph(round_tripped,
+           Squidie.Workflow.EditorSpec.preview_graph(round_tripped,
              action_registry: registry
            ) do
       unless Enum.map(graph["nodes"], &{&1["id"], &1["action"]}) == [
@@ -497,14 +497,14 @@ defmodule MinimalHostApp.Smoke do
   @doc """
   Validates a runtime-authored spec through host-owned action keys.
   """
-  @spec run_action_registry_validation!() :: SquidMesh.Workflow.Spec.t()
+  @spec run_action_registry_validation!() :: Squidie.Workflow.Spec.t()
   def run_action_registry_validation! do
     registry = payment_action_registry()
 
     with :ok <-
-           SquidMesh.Workflow.validate_spec(action_registry_spec(), action_registry: registry),
+           Squidie.Workflow.validate_spec(action_registry_spec(), action_registry: registry),
          {:ok, resolved_spec} <-
-           SquidMesh.Workflow.resolve_spec_actions(action_registry_spec(),
+           Squidie.Workflow.resolve_spec_actions(action_registry_spec(),
              action_registry: registry
            ) do
       unless Enum.map(resolved_spec.steps, &{&1.name, &1.module, &1.metadata.action}) == [
@@ -530,7 +530,7 @@ defmodule MinimalHostApp.Smoke do
   end
 
   defp action_registry_spec do
-    %SquidMesh.Workflow.Spec{
+    %Squidie.Workflow.Spec{
       workflow: MinimalHostApp.RuntimeAuthoredPaymentRecovery,
       triggers: [
         %{
@@ -562,7 +562,7 @@ defmodule MinimalHostApp.Smoke do
     }
   end
 
-  @spec run_dependency_recovery!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_dependency_recovery!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_dependency_recovery! do
     attrs = %{
       account_id: "acct_dependency_demo",
@@ -601,7 +601,7 @@ defmodule MinimalHostApp.Smoke do
   @doc """
   Runs the dependency-based example workflow through the journal run loop.
   """
-  @spec run_journal_run!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_journal_run!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_journal_run! do
     RuntimeHarness.ensure_runtime_started()
     queue = journal_run_queue()
@@ -614,17 +614,17 @@ defmodule MinimalHostApp.Smoke do
 
     with_journal_runtime_config(queue, fn ->
       with {:ok, started_run} <-
-             SquidMesh.start(
+             Squidie.start(
                MinimalHostApp.Workflows.DependencyRecovery,
                :dependency_recovery,
                attrs
              ),
            {:ok, inspected_run} <-
              drain_journal_run(started_run.run_id, @journal_run_attempts),
-           {:ok, explanation} <- SquidMesh.explain_run(started_run.run_id),
-           {:ok, graph} <- SquidMesh.inspect_run_graph(started_run.run_id),
+           {:ok, explanation} <- Squidie.explain_run(started_run.run_id),
+           {:ok, graph} <- Squidie.inspect_run_graph(started_run.run_id),
            {:ok, listed_runs} <-
-             SquidMesh.list_runs(workflow: MinimalHostApp.Workflows.DependencyRecovery) do
+             Squidie.list_runs(workflow: MinimalHostApp.Workflows.DependencyRecovery) do
         unless started_run.queue == queue and
                  inspected_run.queue == queue and
                  explanation.queue == queue do
@@ -671,7 +671,7 @@ defmodule MinimalHostApp.Smoke do
 
     with_journal_runtime_config(queue, fn ->
       with {:ok, started_run} <-
-             SquidMesh.start(
+             Squidie.start(
                MinimalHostApp.Workflows.DependencyRecovery,
                :dependency_recovery,
                %{
@@ -680,13 +680,13 @@ defmodule MinimalHostApp.Smoke do
                  attempt_id: "attempt_dynamic_demo"
                }
              ),
-           {:ok, producer_run} <- SquidMesh.execute_next(journal_run_execute_options()),
+           {:ok, producer_run} <- Squidie.execute_next(journal_run_execute_options()),
            :ok <- preview_dynamic_work!(producer_run),
            :ok <- schedule_dynamic_work!(producer_run),
            {:ok, inspected_run} <- drain_journal_run(started_run.run_id, @journal_run_attempts),
-           {:ok, graph} <- SquidMesh.inspect_run_graph(inspected_run.run_id),
-           {:ok, explanation} <- SquidMesh.explain_run(inspected_run.run_id) do
-        graph_payload = SquidMesh.Runs.GraphInspection.to_map(graph)
+           {:ok, graph} <- Squidie.inspect_run_graph(inspected_run.run_id),
+           {:ok, explanation} <- Squidie.explain_run(inspected_run.run_id) do
+        graph_payload = Squidie.Runs.GraphInspection.to_map(graph)
 
         unless Enum.any?(
                  graph_payload.dynamic_work,
@@ -727,7 +727,7 @@ defmodule MinimalHostApp.Smoke do
   execution must recover from persisted entries when checkpoint accelerators are
   missing.
   """
-  @spec run_journal_recovery!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_journal_recovery!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_journal_recovery! do
     RuntimeHarness.ensure_runtime_started()
     queue = journal_run_queue()
@@ -740,13 +740,13 @@ defmodule MinimalHostApp.Smoke do
 
     with_journal_runtime_config(queue, fn ->
       with {:ok, started_run} <-
-             SquidMesh.start(
+             Squidie.start(
                MinimalHostApp.Workflows.DependencyRecovery,
                :dependency_recovery,
                attrs
              ),
            :ok <- delete_journal_checkpoints(started_run.run_id, queue),
-           {:ok, recovered_run} <- SquidMesh.inspect_run(started_run.run_id),
+           {:ok, recovered_run} <- Squidie.inspect_run(started_run.run_id),
            {:ok, completed_run} <-
              drain_journal_run(started_run.run_id, @journal_run_attempts) do
         unless recovered_run.run_id == started_run.run_id and recovered_run.queue == queue do
@@ -768,7 +768,7 @@ defmodule MinimalHostApp.Smoke do
   @doc """
   Runs journal cancellation through the example app's configured Ecto storage.
   """
-  @spec run_journal_cancellation!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_journal_cancellation!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_journal_cancellation! do
     RuntimeHarness.ensure_runtime_started()
     queue = journal_run_queue()
@@ -781,14 +781,14 @@ defmodule MinimalHostApp.Smoke do
 
     with_journal_runtime_config(queue, fn ->
       with {:ok, started_run} <-
-             SquidMesh.start(
+             Squidie.start(
                MinimalHostApp.Workflows.DependencyRecovery,
                :dependency_recovery,
                attrs
              ),
-           {:ok, cancelled_run} <- SquidMesh.cancel(started_run.run_id),
-           {:ok, inspected_run} <- SquidMesh.inspect_run(started_run.run_id),
-           {:ok, :none} <- SquidMesh.execute_next(journal_run_execute_options()) do
+           {:ok, cancelled_run} <- Squidie.cancel(started_run.run_id),
+           {:ok, inspected_run} <- Squidie.inspect_run(started_run.run_id),
+           {:ok, :none} <- Squidie.execute_next(journal_run_execute_options()) do
         unless started_run.queue == queue and
                  cancelled_run.queue == queue and
                  inspected_run.queue == queue do
@@ -818,7 +818,7 @@ defmodule MinimalHostApp.Smoke do
   @doc """
   Runs journal replay through the example app's configured Ecto storage.
   """
-  @spec run_journal_replay!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_journal_replay!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_journal_replay! do
     RuntimeHarness.ensure_runtime_started()
     queue = journal_run_queue()
@@ -839,7 +839,7 @@ defmodule MinimalHostApp.Smoke do
     try do
       with_journal_runtime_config(queue, fn ->
         with {:ok, started_run} <-
-               SquidMesh.start(
+               Squidie.start(
                  MinimalHostApp.Workflows.PaymentRecovery,
                  :payment_recovery,
                  attrs
@@ -847,10 +847,10 @@ defmodule MinimalHostApp.Smoke do
              {:ok, completed_run} <-
                drain_journal_run(started_run.run_id, @journal_run_attempts),
              {:ok, replayed_run} <-
-               SquidMesh.replay(completed_run.run_id, allow_irreversible: true),
+               Squidie.replay(completed_run.run_id, allow_irreversible: true),
              {:ok, completed_replay} <-
                drain_journal_run(replayed_run.run_id, @journal_run_attempts),
-             {:ok, replay_graph} <- SquidMesh.inspect_run_graph(completed_replay.run_id) do
+             {:ok, replay_graph} <- Squidie.inspect_run_graph(completed_replay.run_id) do
           unless completed_run.status == :completed and completed_replay.status == :completed do
             raise "unexpected journal replay smoke result"
           end
@@ -878,11 +878,11 @@ defmodule MinimalHostApp.Smoke do
   end
 
   @doc """
-  Starts and replays journal runs through Squid Mesh command signals.
+  Starts and replays journal runs through Squidie command signals.
   """
   @spec run_journal_command_signals!() :: %{
-          start: SquidMesh.ReadModel.Inspection.Snapshot.t(),
-          replay: SquidMesh.ReadModel.Inspection.Snapshot.t()
+          start: Squidie.ReadModel.Inspection.Snapshot.t(),
+          replay: Squidie.ReadModel.Inspection.Snapshot.t()
         }
   def run_journal_command_signals! do
     RuntimeHarness.ensure_runtime_started()
@@ -903,7 +903,7 @@ defmodule MinimalHostApp.Smoke do
                metadata: %{source: "minimal_host_app_smoke"},
                idempotency_key: "minimal-host-app:journal-signal:start"
              ),
-           {:ok, started_run} <- SquidMesh.apply_signal(start_signal),
+           {:ok, started_run} <- Squidie.apply_signal(start_signal),
            {:ok, completed_start} <- drain_journal_run(started_run.run_id, @journal_run_attempts),
            {:ok, replay_signal} <-
              Signal.replay_run(
@@ -911,7 +911,7 @@ defmodule MinimalHostApp.Smoke do
                metadata: %{source: "minimal_host_app_smoke"},
                idempotency_key: "minimal-host-app:journal-signal:replay"
              ),
-           {:ok, replayed_run} <- SquidMesh.apply_signal(replay_signal),
+           {:ok, replayed_run} <- Squidie.apply_signal(replay_signal),
            {:ok, completed_replay} <-
              drain_journal_run(replayed_run.run_id, @journal_run_attempts) do
         unless completed_start.status == :completed and completed_replay.status == :completed do
@@ -949,7 +949,7 @@ defmodule MinimalHostApp.Smoke do
   @doc """
   Starts the daily digest cron trigger through the journal runtime.
   """
-  @spec run_journal_cron_digest!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_journal_cron_digest!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_journal_cron_digest! do
     RuntimeHarness.ensure_runtime_started()
     queue = journal_run_queue()
@@ -985,7 +985,7 @@ defmodule MinimalHostApp.Smoke do
   @doc """
   Proves duplicate daily digest cron delivery is fenced by the journal runtime.
   """
-  @spec run_journal_cron_duplicate_digest!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_journal_cron_duplicate_digest!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_journal_cron_duplicate_digest! do
     RuntimeHarness.ensure_runtime_started()
     queue = journal_run_queue()
@@ -1019,7 +1019,7 @@ defmodule MinimalHostApp.Smoke do
     end)
   end
 
-  @spec run_cancellation!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_cancellation!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_cancellation! do
     RuntimeHarness.ensure_runtime_started()
 
@@ -1032,7 +1032,7 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  @spec run_manual_approval!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_manual_approval!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_manual_approval! do
     with {:ok, run} <- WorkflowRuns.start_manual_approval(%{account_id: "acct_manual_demo"}),
          {:ok, _paused_run} <- await_paused_run(run.run_id, @poll_attempts),
@@ -1060,7 +1060,7 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  @spec run_manual_digest!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_manual_digest!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_manual_digest! do
     attrs = %{channel: "ops-manual", digest_date: Date.utc_today() |> Date.to_iso8601()}
 
@@ -1085,8 +1085,8 @@ defmodule MinimalHostApp.Smoke do
   end
 
   @spec run_local_ledger_checkout!() ::
-          {SquidMesh.ReadModel.Inspection.Snapshot.t(),
-           SquidMesh.ReadModel.Inspection.Snapshot.t()}
+          {Squidie.ReadModel.Inspection.Snapshot.t(),
+           Squidie.ReadModel.Inspection.Snapshot.t()}
   def run_local_ledger_checkout! do
     committed_attrs = %{account_id: "acct_local_commit", fail_after_reserve: false}
     rolled_back_attrs = %{account_id: "acct_local_rollback", fail_after_reserve: true}
@@ -1116,7 +1116,7 @@ defmodule MinimalHostApp.Smoke do
   @doc """
   Runs the saga checkout example and verifies persisted retry failure history.
   """
-  @spec run_saga_checkout!() :: SquidMesh.ReadModel.Inspection.Snapshot.t()
+  @spec run_saga_checkout!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run_saga_checkout! do
     attrs = %{account_id: "acct_saga_demo", order_id: "ord_saga_demo"}
 
@@ -1142,8 +1142,8 @@ defmodule MinimalHostApp.Smoke do
   Runs a nested workflow where parent and child both retry once.
   """
   @spec run_nested_invite_delivery!() ::
-          {SquidMesh.ReadModel.Inspection.Snapshot.t(),
-           SquidMesh.ReadModel.Inspection.Snapshot.t()}
+          {Squidie.ReadModel.Inspection.Snapshot.t(),
+           Squidie.ReadModel.Inspection.Snapshot.t()}
   def run_nested_invite_delivery! do
     child_queue = "minimal-host-app-nested-child-smoke"
 
@@ -1157,7 +1157,7 @@ defmodule MinimalHostApp.Smoke do
 
     with {:ok, run} <- WorkflowRuns.start_nested_invite_delivery(attrs),
          {:ok, retried_parent} <-
-           SquidMesh.execute_next(
+           Squidie.execute_next(
              owner_id: "minimal-host-app-nested-smoke-parent",
              queue: run.queue
            ),
@@ -1173,19 +1173,19 @@ defmodule MinimalHostApp.Smoke do
              child_queue
            ),
          {:ok, completed_parent} <-
-           SquidMesh.execute_next(
+           Squidie.execute_next(
              owner_id: "minimal-host-app-nested-smoke-parent",
              queue: retried_parent.queue
            ),
          {:ok, child_retrying} <-
-           SquidMesh.execute_next(
+           Squidie.execute_next(
              owner_id: "minimal-host-app-nested-smoke-child",
              queue: child_queue
            ),
          :ok <- delete_available_journal_checkpoints(child_retrying.run_id, child_queue),
          :ok <- ensure_reconstructed_nested_child_retry(child_retrying.run_id, child_queue),
          {:ok, completed_child} <-
-           SquidMesh.execute_next(
+           Squidie.execute_next(
              owner_id: "minimal-host-app-nested-smoke-child",
              queue: child_queue
            ),
@@ -1214,7 +1214,7 @@ defmodule MinimalHostApp.Smoke do
   end
 
   defp journal_daily_digest_run_id(queue) do
-    case SquidMesh.list_runs(workflow: MinimalHostApp.Workflows.DailyDigest) do
+    case Squidie.list_runs(workflow: MinimalHostApp.Workflows.DailyDigest) do
       {:ok, runs} ->
         runs
         |> Enum.find(&(&1.queue == queue))
@@ -1228,7 +1228,7 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  defp mapped_dependency_input?(%SquidMesh.ReadModel.Inspection.Snapshot{attempts: attempts})
+  defp mapped_dependency_input?(%Squidie.ReadModel.Inspection.Snapshot{attempts: attempts})
        when is_list(attempts) do
     Enum.any?(attempts, fn
       %{step: "prepare_notification", input: input} ->
@@ -1260,7 +1260,7 @@ defmodule MinimalHostApp.Smoke do
           "signal_id" => smoke_cron_signal_id()
         }
       }
-      |> SquidMeshWorker.perform()
+      |> SquidieWorker.perform()
       |> case do
         :ok -> wait_for_execution()
         {:error, reason} -> raise "manual cron smoke trigger failed: #{inspect(reason)}"
@@ -1272,7 +1272,7 @@ defmodule MinimalHostApp.Smoke do
   end
 
   @spec run_cancellation_smoke() ::
-          {:ok, SquidMesh.ReadModel.Inspection.Snapshot.t()} | {:error, term()}
+          {:ok, Squidie.ReadModel.Inspection.Snapshot.t()} | {:error, term()}
   defp run_cancellation_smoke do
     with {:ok, run} <- WorkflowRuns.start_cancellable_wait(%{account_id: "acct_demo"}),
          :ok <- wait_for_execution(),
@@ -1287,23 +1287,23 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  @spec ensure_cancelling(SquidMesh.ReadModel.Inspection.Snapshot.t()) ::
+  @spec ensure_cancelling(Squidie.ReadModel.Inspection.Snapshot.t()) ::
           :ok | {:error, :unexpected_cancellation_status}
-  defp ensure_cancelling(%SquidMesh.ReadModel.Inspection.Snapshot{status: :cancelled}), do: :ok
+  defp ensure_cancelling(%Squidie.ReadModel.Inspection.Snapshot{status: :cancelled}), do: :ok
 
-  defp ensure_cancelling(%SquidMesh.ReadModel.Inspection.Snapshot{}),
+  defp ensure_cancelling(%Squidie.ReadModel.Inspection.Snapshot{}),
     do: {:error, :unexpected_cancellation_status}
 
   @spec await_paused_run(Ecto.UUID.t(), non_neg_integer()) ::
-          {:ok, SquidMesh.ReadModel.Inspection.Snapshot.t()} | {:error, term()}
+          {:ok, Squidie.ReadModel.Inspection.Snapshot.t()} | {:error, term()}
   defp await_paused_run(_run_id, 0), do: {:error, :timeout}
 
   defp await_paused_run(run_id, attempts_remaining) when attempts_remaining > 0 do
     :ok = RuntimeHarness.wait_for_execution()
-    _result = SquidMesh.execute_next(owner_id: "minimal-host-app-manual-smoke")
+    _result = Squidie.execute_next(owner_id: "minimal-host-app-manual-smoke")
 
     case WorkflowRuns.inspect_run(run_id, include_history: true) do
-      {:ok, %SquidMesh.ReadModel.Inspection.Snapshot{} = run} ->
+      {:ok, %Squidie.ReadModel.Inspection.Snapshot{} = run} ->
         case ensure_paused(run) do
           :ok ->
             {:ok, run}
@@ -1318,20 +1318,20 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  @spec ensure_paused(SquidMesh.ReadModel.Inspection.Snapshot.t()) ::
+  @spec ensure_paused(Squidie.ReadModel.Inspection.Snapshot.t()) ::
           :ok | {:error, :unexpected_paused_status}
-  defp ensure_paused(%SquidMesh.ReadModel.Inspection.Snapshot{
+  defp ensure_paused(%Squidie.ReadModel.Inspection.Snapshot{
          status: :paused,
          manual_state: %{step: "wait_for_approval"}
        }),
        do: :ok
 
-  defp ensure_paused(%SquidMesh.ReadModel.Inspection.Snapshot{}),
+  defp ensure_paused(%Squidie.ReadModel.Inspection.Snapshot{}),
     do: {:error, :unexpected_paused_status}
 
-  @spec ensure_paused_approval_explanation(SquidMesh.ReadModel.Explanation.Diagnostic.t()) ::
+  @spec ensure_paused_approval_explanation(Squidie.ReadModel.Explanation.Diagnostic.t()) ::
           :ok | {:error, :unexpected_explanation}
-  defp ensure_paused_approval_explanation(%SquidMesh.ReadModel.Explanation.Diagnostic{
+  defp ensure_paused_approval_explanation(%Squidie.ReadModel.Explanation.Diagnostic{
          status: :paused,
          next_actions: next_actions
        }) do
@@ -1342,35 +1342,35 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  defp ensure_paused_approval_explanation(%SquidMesh.ReadModel.Explanation.Diagnostic{}),
+  defp ensure_paused_approval_explanation(%Squidie.ReadModel.Explanation.Diagnostic{}),
     do: {:error, :unexpected_explanation}
 
-  @spec ensure_resumed(SquidMesh.ReadModel.Inspection.Snapshot.t()) ::
+  @spec ensure_resumed(Squidie.ReadModel.Inspection.Snapshot.t()) ::
           :ok | {:error, :unexpected_resumed_status}
-  defp ensure_resumed(%SquidMesh.ReadModel.Inspection.Snapshot{
+  defp ensure_resumed(%Squidie.ReadModel.Inspection.Snapshot{
          status: :running,
          visible_attempts: [%{step: "record_approval"} | _]
        }),
        do: :ok
 
-  defp ensure_resumed(%SquidMesh.ReadModel.Inspection.Snapshot{}),
+  defp ensure_resumed(%Squidie.ReadModel.Inspection.Snapshot{}),
     do: {:error, :unexpected_resumed_status}
 
   @spec drain_journal_run(String.t(), non_neg_integer()) ::
-          {:ok, SquidMesh.ReadModel.Inspection.Snapshot.t()} | {:error, :timeout | term()}
+          {:ok, Squidie.ReadModel.Inspection.Snapshot.t()} | {:error, :timeout | term()}
   defp drain_journal_run(_run_id, 0), do: {:error, :timeout}
 
   defp drain_journal_run(run_id, attempts_remaining) when attempts_remaining > 0 do
-    case SquidMesh.inspect_run(run_id) do
-      {:ok, %SquidMesh.ReadModel.Inspection.Snapshot{terminal?: true} = run} ->
+    case Squidie.inspect_run(run_id) do
+      {:ok, %Squidie.ReadModel.Inspection.Snapshot{terminal?: true} = run} ->
         {:ok, run}
 
-      {:ok, %SquidMesh.ReadModel.Inspection.Snapshot{}} ->
-        case SquidMesh.execute_next(journal_run_execute_options()) do
-          {:ok, %SquidMesh.ReadModel.Inspection.Snapshot{terminal?: true} = run} ->
+      {:ok, %Squidie.ReadModel.Inspection.Snapshot{}} ->
+        case Squidie.execute_next(journal_run_execute_options()) do
+          {:ok, %Squidie.ReadModel.Inspection.Snapshot{terminal?: true} = run} ->
             {:ok, run}
 
-          {:ok, %SquidMesh.ReadModel.Inspection.Snapshot{}} ->
+          {:ok, %Squidie.ReadModel.Inspection.Snapshot{}} ->
             drain_journal_run(run_id, attempts_remaining - 1)
 
           {:ok, :none} ->
@@ -1392,7 +1392,7 @@ defmodule MinimalHostApp.Smoke do
     ]
   end
 
-  defp schedule_dynamic_work!(%SquidMesh.ReadModel.Inspection.Snapshot{} = inspected_run) do
+  defp schedule_dynamic_work!(%Squidie.ReadModel.Inspection.Snapshot{} = inspected_run) do
     case dynamic_work_origin(inspected_run) do
       [runnable | _rest] -> schedule_dynamic_work_for_runnable(inspected_run, runnable)
       _missing -> {:error, :missing_dynamic_work_origin}
@@ -1410,7 +1410,7 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  defp preview_dynamic_work!(%SquidMesh.ReadModel.Inspection.Snapshot{} = inspected_run) do
+  defp preview_dynamic_work!(%Squidie.ReadModel.Inspection.Snapshot{} = inspected_run) do
     case dynamic_work_origin(inspected_run) do
       [runnable | _rest] -> preview_dynamic_work_for_runnable(inspected_run, runnable)
       _missing -> {:error, :missing_dynamic_work_origin}
@@ -1419,12 +1419,12 @@ defmodule MinimalHostApp.Smoke do
 
   defp preview_dynamic_work_for_runnable(inspected_run, runnable) do
     with {:ok, preview} <-
-           SquidMesh.preview_dynamic_work(
+           Squidie.preview_dynamic_work(
              inspected_run.run_id,
              dynamic_work_attrs(runnable),
              action_registry: dynamic_work_action_registry()
            ) do
-      preview_payload = SquidMesh.Runs.DynamicWorkPreview.to_map(preview)
+      preview_payload = Squidie.Runs.DynamicWorkPreview.to_map(preview)
 
       expected_node_id = "notify_invoice:inv_dynamic_demo"
       expected_edge_id = "#{runnable.step}:dynamic:#{expected_node_id}"
@@ -1467,7 +1467,7 @@ defmodule MinimalHostApp.Smoke do
     }
   end
 
-  defp dynamic_work_origin(%SquidMesh.ReadModel.Inspection.Snapshot{attempts: attempts}) do
+  defp dynamic_work_origin(%Squidie.ReadModel.Inspection.Snapshot{attempts: attempts}) do
     Enum.filter(attempts, &Map.get(&1, :applied?))
   end
 
@@ -1488,9 +1488,9 @@ defmodule MinimalHostApp.Smoke do
     ]
     |> Enum.each(fn thread_id ->
       {:ok, _checkpoint} =
-        JournalStorage.get_checkpoint({"squid_mesh", :checkpoint, thread_id}, repo: Repo)
+        JournalStorage.get_checkpoint({"squidie", :checkpoint, thread_id}, repo: Repo)
 
-      :ok = JournalStorage.delete_checkpoint({"squid_mesh", :checkpoint, thread_id}, repo: Repo)
+      :ok = JournalStorage.delete_checkpoint({"squidie", :checkpoint, thread_id}, repo: Repo)
     end)
 
     :ok
@@ -1503,48 +1503,48 @@ defmodule MinimalHostApp.Smoke do
       Journal.thread_id({:dispatch, queue})
     ]
     |> Enum.each(fn thread_id ->
-      :ok = JournalStorage.delete_checkpoint({"squid_mesh", :checkpoint, thread_id}, repo: Repo)
+      :ok = JournalStorage.delete_checkpoint({"squidie", :checkpoint, thread_id}, repo: Repo)
     end)
 
     :ok
   end
 
   defp with_journal_runtime_config(queue, fun) when is_binary(queue) and is_function(fun, 0) do
-    original_config = Application.get_all_env(:squid_mesh)
+    original_config = Application.get_all_env(:squidie)
 
     try do
-      Application.put_env(:squid_mesh, :runtime, :journal)
-      Application.put_env(:squid_mesh, :read_model, :read_model)
-      Application.put_env(:squid_mesh, :journal_storage, @journal_run_storage)
-      Application.put_env(:squid_mesh, :queue, queue)
+      Application.put_env(:squidie, :runtime, :journal)
+      Application.put_env(:squidie, :read_model, :read_model)
+      Application.put_env(:squidie, :journal_storage, @journal_run_storage)
+      Application.put_env(:squidie, :queue, queue)
 
       fun.()
     after
-      :squid_mesh
+      :squidie
       |> Application.get_all_env()
       |> Keyword.keys()
-      |> Enum.each(&Application.delete_env(:squid_mesh, &1))
+      |> Enum.each(&Application.delete_env(:squidie, &1))
 
       Enum.each(original_config, fn {key, value} ->
-        Application.put_env(:squid_mesh, key, value)
+        Application.put_env(:squidie, key, value)
       end)
     end
   end
 
-  @spec ensure_manual_approval_audit(SquidMesh.ReadModel.Inspection.Snapshot.t()) ::
+  @spec ensure_manual_approval_audit(Squidie.ReadModel.Inspection.Snapshot.t()) ::
           :ok | {:error, :unexpected_manual_approval_audit}
-  defp ensure_manual_approval_audit(%SquidMesh.ReadModel.Inspection.Snapshot{
+  defp ensure_manual_approval_audit(%Squidie.ReadModel.Inspection.Snapshot{
          context: %{approval: %{status: "approved", actor: "ops_smoke"}}
        }) do
     :ok
   end
 
-  defp ensure_manual_approval_audit(%SquidMesh.ReadModel.Inspection.Snapshot{}),
+  defp ensure_manual_approval_audit(%Squidie.ReadModel.Inspection.Snapshot{}),
     do: {:error, :unexpected_manual_approval_audit}
 
-  @spec ensure_saga_failure_history(SquidMesh.ReadModel.Inspection.Snapshot.t()) ::
+  @spec ensure_saga_failure_history(Squidie.ReadModel.Inspection.Snapshot.t()) ::
           :ok | {:error, :unexpected_saga_compensation}
-  defp ensure_saga_failure_history(%SquidMesh.ReadModel.Inspection.Snapshot{attempts: attempts})
+  defp ensure_saga_failure_history(%Squidie.ReadModel.Inspection.Snapshot{attempts: attempts})
        when is_list(attempts) do
     expected_steps = [
       {"reserve_inventory", :completed, true, 1},
@@ -1563,18 +1563,18 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  defp ensure_saga_failure_history(%SquidMesh.ReadModel.Inspection.Snapshot{}),
+  defp ensure_saga_failure_history(%Squidie.ReadModel.Inspection.Snapshot{}),
     do: {:error, :unexpected_saga_compensation}
 
   defp ensure_nested_child_link(
-         %SquidMesh.ReadModel.Inspection.Snapshot{run_id: parent_run_id, child_runs: child_runs},
+         %Squidie.ReadModel.Inspection.Snapshot{run_id: parent_run_id, child_runs: child_runs},
          child_key,
          child_queue
        ) do
     case child_runs do
       [%{child_key: ^child_key, child_run_id: child_run_id}] ->
         with {:ok, child_run} <- WorkflowRuns.inspect_run(child_run_id, queue: child_queue),
-             {:ok, graph} <- SquidMesh.inspect_run_graph(parent_run_id),
+             {:ok, graph} <- Squidie.inspect_run_graph(parent_run_id),
              :ok <- ensure_nested_graph_child_link(graph, child_run_id, child_key) do
           if child_run.status == :running do
             {:ok, child_run_id}
@@ -1589,7 +1589,7 @@ defmodule MinimalHostApp.Smoke do
   end
 
   defp ensure_nested_graph_child_link(graph, child_run_id, child_key) do
-    graph_map = SquidMesh.Runs.GraphInspection.to_map(graph)
+    graph_map = Squidie.Runs.GraphInspection.to_map(graph)
 
     case Map.fetch!(graph_map, :child_links) do
       [
@@ -1612,7 +1612,7 @@ defmodule MinimalHostApp.Smoke do
     with {:ok, child_key} <- nested_child_key(child_runs),
          {:ok, parent_run} <- WorkflowRuns.inspect_run(parent_run_id),
          {:ok, child_run} <- WorkflowRuns.inspect_run(child_run_id, queue: child_queue),
-         {:ok, graph} <- SquidMesh.inspect_run_graph(parent_run_id),
+         {:ok, graph} <- Squidie.inspect_run_graph(parent_run_id),
          :ok <- ensure_nested_graph_child_link(graph, child_run_id, child_key) do
       cond do
         parent_run.child_runs != child_runs ->
@@ -1687,10 +1687,10 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  @spec ensure_local_ledger_entries(SquidMesh.ReadModel.Inspection.Snapshot.t(), [String.t()]) ::
+  @spec ensure_local_ledger_entries(Squidie.ReadModel.Inspection.Snapshot.t(), [String.t()]) ::
           :ok | {:error, :unexpected_local_ledger_entries}
   defp ensure_local_ledger_entries(
-         %SquidMesh.ReadModel.Inspection.Snapshot{run_id: run_id},
+         %Squidie.ReadModel.Inspection.Snapshot{run_id: run_id},
          expected_entries
        ) do
     entries =
@@ -1709,11 +1709,11 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  @spec latest_daily_digest_run([SquidMesh.ReadModel.Listing.Summary.t()]) ::
-          {:ok, SquidMesh.ReadModel.Listing.Summary.t()} | {:error, :missing_daily_digest_run}
+  @spec latest_daily_digest_run([Squidie.ReadModel.Listing.Summary.t()]) ::
+          {:ok, Squidie.ReadModel.Listing.Summary.t()} | {:error, :missing_daily_digest_run}
   defp latest_daily_digest_run(runs) when is_list(runs) do
     case Enum.max_by(runs, & &1.indexed_at) do
-      %SquidMesh.ReadModel.Listing.Summary{} = run -> {:ok, run}
+      %Squidie.ReadModel.Listing.Summary{} = run -> {:ok, run}
       _other -> {:error, :missing_daily_digest_run}
     end
   rescue
@@ -1721,7 +1721,7 @@ defmodule MinimalHostApp.Smoke do
   end
 
   @spec await_daily_digest_run(MapSet.t(Ecto.UUID.t()), non_neg_integer()) ::
-          {:ok, SquidMesh.ReadModel.Inspection.Snapshot.t()} | {:error, term()}
+          {:ok, Squidie.ReadModel.Inspection.Snapshot.t()} | {:error, term()}
   defp await_daily_digest_run(_existing_run_ids, 0), do: {:error, :missing_daily_digest_run}
 
   defp await_daily_digest_run(existing_run_ids, attempts_remaining) when attempts_remaining > 0 do
@@ -1767,9 +1767,9 @@ defmodule MinimalHostApp.Smoke do
   end
 
   defp reset_runtime_state! do
-    Repo.delete_all("squid_mesh_journal_entries")
-    Repo.delete_all("squid_mesh_journal_checkpoints")
-    Repo.delete_all("squid_mesh_journal_threads")
+    Repo.delete_all("squidie_journal_entries")
+    Repo.delete_all("squidie_journal_checkpoints")
+    Repo.delete_all("squidie_journal_threads")
     Repo.delete_all("local_ledger_entries")
     Repo.delete_all("oban_jobs")
     Repo.delete_all("oban_peers")

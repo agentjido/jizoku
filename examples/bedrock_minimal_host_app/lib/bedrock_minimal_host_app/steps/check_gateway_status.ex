@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Steps.CheckGatewayStatus do
   Example step that checks payment gateway state.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :check_gateway_status,
     description: "Checks gateway state",
     input_schema: [
@@ -15,9 +15,9 @@ defmodule BedrockMinimalHostApp.Steps.CheckGatewayStatus do
     ]
 
   @impl true
-  @spec run(map(), SquidMesh.Step.Context.t()) :: {:ok, map()} | {:retry, map()}
+  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()} | {:retry, map()}
   def run(%{invoice: invoice, gateway_url: gateway_url}, context) do
-    case SquidMesh.Tools.invoke(SquidMesh.Tools.HTTP, %{method: :get, url: gateway_url}) do
+    case Squidie.Tools.invoke(Squidie.Tools.HTTP, %{method: :get, url: gateway_url}) do
       {:ok, result} ->
         {:ok,
          %{
@@ -31,7 +31,7 @@ defmodule BedrockMinimalHostApp.Steps.CheckGatewayStatus do
 
       {:error, error} ->
         {:retry,
-         Map.put(SquidMesh.Tools.Error.to_map(error), :gateway_check, %{
+         Map.put(Squidie.Tools.Error.to_map(error), :gateway_check, %{
            attempt: attempt_metadata(context)
          })}
     end

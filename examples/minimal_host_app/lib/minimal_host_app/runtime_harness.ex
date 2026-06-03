@@ -3,7 +3,7 @@ defmodule MinimalHostApp.RuntimeHarness do
   Shared runtime and verification helpers for the example host app.
 
   The smoke, resilience, and soak validations all exercise the same embedded
-  Squid Mesh boundary, so runtime setup and durable run polling live here
+  Squidie boundary, so runtime setup and durable run polling live here
   instead of being duplicated across scripts and Mix tasks.
   """
 
@@ -27,7 +27,7 @@ defmodule MinimalHostApp.RuntimeHarness do
   @spec wait_for_execution() :: :ok
   def wait_for_execution do
     if manual_oban_testing?() do
-      _result = Oban.drain_queue(queue: :squid_mesh, with_recursion: true)
+      _result = Oban.drain_queue(queue: :squidie, with_recursion: true)
       :ok
     else
       :ok
@@ -37,14 +37,14 @@ defmodule MinimalHostApp.RuntimeHarness do
   @spec drain_available_jobs(pos_integer()) :: map() | :ok
   def drain_available_jobs(limit \\ 1) when is_integer(limit) and limit > 0 do
     if manual_oban_testing?() do
-      Oban.drain_queue(queue: :squid_mesh, with_limit: limit)
+      Oban.drain_queue(queue: :squidie, with_limit: limit)
     else
       :ok
     end
   end
 
   @spec await_terminal_run(Ecto.UUID.t(), keyword()) ::
-          {:ok, SquidMesh.ReadModel.Inspection.Snapshot.t()} | {:error, :timeout | term()}
+          {:ok, Squidie.ReadModel.Inspection.Snapshot.t()} | {:error, :timeout | term()}
   def await_terminal_run(run_id, opts \\ []) when is_binary(run_id) do
     attempts = Keyword.get(opts, :attempts, @default_poll_attempts)
     interval_ms = Keyword.get(opts, :interval_ms, @default_poll_interval_ms)
@@ -130,7 +130,7 @@ defmodule MinimalHostApp.RuntimeHarness do
 
       {:ok, run} ->
         _result =
-          SquidMesh.execute_next(
+          Squidie.execute_next(
             owner_id: "minimal-host-app-runtime-harness",
             now: next_runtime_tick(run)
           )
@@ -157,7 +157,7 @@ defmodule MinimalHostApp.RuntimeHarness do
       {:ok, %{scheduled_attempts: scheduled_attempts, visible_attempts: visible_attempts} = run} ->
         if Enum.any?(scheduled_attempts ++ visible_attempts, &(Map.get(&1, :step) == step)) do
           _result =
-            SquidMesh.execute_next(
+            Squidie.execute_next(
               owner_id: "minimal-host-app-runtime-harness",
               now: next_runtime_tick(run)
             )
@@ -274,7 +274,7 @@ defmodule MinimalHostApp.RuntimeHarness do
 
   @spec library_migrations_path() :: String.t()
   defp library_migrations_path do
-    Application.app_dir(:squid_mesh, "priv/repo/migrations")
+    Application.app_dir(:squidie, "priv/repo/migrations")
   end
 
   @spec repo_config() :: keyword()
