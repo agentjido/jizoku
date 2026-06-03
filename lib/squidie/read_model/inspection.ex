@@ -169,7 +169,8 @@ defmodule Squidie.ReadModel.Inspection do
         ),
       terminal?: terminal?,
       terminal_status: WorkflowAgent.Projection.terminal_status(workflow_projection),
-      terminal_error: WorkflowAgent.Projection.terminal_error(workflow_projection),
+      terminal_error:
+        public_terminal_error(WorkflowAgent.Projection.terminal_error(workflow_projection)),
       deadline:
         if(terminal?,
           do: nil,
@@ -254,6 +255,30 @@ defmodule Squidie.ReadModel.Inspection do
     |> applied_result_context()
     |> Map.merge(projection.context)
   end
+
+  defp public_terminal_error(nil), do: nil
+
+  defp public_terminal_error(error) when is_map(error) do
+    error
+    |> Map.take([
+      :code,
+      :message,
+      :retryable?,
+      :retry_after,
+      :type,
+      :persisted_definition_version,
+      :persisted_definition_fingerprint,
+      :current_definition_version,
+      :current_definition_fingerprint,
+      :path,
+      :target,
+      :missing_at
+    ])
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp public_terminal_error(_error), do: nil
 
   defp parent_run(%WorkflowAgent.Projection{context: context}) when is_map(context) do
     case Map.fetch(context, :parent) do

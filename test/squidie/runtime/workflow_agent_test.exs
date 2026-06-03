@@ -317,6 +317,52 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
     assert Projection.child_runs(agent.state.projection) == []
   end
 
+  test "rebuilds failed checkpoints missing terminal_error from durable history" do
+    error = %{
+      code: "gateway_timeout",
+      message: "gateway timeout",
+      retryable?: false,
+      secret: "should stay internal in projection"
+    }
+
+    assert {:ok, run_started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, run_terminal} =
+             DispatchProtocol.new_entry(:run_terminal, %{
+               run_id: @run_id,
+               status: :failed,
+               error: error,
+               occurred_at: @visible_at
+             })
+
+    assert {:ok, thread} = Journal.append_entries(@storage, [run_started, run_terminal])
+
+    checkpoint_projection =
+      Map.delete(
+        %Projection{
+          run_id: @run_id,
+          workflow: @workflow,
+          status: :failed,
+          terminal_status: :failed
+        },
+        :terminal_error
+      )
+
+    assert :ok =
+             Journal.put_checkpoint(@storage, {:run, @run_id}, checkpoint_projection, thread.rev,
+               updated_at: @visible_at
+             )
+
+    assert {:ok, agent} = WorkflowAgent.rebuild(@storage, @run_id)
+
+    assert Projection.terminal_error(agent.state.projection) == error
+  end
+
   test "persists a checkpoint from the rebuilt workflow agent state" do
     assert {:ok, run_started} =
              DispatchProtocol.new_entry(:run_started, %{

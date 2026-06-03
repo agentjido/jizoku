@@ -91,7 +91,6 @@ defmodule Squidie.ReadModel.Inspection.Snapshot do
     :reason,
     :terminal?,
     :terminal_status,
-    :terminal_error,
     :thread_revisions
   ]
 
