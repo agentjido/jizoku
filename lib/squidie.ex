@@ -109,6 +109,12 @@ defmodule Squidie do
 
   @doc """
   Starts a new workflow run through the workflow's default trigger.
+
+  Public manual starts load journal runtime defaults from `config :squidie`.
+  When `journal_storage:` is not passed explicitly, Squidie infers Ecto-backed
+  journal storage from the configured `:repo`, so host apps must either set
+  `config :squidie, repo: MyApp.Repo` globally or pass an explicit
+  `journal_storage:` override from their runtime boundary.
   """
   @spec start(module(), map()) ::
           {:ok, Squidie.ReadModel.Inspection.Snapshot.t()}
@@ -163,6 +169,10 @@ defmodule Squidie do
   supports normal action steps, immediate built-in `:log` steps, built-in
   `:wait` steps in transition and dependency workflows, and manual `:pause` or
   `:approval` boundaries.
+
+  Public manual starts still resolve that default storage through
+  `config :squidie`, so host apps must keep `:repo` configured globally unless
+  they pass an explicit `journal_storage:` override.
   """
   @spec start(module(), atom(), map(), keyword()) ::
           {:ok, Squidie.ReadModel.Inspection.Snapshot.t()}

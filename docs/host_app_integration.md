@@ -71,9 +71,11 @@ config :squidie,
   queue: "default"
 ```
 
-Required keys:
+Host config keys:
 
-- `:repo` - the Ecto repo Squidie uses for persisted runtime state
+- `:repo` - required for the default Ecto-backed journal setup; Squidie uses it
+  to infer `{Squidie.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}` when
+  `journal_storage:` is omitted
 
 Optional keys:
 
@@ -87,6 +89,13 @@ Optional keys:
   journal-backed runtime or read-model paths.
 - `:queue` - `"default"` by default; selects the journal dispatch queue used by
   the configured journal runtime and read model
+
+Public `Squidie.start/2`, `start/3`, and `start/4` calls resolve those defaults
+through the application environment too. If a host app starts runs manually
+from IEx, a Phoenix controller, or another direct boundary, it still needs
+`config :squidie, repo: MyApp.Repo` when it wants the default inferred Ecto
+storage. Hosts that already own a storage adapter boundary can skip global
+`repo:` config and pass an explicit `journal_storage:` override instead.
 
 Stale-worker handling comes from journal claim fencing or the host backend's
 lease system.

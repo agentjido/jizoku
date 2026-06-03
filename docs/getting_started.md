@@ -98,6 +98,18 @@ Manual triggers start through the public API:
   )
 ```
 
+That public start path still resolves journal defaults through
+`config :squidie`. If `journal_storage:` is omitted, Squidie infers Ecto-backed
+storage from the configured `:repo`, so manual starts from IEx or a controller
+need either:
+
+- global host config such as `config :squidie, repo: MyApp.Repo`
+- an explicit `journal_storage:` override at the host boundary
+
+If the host already owns a journal storage boundary, the explicit
+`journal_storage:` path is enough; `repo:` only stays required for the inferred
+default Ecto storage setup.
+
 Inspection keeps explicit names such as `inspect_run/2` and
 `inspect_run_graph/2` rather than adding an `inspect/2` alias.
 
