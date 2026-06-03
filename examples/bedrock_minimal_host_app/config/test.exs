@@ -11,11 +11,11 @@ config :bedrock_minimal_host_app, BedrockMinimalHostApp.Repo,
     System.get_env("DATABASE_URL") ||
       "postgres://postgres:postgres@localhost:5432/bedrock_minimal_host_app_test"
 
-config :bedrock_minimal_host_app, BedrockMinimalHostApp.SquidMeshDeliveryAdapter,
+config :bedrock_minimal_host_app, BedrockMinimalHostApp.SquidieDeliveryAdapter,
   queue_id: "tenant_a",
-  topic: "squid_mesh:payload"
+  topic: "squidie:payload"
 
-config :squid_mesh,
+config :squidie,
   repo: BedrockMinimalHostApp.Repo
 
 config :logger, level: :warning

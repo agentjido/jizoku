@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.CancellableWait do
   Example workflow used to verify cancellation convergence after delayed waits.
   """
 
-  use SquidMesh.Workflow
+  use Squidie.Workflow
 
   workflow do
     trigger :manual do

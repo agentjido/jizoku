@@ -1,17 +1,17 @@
 # Operations Guide
 
-This guide covers the operational boundaries Squid Mesh expects host
+This guide covers the operational boundaries Squidie expects host
 applications to own.
 
 ## Runtime Guarantees
 
-Squid Mesh currently guarantees:
+Squidie currently guarantees:
 
 - durable run, step, attempt, dispatch, and manual-control facts in the configured journal storage
 - durable queued and scheduled workflow intent through journal dispatch facts
 - workflow-level retry, replay, inspection, and cancellation on top of that durable state
 
-Squid Mesh does not currently claim:
+Squidie does not currently claim:
 
 - exactly-once external side effects
 - replacing every backend-specific worker lease or heartbeat system
@@ -37,12 +37,12 @@ Avoid:
 
 ## Worker Sizing
 
-Squid Mesh workers pull visible journal attempts through `SquidMesh.execute_next/1`,
+Squidie workers pull visible journal attempts through `Squidie.execute_next/1`,
 so worker sizing stays a host-app decision.
 
 Recommended starting point:
 
-- dedicate a small supervised worker pool to Squid Mesh execution
+- dedicate a small supervised worker pool to Squidie execution
 - isolate higher-cost workflow traffic from unrelated app jobs
 - size concurrency conservatively, then increase based on visible attempt depth
 
@@ -57,10 +57,10 @@ If workflows call slow external systems:
 
 ## Retries And Backoff
 
-Workflow-step retries are owned by Squid Mesh, not by the host job backend's
+Workflow-step retries are owned by Squidie, not by the host job backend's
 retry counter.
 
-Jido action retries are also disabled at the Squid Mesh runtime boundary so one
+Jido action retries are also disabled at the Squidie runtime boundary so one
 workflow attempt maps to one persisted step attempt.
 
 Recommended practice:
@@ -92,7 +92,7 @@ transition(:capture_payment, on: :error, to: :issue_credit, recovery: :compensat
 transition(:reserve_inventory, on: :error, to: :release_inventory, recovery: :undo)
 ```
 
-When Squid Mesh routes through one of these transitions, inspection history
+When Squidie routes through one of these transitions, inspection history
 shows the failed step's `recovery.failure` decision and emits either
 `:compensation_routed` or `:undo_routed` in `audit_events`.
 
@@ -100,7 +100,7 @@ shows the failed step's `recovery.failure` decision and emits either
 
 `transaction: :repo` gives one custom step a same-process host repo transaction.
 It is useful for local database groups that should commit or roll back together
-before Squid Mesh advances the durable workflow:
+before Squidie advances the durable workflow:
 
 ```elixir
 step :post_local_ledger_entries, MyApp.Steps.PostLocalLedgerEntries,
@@ -110,11 +110,11 @@ step :post_local_ledger_entries, MyApp.Steps.PostLocalLedgerEntries,
 Operational boundary:
 
 - the action callback runs in the worker process inside `config.repo.transaction/1`
-- `{:ok, output}` commits the host repo transaction, then Squid Mesh persists
+- `{:ok, output}` commits the host repo transaction, then Squidie persists
   the step result and dispatches successors in its normal durable transaction
-- `{:error, reason}` rolls back the host repo transaction, then Squid Mesh
+- `{:error, reason}` rolls back the host repo transaction, then Squidie
   persists the failed step and applies retry or failure routing
-- a crash after local commit but before Squid Mesh persists progress can still
+- a crash after local commit but before Squidie persists progress can still
   be redelivered, so local transaction groups should use natural keys,
   uniqueness, or other idempotency guards when duplicate local writes matter
 - this option does not cover external APIs, downstream steps, runtime dispatch, or
@@ -131,27 +131,27 @@ recoverable workflows, but it can repeat external effects that have already
 happened.
 
 When a completed source run contains a step marked `irreversible: true` or
-`compensatable: false`, Squid Mesh blocks replay by default:
+`compensatable: false`, Squidie blocks replay by default:
 
 ```elixir
-{:error, {:unsafe_replay, details}} = SquidMesh.replay(run_id)
+{:error, {:unsafe_replay, details}} = Squidie.replay(run_id)
 ```
 
 Operator tooling should show `details.steps` and require a deliberate decision
 before retrying. If the operator accepts the risk, pass the explicit override:
 
 ```elixir
-SquidMesh.replay(run_id, allow_irreversible: true)
+Squidie.replay(run_id, allow_irreversible: true)
 ```
 
 Use this path only after checking the external system or domain records. The
-marker changes Squid Mesh recovery semantics; it does not make a payment,
+marker changes Squidie recovery semantics; it does not make a payment,
 message, shipment, or webhook idempotent.
 
 ## Backend-Owned Leases And Fencing
 
 Lease-capable delivery backends should own queue delivery, claim expiry,
-heartbeats, retry timing, and worker recovery. Squid Mesh keeps the
+heartbeats, retry timing, and worker recovery. Squidie keeps the
 workflow-facing facts durable: runnable identity, attempt history,
 workflow-state mutation fences, completion, failure, cancellation, and
 inspection.
@@ -170,7 +170,7 @@ backend, see the Bedrock setup section in `docs/host_app_integration.md`.
 Completion, failure, pause, and approval progression must be applied only by
 the current attempt owner. If an expired attempt is reclaimed and a newer
 attempt takes over, a stale worker is rejected before it can mutate step
-history or run state. This protects Squid Mesh's durable state from stale
+history or run state. This protects Squidie's durable state from stale
 workers, but it does not make external side effects exactly once. External API
 calls still need idempotency keys or domain-level duplicate detection.
 
@@ -200,7 +200,7 @@ Current boundary:
 
 - activation is static at boot
 - the host scheduler owns recurring scheduling
-- Squid Mesh turns the delivered cron payload into a normal journal-backed run
+- Squidie turns the delivered cron payload into a normal journal-backed run
   start
 
 Recommended practice:

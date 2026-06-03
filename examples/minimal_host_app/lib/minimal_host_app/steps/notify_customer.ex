@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Steps.NotifyCustomer do
   Example step that records customer notification intent.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :notify_customer,
     description: "Records notification intent",
     input_schema: [
@@ -15,7 +15,7 @@ defmodule MinimalHostApp.Steps.NotifyCustomer do
     ]
 
   @impl true
-  @spec run(map(), SquidMesh.Step.Context.t()) :: {:ok, map()}
+  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()}
   def run(%{invoice: invoice, gateway_check: gateway_check}, _context) do
     {:ok,
      %{

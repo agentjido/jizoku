@@ -2,7 +2,7 @@ defmodule BedrockMinimalHostApp.Application do
   @moduledoc """
   Supervision tree for the example host application.
 
-  The example starts the Squid Mesh Ecto repo plus an embedded Bedrock cluster
+  The example starts the Squidie Ecto repo plus an embedded Bedrock cluster
   and queue so workflow state and delivery state stay visibly separate.
   """
 

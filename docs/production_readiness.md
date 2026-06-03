@@ -1,9 +1,9 @@
 # Production Readiness
 
-Squid Mesh provides a supported `0.1.x` journal runtime for embedded host-app
+Squidie provides a supported `0.1.x` journal runtime for embedded host-app
 workflows.
 
-Squid Mesh is ready to adopt inside host applications that can own their worker
+Squidie is ready to adopt inside host applications that can own their worker
 placement, queue/leasing strategy, deploy path, and side-effect safety. Start
 with a bounded workflow class, prove it in the host app, then expand the surface
 as operational confidence grows.
@@ -13,8 +13,8 @@ as operational confidence grows.
 | Area | Current stance | Verification or evidence | Host responsibility |
 | --- | --- | --- | --- |
 | Workflow DSL and normalized specs | Supported | Formatter rules, workflow authoring docs, reference workflows, and test coverage | Keep workflow modules backend-neutral and validate payload contracts |
-| Journal-backed starts and execution | Supported | `SquidMesh.start/3`, `SquidMesh.execute_next/1`, smoke coverage, and example host app | Supervise workers and size execution capacity |
-| Postgres-compatible Ecto storage | Supported baseline | Installed Squid Mesh migration and storage strategy docs | Own database backups, migrations, pooling, and retention policy |
+| Journal-backed starts and execution | Supported | `Squidie.start/3`, `Squidie.execute_next/1`, smoke coverage, and example host app | Supervise workers and size execution capacity |
+| Postgres-compatible Ecto storage | Supported baseline | Installed Squidie migration and storage strategy docs | Own database backups, migrations, pooling, and retention policy |
 | Dispatch claims and heartbeats | Supported | Journal lease fencing and heartbeat coverage | Set worker owner ids, claim durations, and heartbeat intervals for real step duration |
 | Retries and terminal failures | Supported | Workflow retry policy tests and example smoke paths | Make external side effects idempotent and alert on terminal failures |
 | Manual pause and approval controls | Supported | Resume, approve, reject, and restart-boundary coverage | Authorize operators and persist/redact approval metadata safely |
@@ -33,9 +33,9 @@ as operational confidence grows.
 
 For the first production workflow, keep the scope concrete:
 
-- record the Squid Mesh version, Elixir/OTP versions, database version, queue
+- record the Squidie version, Elixir/OTP versions, database version, queue
   backend, and storage adapter
-- apply Squid Mesh migrations in staging before production
+- apply Squidie migrations in staging before production
 - choose one workflow class with clear operator value and well-understood side
   effects
 - verify that workflow through the host worker and deploy path
@@ -67,7 +67,7 @@ These checks are meant to answer different questions:
 
 ## Decision Rule
 
-Use Squid Mesh in production for a bounded workflow class when:
+Use Squidie in production for a bounded workflow class when:
 
 1. the rollout guidance above is satisfied for that workflow class,
 2. the example verification paths are green on the selected release baseline,

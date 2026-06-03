@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Steps.PostLocalLedgerEntries do
   Writes a small local ledger group inside the host repo transaction.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :post_local_ledger_entries,
     description: "Posts two local ledger entries in one host repo transaction",
     input_schema: [
@@ -19,7 +19,7 @@ defmodule BedrockMinimalHostApp.Steps.PostLocalLedgerEntries do
   @impl true
   def run(
         %{account_id: account_id, fail_after_reserve: fail_after_reserve?},
-        %SquidMesh.Step.Context{run_id: run_id}
+        %Squidie.Step.Context{run_id: run_id}
       ) do
     insert_entry!(run_id, account_id, "reserve")
 

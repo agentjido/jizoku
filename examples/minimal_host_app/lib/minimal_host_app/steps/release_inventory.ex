@@ -6,7 +6,7 @@ defmodule MinimalHostApp.Steps.ReleaseInventory do
   output and records the domain-level rollback result.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :release_inventory,
     description: "Releases a previous inventory reservation",
     input_schema: [

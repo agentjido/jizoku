@@ -13,11 +13,11 @@ config :bedrock_minimal_host_app, BedrockMinimalHostApp.Repo,
   show_sensitive_data_on_connection_error: true,
   stacktrace: true
 
-config :bedrock_minimal_host_app, BedrockMinimalHostApp.SquidMeshDeliveryAdapter,
+config :bedrock_minimal_host_app, BedrockMinimalHostApp.SquidieDeliveryAdapter,
   queue_id: "tenant_a",
-  topic: "squid_mesh:payload"
+  topic: "squidie:payload"
 
-config :squid_mesh,
+config :squidie,
   repo: BedrockMinimalHostApp.Repo
 
 import_config "#{config_env()}.exs"

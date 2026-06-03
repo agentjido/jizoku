@@ -1,4 +1,4 @@
-defmodule SquidMesh.DataCase do
+defmodule Squidie.DataCase do
   @moduledoc false
 
   use ExUnit.CaseTemplate
@@ -7,18 +7,18 @@ defmodule SquidMesh.DataCase do
 
   using do
     quote do
-      alias SquidMesh.Test.Repo
+      alias Squidie.Test.Repo
 
       import ExUnit.Assertions
       import Ecto
       import Ecto.Changeset
       import Ecto.Query
-      import SquidMesh.DataCase
+      import Squidie.DataCase
     end
   end
 
   setup tags do
-    pid = Sandbox.start_owner!(SquidMesh.Test.Repo, shared: not tags[:async])
+    pid = Sandbox.start_owner!(Squidie.Test.Repo, shared: not tags[:async])
     on_exit(fn -> Sandbox.stop_owner(pid) end)
     :ok
   end

@@ -1,21 +1,21 @@
 # Graph Inspection Contract
 
-`SquidMesh.inspect_run_graph/2` returns a graph-oriented view of one durable
+`Squidie.inspect_run_graph/2` returns a graph-oriented view of one durable
 workflow run. Use it when a host app, CLI, dashboard, or visual workflow tool
 needs nodes and edges instead of raw journal history.
 
 The public API still returns structs:
 
 ```elixir
-{:ok, graph} = SquidMesh.inspect_run_graph(run_id)
+{:ok, graph} = Squidie.inspect_run_graph(run_id)
 ```
 
-Use `SquidMesh.Runs.GraphInspection.to_map/1` at the host boundary when a UI
+Use `Squidie.Runs.GraphInspection.to_map/1` at the host boundary when a UI
 needs a stable map payload:
 
 ```elixir
-{:ok, graph} = SquidMesh.inspect_run_graph(run_id)
-payload = SquidMesh.Runs.GraphInspection.to_map(graph)
+{:ok, graph} = Squidie.inspect_run_graph(run_id)
+payload = Squidie.Runs.GraphInspection.to_map(graph)
 ```
 
 That keeps existing struct callers compatible while giving UI serializers an
@@ -48,8 +48,8 @@ Workflow modules are serialized with `Atom.to_string/1`, so Elixir modules use
 the normal `"Elixir."` prefix. Persisted serialized workflow definitions keep
 their stored string value.
 
-For runtime-authored specs started with `SquidMesh.start_spec/3` or
-`SquidMesh.start_spec/4`, graph inspection uses the resolved definition
+For runtime-authored specs started with `Squidie.start_spec/3` or
+`Squidie.start_spec/4`, graph inspection uses the resolved definition
 persisted on the run. The stored workflow value remains a stable identity, but
 nodes, edges, action keys, and selected transitions come from the durable spec
 rather than from loading a workflow module.
@@ -80,7 +80,7 @@ Nodes represent workflow steps:
 ```
 
 `action` is the stable host-owned action key when the node came from a spec
-resolved through `SquidMesh.Workflow.resolve_spec_actions/2`. Compiled
+resolved through `Squidie.Workflow.resolve_spec_actions/2`. Compiled
 module-authored workflows usually leave it nil.
 
 `recovery` is populated from the durable runnable recovery policy when the
@@ -107,8 +107,8 @@ By default, inputs, outputs, errors, manual state, and attempt details are nil
 or empty because they can contain host-domain data. Request details explicitly:
 
 ```elixir
-{:ok, graph} = SquidMesh.inspect_run_graph(run_id, include_history: true)
-payload = SquidMesh.Runs.GraphInspection.to_map(graph)
+{:ok, graph} = Squidie.inspect_run_graph(run_id, include_history: true)
+payload = Squidie.Runs.GraphInspection.to_map(graph)
 ```
 
 With history enabled, a node can include fields such as:
@@ -129,12 +129,12 @@ outside trusted operator surfaces. For field-selection guidance, see
 [Observability: redaction and field selection](observability.md#redaction-and-field-selection).
 
 Dynamic work nodes are inspectable runtime-authored structure. Preview them
-through `SquidMesh.preview_dynamic_work/3` when a UI or visual editor needs to
+through `Squidie.preview_dynamic_work/3` when a UI or visual editor needs to
 validate a candidate payload and render the graph overlay before writing. Record
-them through `SquidMesh.record_dynamic_work/3` so the runtime validates the
+them through `Squidie.record_dynamic_work/3` so the runtime validates the
 stable dynamic key, producer origin, node ids, and optional dynamic edges
 against an active run snapshot before appending durable metadata. Schedule them
-through `SquidMesh.schedule_dynamic_work/3` when the dynamic nodes should also
+through `Squidie.schedule_dynamic_work/3` when the dynamic nodes should also
 become executable runnable intents. Graph projections mark dynamic nodes with
 `dynamic?: true` so graph UIs can distinguish them from declared workflow steps:
 
@@ -150,7 +150,7 @@ become executable runnable intents. Graph projections mark dynamic nodes with
 }
 ```
 
-`SquidMesh.Runs.DynamicWorkPreview.to_map/1` exposes stable overlay metadata for
+`Squidie.Runs.DynamicWorkPreview.to_map/1` exposes stable overlay metadata for
 editor controls without requiring clients to diff graphs themselves:
 
 ```elixir
@@ -173,7 +173,7 @@ Exact duplicate previews are still valid but return `duplicate?: true`,
 `warnings: [:duplicate_dynamic_work]`.
 
 Recorded dynamic work also appears on `inspect_run_graph/2` and
-`SquidMesh.Runs.GraphInspection.to_map/1` as `dynamic_work_overlays`. Each
+`Squidie.Runs.GraphInspection.to_map/1` as `dynamic_work_overlays`. Each
 overlay summarizes one durable dynamic-work record with the producer node,
 stable added node ids, stable added edge ids, counts, and recorded status:
 
@@ -192,7 +192,7 @@ stable added node ids, stable added edge ids, counts, and recorded status:
 Use `dynamic_work_overlays` for graph controls, expandable run-detail panels,
 and change summaries. Use `dynamic_work` when the caller needs the full
 normalized durable fact.
-Preview graphs returned inside `SquidMesh.Runs.DynamicWorkPreview.to_map/1`
+Preview graphs returned inside `Squidie.Runs.DynamicWorkPreview.to_map/1`
 may include a candidate overlay for the unrecorded dynamic-work payload. The
 top-level preview fields remain authoritative for `recordable?`, duplicate
 state, added ids, and warnings.
@@ -200,7 +200,7 @@ state, added ids, and warnings.
 When a dynamic-work overlay represents future executable work, pass the
 host-owned `:action_registry` option to `preview_dynamic_work/3` and
 `record_dynamic_work/3`. Pass it to every `schedule_dynamic_work/3` call.
-Squid Mesh then requires each dynamic node action key to be present, enabled,
+Squidie then requires each dynamic node action key to be present, enabled,
 and compatible before returning, recording, or scheduling the overlay.
 
 Previewing or recording dynamic work remains inspection-only: it does not
@@ -348,7 +348,7 @@ Mesh may add optional fields in future releases, but the existing field names,
 identifier semantics, node statuses, edge statuses, and default detail redaction
 are stable compatibility points.
 
-If the workflow module can no longer be loaded, Squid Mesh still returns any
+If the workflow module can no longer be loaded, Squidie still returns any
 durable node state it can infer from the run. `edges` is empty in that degraded
 state because topology belongs to the workflow definition.
 

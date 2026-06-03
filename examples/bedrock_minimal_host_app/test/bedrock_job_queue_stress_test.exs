@@ -15,20 +15,20 @@ defmodule BedrockMinimalHostApp.BedrockJobQueueStressTest do
     delivery_config =
       Application.get_env(
         :bedrock_minimal_host_app,
-        BedrockMinimalHostApp.SquidMeshDeliveryAdapter,
+        BedrockMinimalHostApp.SquidieDeliveryAdapter,
         []
       )
 
     Application.put_env(
       :bedrock_minimal_host_app,
-      BedrockMinimalHostApp.SquidMeshDeliveryAdapter,
+      BedrockMinimalHostApp.SquidieDeliveryAdapter,
       Keyword.put(delivery_config, :queue_id, queue_a)
     )
 
     on_exit(fn ->
       Application.put_env(
         :bedrock_minimal_host_app,
-        BedrockMinimalHostApp.SquidMeshDeliveryAdapter,
+        BedrockMinimalHostApp.SquidieDeliveryAdapter,
         delivery_config
       )
     end)
@@ -128,14 +128,14 @@ defmodule BedrockMinimalHostApp.BedrockJobQueueStressTest do
       assert %{pending_count: 0, processing_count: 0} = JobQueue.stats(queue_a)
     end
 
-    test "maps Squid Mesh cron payloads into delayed Bedrock jobs", %{queue_a: queue_a} do
+    test "maps Squidie cron payloads into delayed Bedrock jobs", %{queue_a: queue_a} do
       intended_window = %{
         "start_at" => "2026-05-22T00:00:00Z",
         "end_at" => "2026-05-23T00:00:00Z"
       }
 
       assert {:ok, metadata} =
-               BedrockMinimalHostApp.SquidMeshDeliveryAdapter.enqueue_cron(
+               BedrockMinimalHostApp.SquidieDeliveryAdapter.enqueue_cron(
                  %{},
                  DailyDigest,
                  :daily_digest,
@@ -145,9 +145,9 @@ defmodule BedrockMinimalHostApp.BedrockJobQueueStressTest do
                )
 
       assert %{
-               adapter: BedrockMinimalHostApp.SquidMeshDeliveryAdapter,
+               adapter: BedrockMinimalHostApp.SquidieDeliveryAdapter,
                queue: ^queue_a,
-               topic: "squid_mesh:payload",
+               topic: "squidie:payload",
                scheduled_at: scheduled_at
              } = metadata
 

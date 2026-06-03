@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Steps.PrepareNotification do
   Example join step that waits for account and invoice context.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :prepare_notification,
     description: "Builds notification context once dependencies are ready",
     input_schema: [
@@ -16,7 +16,7 @@ defmodule MinimalHostApp.Steps.PrepareNotification do
     ]
 
   @impl true
-  @spec run(map(), SquidMesh.Step.Context.t()) :: {:ok, map()}
+  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()}
   def run(%{account_id: account_id, invoice_id: invoice_id, account_tier: account_tier}, _context) do
     {:ok,
      %{

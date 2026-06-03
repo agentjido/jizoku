@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to Squid Mesh.
+Thanks for contributing to Squidie.
 
 ## Development Setup
 

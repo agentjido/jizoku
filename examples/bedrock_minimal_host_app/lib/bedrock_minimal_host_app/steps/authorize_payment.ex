@@ -6,7 +6,7 @@ defmodule BedrockMinimalHostApp.Steps.AuthorizePayment do
   void it during compensation if capture fails.
   """
 
-  use SquidMesh.Step,
+  use Squidie.Step,
     name: :authorize_payment,
     description: "Authorizes payment for an order",
     input_schema: [

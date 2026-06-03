@@ -11,7 +11,7 @@ defmodule MinimalHostApp.Steps.CheckGatewayStatusTest do
       Plug.Conn.resp(conn, 200, "retry_required")
     end)
 
-    context = %SquidMesh.Step.Context{
+    context = %Squidie.Step.Context{
       run_id: "run_123",
       workflow: PaymentRecovery,
       step: :check_gateway_status,
@@ -64,7 +64,7 @@ defmodule MinimalHostApp.Steps.CheckGatewayStatusTest do
   end
 
   defp step_context do
-    %SquidMesh.Step.Context{
+    %Squidie.Step.Context{
       run_id: "run_123",
       workflow: PaymentRecovery,
       step: :check_gateway_status,

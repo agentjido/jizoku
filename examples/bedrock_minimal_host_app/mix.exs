@@ -30,7 +30,7 @@ defmodule BedrockMinimalHostApp.MixProject do
       {:bedrock_job_queue, github: "bedrock-kv/job_queue"},
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22.2"},
-      {:squid_mesh, path: "../.."},
+      {:squidie, path: "../.."},
       # Jido currently allows an older Zoi range that keeps Decimal on 2.x.
       # The example pins Zoi forward so its isolated lockfile can use Decimal 3.
       {:zoi, "~> 0.18.4", override: true}
@@ -39,7 +39,7 @@ defmodule BedrockMinimalHostApp.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get", "squid_mesh.install", "ecto.setup"],
+      setup: ["deps.get", "squidie.install", "ecto.setup"],
       "ecto.setup": ["ecto.create", "ecto.migrate"],
       "ecto.reset": ["ecto.drop", "ecto.setup"]
     ]

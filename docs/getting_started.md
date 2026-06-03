@@ -5,13 +5,13 @@ This guide covers the essential workflow authoring and integration concepts. It 
 > ### Learn with Livebook
 >
 > The fastest way to start is the interactive Livebook. It demonstrates workflow creation, step modules, run inspection, and approval flows.
-> [![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fdark-trench%2Fsquid_mesh%2Fblob%2Fmain%2Fdocs%2Fgetting_started.livemd)
+> [![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fdark-trench%2Fsquidie%2Fblob%2Fmain%2Fdocs%2Fgetting_started.livemd)
 
 For production integration, follow the steps below. They introduce retries, manual gates, cron, child runs, and Bedrock leases after establishing the base execution loop.
 
 ## Mental Model
 
-Squid Mesh has three boundaries:
+Squidie has three boundaries:
 
 1. **Workflow definition** - a compiled Elixir module that declares triggers,
    payload fields, steps, transitions, retries, waits, approvals, and recovery
@@ -19,7 +19,7 @@ Squid Mesh has three boundaries:
 2. **Journal runtime** - the Jido-native runtime that records run, dispatch,
    attempt, manual-control, and terminal facts in durable storage.
 3. **Host execution** - supervised host processes that call
-   `SquidMesh.execute_next/1`, plus optional schedulers or lease-capable
+   `Squidie.execute_next/1`, plus optional schedulers or lease-capable
    backends such as Bedrock.
 
 The workflow definition says what should happen. The journal says what did
@@ -31,7 +31,7 @@ workflow state.
 Start with the smallest embedded setup:
 
 ```elixir
-config :squid_mesh,
+config :squidie,
   repo: MyApp.Repo,
   queue: "default"
 ```
@@ -39,7 +39,7 @@ config :squid_mesh,
 Install and run the migration:
 
 ```sh
-mix squid_mesh.install
+mix squidie.install
 mix ecto.migrate
 ```
 
@@ -53,7 +53,7 @@ Workflow authors should think in business steps, not agents or jobs:
 
 ```elixir
 defmodule MiddleEarth.Workflows.RingErrand do
-  use SquidMesh.Workflow
+  use Squidie.Workflow
 
   workflow do
     trigger :leave_shire do
@@ -77,8 +77,8 @@ defmodule MiddleEarth.Workflows.RingErrand do
 end
 ```
 
-Prefer `use SquidMesh.Step` for custom step modules. Raw `Jido.Action` modules
-remain available for interop, but the Squid Mesh step contract keeps workflow
+Prefer `use Squidie.Step` for custom step modules. Raw `Jido.Action` modules
+remain available for interop, but the Squidie step contract keeps workflow
 code easier to read.
 
 Read next: [Workflow authoring](workflow_authoring.md), or run the
@@ -91,7 +91,7 @@ Manual triggers start through the public API:
 
 ```elixir
 {:ok, run} =
-  SquidMesh.start(
+  Squidie.start(
     MiddleEarth.Workflows.RingErrand,
     :leave_shire,
     %{ring_id: "one-ring"}
@@ -103,13 +103,13 @@ Inspection keeps explicit names such as `inspect_run/2` and
 
 Public start, replay, and control helpers use concise names: `start/3`,
 `resume/3`, `approve/3`, `reject/3`, `cancel/2`, and `replay/2`.
-`SquidMesh.Runtime.Signal` constructors keep run-suffixed names because those
+`Squidie.Runtime.Signal` constructors keep run-suffixed names because those
 names describe persisted command intent.
 
 Workers drain journal attempts:
 
 ```elixir
-SquidMesh.execute_next(owner_id: "worker-1")
+Squidie.execute_next(owner_id: "worker-1")
 ```
 
 Wrap this call in a supervised worker loop. Start simple: call `execute_next/1`, back off when it returns `{:ok, :none}`, then add metrics and capacity controls as needed.
@@ -119,18 +119,18 @@ Read next: [Host app integration](host_app_integration.md#journal-worker-contrac
 ## 4. Start Child Runs When Work Expands
 
 When a native step discovers runtime work that should have its own durable
-history, start a child workflow from that step's `SquidMesh.Step.Context`:
+history, start a child workflow from that step's `Squidie.Step.Context`:
 
 ```elixir
 defmodule Hobbiton.Steps.SendPartyInvites do
-  use SquidMesh.Step, name: :send_party_invites
+  use Squidie.Step, name: :send_party_invites
 
   @impl true
-  def run(%{party_id: party_id, guests: guests}, %SquidMesh.Step.Context{} = context) do
+  def run(%{party_id: party_id, guests: guests}, %Squidie.Step.Context{} = context) do
     children =
       for guest <- guests do
         {:ok, child} =
-          SquidMesh.start_child_run(
+          Squidie.start_child_run(
             context,
             Hobbiton.Workflows.DeliverInvite,
             %{party_id: party_id, guest_id: guest.id},
@@ -157,15 +157,15 @@ Read next: [Workflow authoring](workflow_authoring.md#child-workflow-runs).
 Every run should be explainable from durable facts:
 
 ```elixir
-{:ok, run} = SquidMesh.inspect_run(run.run_id, include_history: true)
-{:ok, explanation} = SquidMesh.explain_run(run.run_id)
+{:ok, run} = Squidie.inspect_run(run.run_id, include_history: true)
+{:ok, explanation} = Squidie.explain_run(run.run_id)
 ```
 
 Use list APIs for dashboard indexes and inspection APIs for details:
 
 ```elixir
-{:ok, runs} = SquidMesh.list_runs([])
-{:ok, graph} = SquidMesh.inspect_run_graph(run.run_id)
+{:ok, runs} = Squidie.list_runs([])
+{:ok, graph} = Squidie.inspect_run_graph(run.run_id)
 ```
 
 This is the surface SquidSonar and other tooling should build on: list runs by
@@ -202,7 +202,7 @@ transition :cross_moria,
   recovery: :compensation
 ```
 
-Keep external side effects idempotent. Squid Mesh can fence stale workflow
+Keep external side effects idempotent. Squidie can fence stale workflow
 mutations, but it cannot make a payment provider, email API, or webhook exactly
 once.
 
@@ -222,8 +222,8 @@ transition :wait_for_council, on: :error, to: :walk_home_awkwardly
 Operators resolve them through public APIs:
 
 ```elixir
-SquidMesh.approve(run_id, %{actor: "ops_123", comment: "verified"})
-SquidMesh.reject(run_id, %{actor: "ops_123", comment: "fraud risk"})
+Squidie.approve(run_id, %{actor: "ops_123", comment: "verified"})
+Squidie.reject(run_id, %{actor: "ops_123", comment: "fraud risk"})
 ```
 
 Inspection history keeps pause, approval, rejection, and resume facts visible
@@ -240,8 +240,8 @@ trigger :daily_digest do
 end
 ```
 
-The scheduler should deliver a `SquidMesh.Executor.Payload.cron/3` payload to
-`SquidMesh.Runtime.Runner.perform/2`. Step and compensation payloads are not
+The scheduler should deliver a `Squidie.Executor.Payload.cron/3` payload to
+`Squidie.Runtime.Runner.perform/2`. Step and compensation payloads are not
 part of the journal-backed runtime contract.
 
 For idempotent cron starts, pass a stable `signal_id` or a complete
@@ -258,7 +258,7 @@ Bedrock is the recommended reference backend today because the example app
 already covers durable queueing, delayed visibility, claims, heartbeats,
 completion, retry, and dead-letter behavior. That path is useful when multiple
 workers or nodes may compete for work and the host wants backend-owned lease
-semantics around the Squid Mesh journal.
+semantics around the Squidie journal.
 
 Read next: [Bedrock setup](host_app_integration.md#bedrock-lease-backend-setup)
 and the [Bedrock minimal host app](../examples/bedrock_minimal_host_app/README.md).
@@ -267,11 +267,11 @@ and the [Bedrock minimal host app](../examples/bedrock_minimal_host_app/README.m
 
 | Gotcha | What to do |
 | --- | --- |
-| Treating Squid Mesh like only a job queue | Model business lifecycle in workflow steps, transitions, retries, waits, and manual boundaries. |
+| Treating Squidie like only a job queue | Model business lifecycle in workflow steps, transitions, retries, waits, and manual boundaries. |
 | Depending on external exactly-once behavior | Use idempotency keys, natural keys, or domain duplicate checks in side-effecting steps. |
 | Hiding decisions in step internals | Put branches, manual gates, retries, and recovery routes in the workflow where inspection can explain them. |
 | Using long waits as general timers | Use waits for workflow-scale delays; use host scheduling when the whole run should start later. |
-| Letting delivery code own workflow rules | Keep delivery and job boundaries thin; call host-owned modules that wrap Squid Mesh public APIs. |
+| Letting delivery code own workflow rules | Keep delivery and job boundaries thin; call host-owned modules that wrap Squidie public APIs. |
 | Assuming every database is a good journal store | Keep the adapter boundary database-agnostic, but require ordered appends, conflict detection, and durable checkpoint reads for production. |
 
 ## Where To Go Next

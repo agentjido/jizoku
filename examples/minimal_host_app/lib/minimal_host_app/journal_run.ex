@@ -1,11 +1,11 @@
 defmodule MinimalHostApp.JournalRun do
   @moduledoc """
-  Small host-owned worker loop that drains Squid Mesh journal attempts.
+  Small host-owned worker loop that drains Squidie journal attempts.
 
   Production hosts should replace this with their preferred capacity,
   back-pressure, and deployment model. The example keeps the loop explicit so a
   normally started host app has a real execution surface instead of relying on
-  tests or scripts to call `SquidMesh.execute_next/1`.
+  tests or scripts to call `Squidie.execute_next/1`.
   """
 
   use GenServer
@@ -42,7 +42,7 @@ defmodule MinimalHostApp.JournalRun do
   end
 
   defp drain_once(state) do
-    case SquidMesh.execute_next(execute_options(state)) do
+    case Squidie.execute_next(execute_options(state)) do
       {:ok, :none} ->
         schedule_drain(state.idle_interval_ms)
 

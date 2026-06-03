@@ -1,12 +1,12 @@
 ---
 name: Bug Report
-about: Report a bug in Squid Mesh
+about: Report a bug in Squidie
 labels: bug
 ---
 
 ## Environment
 
-- Squid Mesh version:
+- Squidie version:
 - Elixir & Erlang/OTP versions (output of `elixir --version`):
 - Operating system:
 - Database (PostgreSQL version):

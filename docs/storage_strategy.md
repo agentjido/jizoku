@@ -1,20 +1,20 @@
 # Storage Strategy and Adapter Contract
 
-Squid Mesh is storage-adapter agnostic at the journal runtime boundary. That
+Squidie is storage-adapter agnostic at the journal runtime boundary. That
 does not mean every database is automatically a correct runtime store. A storage
 backend is portable only when its adapter provides the durability and ordering
 semantics the runtime depends on.
 
 The bundled production relational path is
-`SquidMesh.Runtime.Journal.Storage.Ecto` with a Postgres-compatible Ecto repo.
-When `journal_storage` is omitted, Squid Mesh infers:
+`Squidie.Runtime.Journal.Storage.Ecto` with a Postgres-compatible Ecto repo.
+When `journal_storage` is omitted, Squidie infers:
 
 ```elixir
-{SquidMesh.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}
+{Squidie.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}
 ```
 
 That adapter persists Jido journal threads, entries, and checkpoints in the
-host application's database through Squid Mesh's installed migrations. It keeps
+host application's database through Squidie's installed migrations. It keeps
 workflow history, dispatch state, checkpoints, and host data inside the same
 database boundary while still leaving the runtime behind an adapter-shaped
 contract.
@@ -23,12 +23,12 @@ contract.
 
 Workflow authors should not depend on storage APIs. Workflows declare triggers,
 payloads, steps, transitions, retries, waits, and manual controls. Host code
-starts runs, inspects runs, and provides workers through public Squid Mesh APIs.
+starts runs, inspects runs, and provides workers through public Squidie APIs.
 
 Storage adapters are for the runtime boundary:
 
-- `SquidMesh.Runtime.Journal.Storage` normalizes trusted host configuration.
-- The configured adapter implements the Jido storage callbacks Squid Mesh uses
+- `Squidie.Runtime.Journal.Storage` normalizes trusted host configuration.
+- The configured adapter implements the Jido storage callbacks Squidie uses
   for journal threads and checkpoints.
 - Runtime modules append durable facts and rebuild projections through that
   boundary.
@@ -41,7 +41,7 @@ stay separate.
 
 ```mermaid
 flowchart LR
-    workflow["Workflow modules"] --> api["Squid Mesh public APIs"]
+    workflow["Workflow modules"] --> api["Squidie public APIs"]
     api --> runtime["Journal runtime"]
     runtime --> storage["Storage adapter<br/>threads, entries, checkpoints"]
     runtime --> queue["Queue / delivery adapter<br/>cron and backend delivery"]
@@ -69,7 +69,7 @@ flowchart LR
 The Ecto adapter is the recommended starting point for production hosts that
 use Postgres or a Postgres-compatible Ecto adapter. It:
 
-- stores journal threads in Squid Mesh's journal thread table
+- stores journal threads in Squidie's journal thread table
 - stores normalized entries in the journal entry table
 - stores checkpoints in the checkpoint table
 - serializes appends through row-level locking
@@ -103,6 +103,6 @@ and it should not merge storage concerns with Bedrock queue, delivery, lease,
 heartbeat, retry requeue, or dead-letter adapters.
 
 The current Bedrock example app demonstrates backend-owned delivery and lease
-behavior while still using the configured Squid Mesh journal storage boundary
+behavior while still using the configured Squidie journal storage boundary
 for workflow and attempt state. A future Bedrock storage adapter can become a
 first-class option without changing workflow authoring or public runtime APIs.

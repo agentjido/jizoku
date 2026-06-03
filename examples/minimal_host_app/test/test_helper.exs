@@ -43,7 +43,7 @@ end
 Ecto.Migrator.with_repo(MinimalHostApp.Repo, fn repo ->
   Ecto.Migrator.run(repo, Path.expand("../priv/repo/migrations", __DIR__), :up, all: true)
 
-  Ecto.Migrator.run(repo, Application.app_dir(:squid_mesh, "priv/repo/migrations"), :up,
+  Ecto.Migrator.run(repo, Application.app_dir(:squidie, "priv/repo/migrations"), :up,
     all: true
   )
 end)

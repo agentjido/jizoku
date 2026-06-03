@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.ManualPause do
   Example workflow that waits for an explicit operator resume.
   """
 
-  use SquidMesh.Workflow
+  use Squidie.Workflow
 
   workflow do
     trigger :manual_pause do

@@ -1,13 +1,13 @@
 # Minimal Host App
 
-Reference host-app harness for Squid Mesh.
+Reference host-app harness for Squidie.
 
 This example shows how an application can:
 
-- configure Squid Mesh with its own `Repo`
+- configure Squidie with its own `Repo`
 - expose workflow operations through an application-facing module
 - pause and resume a human-in-the-loop workflow through that boundary
-- apply Squid Mesh runtime command signals, including Jido envelope interop,
+- apply Squidie runtime command signals, including Jido envelope interop,
   through `MinimalHostApp.RuntimeSignals`
 - activate cron workflows through a host-owned scheduler plugin
 - run repeatable smoke, resilience, and bounded soak paths during development
@@ -29,14 +29,14 @@ mix setup
 This will:
 
 - create the example app database
-- install Squid Mesh migrations into the example app with `mix squid_mesh.install`
+- install Squidie migrations into the example app with `mix squidie.install`
 - run the example app's scheduler and delivery migration
-- run both the example app and Squid Mesh migrations through `mix ecto.migrate`
+- run both the example app and Squidie migrations through `mix ecto.migrate`
 
 This example is the standalone development harness. Unlike the embedded host-app
 install path, it owns its own scheduler and delivery wiring so the runtime can
 be exercised without depending on another application. The current harness uses
-Oban for cron delivery; workflow state still lives in the Squid Mesh journal.
+Oban for cron delivery; workflow state still lives in the Squidie journal.
 
 Run the verification tasks one at a time. They share the same test database,
 manual scheduler instance, and local gateway stubs, so parallel runs can
@@ -168,13 +168,13 @@ transition :check_gateway_status, on: :ok, to: :issue_gateway_credit
 
 The gateway check step also copies the durable step-context metadata into its
 output under `gateway_check.attempt`. That gives the sample app a concrete
-example of using native Squid Mesh context fields such as `idempotency_key` and
+example of using native Squidie context fields such as `idempotency_key` and
 `claim_id` from an ordinary step module.
 
 `MinimalHostApp.RuntimeSignals` is the concrete signal boundary for this sample.
-It accepts native `SquidMesh.Runtime.Signal` commands and inbound `Jido.Signal`
-envelopes, converts Jido envelopes with `SquidMesh.Runtime.Signal.JidoAdapter`,
-and applies the resulting command with `SquidMesh.apply_signal/2`.
+It accepts native `Squidie.Runtime.Signal` commands and inbound `Jido.Signal`
+envelopes, converts Jido envelopes with `Squidie.Runtime.Signal.JidoAdapter`,
+and applies the resulting command with `Squidie.apply_signal/2`.
 
 The saga checkout workflow demonstrates reversible side effects:
 
@@ -188,7 +188,7 @@ step :authorize_payment, MinimalHostApp.Steps.AuthorizePayment,
 step :capture_payment, MinimalHostApp.Steps.CapturePayment, retry: [max_attempts: 2]
 ```
 
-The capture step fails after its retry policy is exhausted, then Squid Mesh
+The capture step fails after its retry policy is exhausted, then Squidie
 voids the payment authorization and releases inventory in reverse completion
 order. The smoke task verifies those compensation results through
 `inspect_run(..., include_history: true)`, including the internal
@@ -233,9 +233,9 @@ step :post_local_ledger_entries, MinimalHostApp.Steps.PostLocalLedgerEntries,
 ```
 
 The step writes two local ledger rows through `MinimalHostApp.Repo`. When the
-step returns `{:ok, output}`, both rows commit before Squid Mesh records the
+step returns `{:ok, output}`, both rows commit before Squidie records the
 completed step. When the step returns `{:error, reason}`, both rows roll back
-and Squid Mesh records the durable step failure. This is a local database
+and Squidie records the durable step failure. This is a local database
 boundary only; saga compensation and later workflow steps remain explicit
 workflow concerns.
 
@@ -321,7 +321,7 @@ join step:
 
 ```elixir
 defmodule MinimalHostApp.Workflows.DependencyRecovery do
-  use SquidMesh.Workflow
+  use Squidie.Workflow
 
   workflow do
     trigger :dependency_recovery do

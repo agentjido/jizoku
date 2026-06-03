@@ -1,5 +1,5 @@
-defmodule SquidMesh.Test.Repo do
+defmodule Squidie.Test.Repo do
   @moduledoc false
 
-  use Ecto.Repo, otp_app: :squid_mesh, adapter: Ecto.Adapters.Postgres
+  use Ecto.Repo, otp_app: :squidie, adapter: Ecto.Adapters.Postgres
 end

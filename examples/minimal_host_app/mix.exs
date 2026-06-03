@@ -29,13 +29,13 @@ defmodule MinimalHostApp.MixProject do
       {:ecto_sql, "~> 3.13"},
       {:oban, "~> 2.22"},
       {:postgrex, ">= 0.0.0"},
-      {:squid_mesh, path: "../.."}
+      {:squidie, path: "../.."}
     ]
   end
 
   defp aliases do
     [
-      setup: ["deps.get", "squid_mesh.install", "ecto.setup"],
+      setup: ["deps.get", "squidie.install", "ecto.setup"],
       "ecto.setup": ["ecto.create", "ecto.migrate"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       smoke: ["run -e 'MinimalHostApp.Smoke.run_all!()'"]

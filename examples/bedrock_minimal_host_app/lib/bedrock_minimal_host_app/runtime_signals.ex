@@ -2,23 +2,23 @@ defmodule BedrockMinimalHostApp.RuntimeSignals do
   @moduledoc """
   Host-app boundary for runtime command signals.
 
-  Application code can use `SquidMesh.Runtime.Signal` directly. Jido-facing
+  Application code can use `Squidie.Runtime.Signal` directly. Jido-facing
   routers or agents can exchange `Jido.Signal` envelopes and hand them to this
   module at the boundary.
   """
 
-  alias SquidMesh.ReadModel.Inspection
-  alias SquidMesh.Runtime.Signal
-  alias SquidMesh.Runtime.Signal.JidoAdapter
+  alias Squidie.ReadModel.Inspection
+  alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Signal.JidoAdapter
 
   @type apply_result :: {:ok, Inspection.Snapshot.t()} | {:error, term()}
 
   @spec apply(Signal.t() | Jido.Signal.t()) :: apply_result()
-  def apply(%Signal{} = signal), do: SquidMesh.apply_signal(signal)
+  def apply(%Signal{} = signal), do: Squidie.apply_signal(signal)
 
   def apply(%Jido.Signal{} = signal) do
     with {:ok, runtime_signal} <- JidoAdapter.from_jido(signal) do
-      SquidMesh.apply_signal(runtime_signal)
+      Squidie.apply_signal(runtime_signal)
     end
   end
 

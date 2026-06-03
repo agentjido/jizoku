@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 💬 Ask a Question or Start a Discussion
-    url: https://github.com/dark-trench/squid_mesh/discussions
-    about: Have questions, ideas, or want to discuss Squid Mesh? Start a conversation in Discussions.
+    url: https://github.com/dark-trench/squidie/discussions
+    about: Have questions, ideas, or want to discuss Squidie? Start a conversation in Discussions.
   - name: 📚 Documentation
-    url: https://github.com/dark-trench/squid_mesh#readme
+    url: https://github.com/dark-trench/squidie#readme
     about: Read the installation guide, usage examples, and development instructions.

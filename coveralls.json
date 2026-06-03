@@ -13,6 +13,6 @@
     "(^|/)deps/",
     "^priv/",
     "^test/",
-    "^lib/squid_mesh/application\\.ex$"
+    "^lib/squidie/application\\.ex$"
   ]
 }

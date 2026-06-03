@@ -1,4 +1,4 @@
-defmodule SquidMesh.Test.Repo.Migrations.CreateTransactionalEvents do
+defmodule Squidie.Test.Repo.Migrations.CreateTransactionalEvents do
   use Ecto.Migration
 
   @spec change() :: :ok

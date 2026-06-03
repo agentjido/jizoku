@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a new feature for Squid Mesh
+about: Suggest a new feature for Squidie
 labels: enhancement
 ---
 
