@@ -259,8 +259,7 @@ defmodule Squidie.ReadModel.Inspection do
   defp public_terminal_error(nil), do: nil
 
   defp public_terminal_error(error) when is_map(error) do
-    error
-    |> Map.take([
+    keys = [
       :code,
       :message,
       :retryable?,
@@ -273,9 +272,27 @@ defmodule Squidie.ReadModel.Inspection do
       :path,
       :target,
       :missing_at
-    ])
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-    |> Map.new()
+    ]
+
+    sanitized =
+      Enum.reduce(keys, %{}, fn key, acc ->
+        value =
+          case Map.fetch(error, key) do
+            {:ok, atom_value} ->
+              {:ok, atom_value}
+
+            :error ->
+              Map.fetch(error, Atom.to_string(key))
+          end
+
+        case value do
+          {:ok, nil} -> acc
+          {:ok, field_value} -> Map.put(acc, key, field_value)
+          :error -> acc
+        end
+      end)
+
+    if map_size(sanitized) == 0, do: nil, else: sanitized
   end
 
   defp parent_run(%WorkflowAgent.Projection{context: context}) when is_map(context) do

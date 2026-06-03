@@ -299,6 +299,54 @@ defmodule Squidie.ReadModel.ExplanationTest do
            }
   end
 
+  test "explains failed terminal runs when persisted terminal error keys are strings" do
+    append_run_entries([
+      run_started(),
+      runnables_planned(),
+      run_terminal(:failed,
+        error: %{
+          "code" => "gateway_timeout",
+          "message" => "gateway timeout",
+          "retryable?" => false,
+          "type" => "Elixir.RuntimeError",
+          "path" => ["draft", "drafts"],
+          "target" => "drafts",
+          "missing_at" => ["draft", "drafts"],
+          "secret" => "token=super-secret-token"
+        }
+      )
+    ])
+
+    append_dispatch_entries([attempt_scheduled(), attempt_claimed()])
+
+    assert {:ok, %Diagnostic{} = explanation} =
+             Explanation.explain(@storage, @run_id, queue: @queue, now: @expired_at)
+
+    assert %{
+             terminal?: true,
+             terminal_status: :failed,
+             terminal_error: %{
+               code: "gateway_timeout",
+               message: "gateway timeout",
+               retryable?: false,
+               type: "Elixir.RuntimeError",
+               path: ["draft", "drafts"],
+               target: "drafts",
+               missing_at: ["draft", "drafts"]
+             }
+           } = explanation.details
+
+    assert explanation.evidence.terminal_error == %{
+             code: "gateway_timeout",
+             message: "gateway timeout",
+             retryable?: false,
+             type: "Elixir.RuntimeError",
+             path: ["draft", "drafts"],
+             target: "drafts",
+             missing_at: ["draft", "drafts"]
+           }
+  end
+
   test "derives an explanation from an existing snapshot without rereading storage" do
     child_run = %{
       child_run_id: "child_run_123",
@@ -554,6 +602,9 @@ defmodule Squidie.ReadModel.ExplanationTest do
     )
   end
 
+  defp maybe_put_error(attrs, nil), do: attrs
+  defp maybe_put_error(attrs, error), do: Map.put(attrs, :error, error)
+
   defp manual_step_paused do
     entry!(:manual_step_paused, %{
       run_id: @run_id,
@@ -567,9 +618,6 @@ defmodule Squidie.ReadModel.ExplanationTest do
   defp attempt_scheduled(overrides \\ []) do
     entry!(:attempt_scheduled, scheduled_attrs(overrides))
   end
-
-  defp maybe_put_error(attrs, nil), do: attrs
-  defp maybe_put_error(attrs, error), do: Map.put(attrs, :error, error)
 
   defp attempt_claimed do
     entry!(:attempt_claimed, %{

@@ -116,6 +116,38 @@ defmodule Squidie.ReadModel.InspectionTest do
            }
   end
 
+  test "surfaces sanitized terminal errors when persisted fields use string keys" do
+    append_run_entries([
+      run_started(),
+      runnables_planned(),
+      run_terminal(:failed,
+        error: %{
+          "code" => "gateway_timeout",
+          "message" => "gateway timeout",
+          "retryable?" => false,
+          "type" => "Elixir.RuntimeError",
+          "path" => ["draft", "drafts"],
+          "target" => "drafts",
+          "missing_at" => ["draft", "drafts"],
+          "secret" => "token=super-secret-token"
+        }
+      )
+    ])
+
+    assert {:ok, %Snapshot{} = snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @expired_at)
+
+    assert snapshot.terminal_error == %{
+             code: "gateway_timeout",
+             message: "gateway timeout",
+             retryable?: false,
+             type: "Elixir.RuntimeError",
+             path: ["draft", "drafts"],
+             target: "drafts",
+             missing_at: ["draft", "drafts"]
+           }
+  end
+
   test "reports the earliest visible time across scheduled attempts" do
     append_run_entries([
       run_started(),
@@ -646,6 +678,9 @@ defmodule Squidie.ReadModel.InspectionTest do
     )
   end
 
+  defp maybe_put_error(attrs, nil), do: attrs
+  defp maybe_put_error(attrs, error), do: Map.put(attrs, :error, error)
+
   defp manual_step_paused(overrides \\ []) do
     entry!(:manual_step_paused, %{
       run_id: @run_id,
@@ -660,9 +695,6 @@ defmodule Squidie.ReadModel.InspectionTest do
   defp attempt_scheduled(overrides \\ []) do
     entry!(:attempt_scheduled, scheduled_attrs(overrides))
   end
-
-  defp maybe_put_error(attrs, nil), do: attrs
-  defp maybe_put_error(attrs, error), do: Map.put(attrs, :error, error)
 
   defp attempt_claimed do
     entry!(:attempt_claimed, %{
