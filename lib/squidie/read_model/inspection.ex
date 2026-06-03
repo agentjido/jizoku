@@ -169,6 +169,7 @@ defmodule Squidie.ReadModel.Inspection do
         ),
       terminal?: terminal?,
       terminal_status: WorkflowAgent.Projection.terminal_status(workflow_projection),
+      terminal_error: WorkflowAgent.Projection.terminal_error(workflow_projection),
       deadline:
         if(terminal?,
           do: nil,

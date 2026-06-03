@@ -65,6 +65,7 @@ defmodule Squidie.ReadModel.Inspection.Snapshot do
           reason: reason(),
           terminal?: boolean(),
           terminal_status: atom() | nil,
+          terminal_error: map() | nil,
           deadline: map() | nil,
           manual_state: map() | nil,
           command_history: [map()],
@@ -90,6 +91,7 @@ defmodule Squidie.ReadModel.Inspection.Snapshot do
     :reason,
     :terminal?,
     :terminal_status,
+    :terminal_error,
     :thread_revisions
   ]
 
@@ -106,6 +108,7 @@ defmodule Squidie.ReadModel.Inspection.Snapshot do
     :reason,
     :terminal?,
     :terminal_status,
+    :terminal_error,
     :deadline,
     :thread_revisions,
     command_history: [],

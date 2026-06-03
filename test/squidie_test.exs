@@ -12510,6 +12510,66 @@ defmodule SquidieTest do
              } = List.last(run_entries).data
     end
 
+    test "inspect_run/2 and explain_run/2 surface successor mapping terminal errors" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               Squidie.start(
+                 JournalMissingPathWorkflow,
+                 %{draft: %{}},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, %Snapshot{} = failed_snapshot} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_1",
+                 claim_id: "claim_1",
+                 claim_token: "token_1",
+                 now: @read_model_visible_at
+               )
+
+      expected_error = %{
+        code: "missing_input_path",
+        message: "missing mapped input path",
+        path: ["draft", "drafts"],
+        target: "drafts",
+        retryable?: false,
+        missing_at: ["draft", "drafts"]
+      }
+
+      assert failed_snapshot.terminal_error == expected_error
+
+      assert {:ok, inspected_snapshot} =
+               Squidie.inspect_run(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert inspected_snapshot.terminal_error == expected_error
+
+      assert {:ok, diagnostic} =
+               Squidie.explain_run(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert %{
+               terminal?: true,
+               terminal_status: :failed,
+               terminal_error: ^expected_error
+             } = diagnostic.details
+
+      assert diagnostic.evidence.terminal_error == expected_error
+    end
+
     test "execute_next/1 recomputes dependency progress after concurrent root append conflicts" do
       on_exit(fn -> :persistent_term.erase(:journal_dependency_invoice_hook) end)
 
