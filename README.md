@@ -60,9 +60,13 @@ workflow, starting a durable run, executing work, and inspecting the result.
 | Integrate Squid Mesh into an existing application | [Getting Started guide](docs/getting_started.md) |
 | Review a complete working example | [Minimal host app](examples/minimal_host_app/README.md) |
 | Add backend-owned delivery and leases | [Bedrock minimal host app](examples/bedrock_minimal_host_app/README.md) |
+| Review a small external OTP host app | [The Beacon](https://github.com/ccarvalho-eng/the-beacon) |
 
 The written guide covers installation, workflow creation, execution, run
 inspection, retries, manual gates, cron triggers, and Bedrock-backed leases.
+The Beacon is a compact OTP host application that uses Squid Mesh for scheduled
+monitoring notifications with host-owned Bedrock delivery, cron scheduling,
+Discord webhooks, and file-backed seen-state.
 
 ## Getting Started
 
