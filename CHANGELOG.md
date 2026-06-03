@@ -5,6 +5,14 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.1.2] - 2026-06-03
+
+### Changed
+- Rebranded the package, modules, docs, examples, install task, and Hex/GitHub
+  metadata from Squid Mesh to Squidie.
+- Renamed the migration, runtime, workflow, and test module tree to match the
+  new package name.
+
 ## [0.1.1] - 2026-06-02
 
 ### Changed
