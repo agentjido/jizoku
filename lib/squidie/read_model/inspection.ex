@@ -278,8 +278,6 @@ defmodule Squidie.ReadModel.Inspection do
     |> Map.new()
   end
 
-  defp public_terminal_error(_error), do: nil
-
   defp parent_run(%WorkflowAgent.Projection{context: context}) when is_map(context) do
     case Map.fetch(context, :parent) do
       {:ok, parent} -> parent

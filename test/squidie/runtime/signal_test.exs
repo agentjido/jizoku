@@ -1,8 +1,8 @@
 defmodule Squidie.Runtime.SignalTest do
   use ExUnit.Case, async: true
 
-  alias Squidie.Runtime.Signal
   alias Squidie.Runtime.ScheduleIdentity
+  alias Squidie.Runtime.Signal
 
   @occurred_at ~U[2026-05-26 12:00:00Z]
   @run_id "2b81e1da-04d8-4f0e-99fa-9dbd0ff7ec5d"
