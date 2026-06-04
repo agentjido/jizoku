@@ -1,4 +1,4 @@
-# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runs.DynamicWorkPreview do
   @moduledoc """
   Validated, read-only preview of one dynamic work record.

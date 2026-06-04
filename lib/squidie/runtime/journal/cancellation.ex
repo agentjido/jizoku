@@ -1,4 +1,4 @@
-# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.Cancellation do
   @moduledoc """
   Journal-backed workflow cancellation.

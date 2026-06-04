@@ -1,4 +1,4 @@
-# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Workflow.Spec do
   @moduledoc """
   Serializable, normalized workflow specification used to rebuild planner state.
