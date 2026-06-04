@@ -1252,6 +1252,30 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
     assert Projection.applied_at(projection, @runnable_key) == @completed_at
   end
 
+  test "ignores runnables without runnable keys when rebuilding projection" do
+    assert {:ok, run_started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, runnables_planned} =
+             DispatchProtocol.new_entry(:runnables_planned, %{
+               run_id: @run_id,
+               runnables: [
+                 %{step: "charge_card"},
+                 %{key: "actual-key", step: "refund_card"},
+                 %{"runnable_key" => "", step: "skip_me"}
+               ],
+               occurred_at: @visible_at
+             })
+
+    projection = Projection.rebuild([run_started, runnables_planned])
+
+    assert Projection.planned_runnable_keys(projection) == ["actual-key"]
+  end
+
   test "records anomalies instead of raising for malformed persisted workflow entries" do
     malformed_entries = [
       workflow_entry(:run_started, %{}),
