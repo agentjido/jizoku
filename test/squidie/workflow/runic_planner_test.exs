@@ -322,7 +322,9 @@ defmodule Squidie.Workflow.RunicPlannerTest do
     {:ok, planned, runnables} =
       RunicPlanner.plan(planner, %{account_id: "acct_123", invoice_id: "inv_123"})
 
-    assert Enum.sort(Enum.map(runnables, & &1.step)) == [:load_account, :load_invoice]
+    runnable_steps = Enum.map(runnables, & &1.step)
+
+    assert Enum.sort(runnable_steps) == [:load_account, :load_invoice]
 
     [load_account, load_invoice] = Enum.sort_by(runnables, & &1.step)
 
