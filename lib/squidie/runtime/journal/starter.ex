@@ -1001,21 +1001,23 @@ defmodule Squidie.Runtime.Journal.Starter do
   defp equivalent_definition_fingerprint?(existing_fingerprint, expected_fingerprint),
     do: existing_fingerprint == expected_fingerprint
 
-  defp equivalent_runnables?(left, right) when length(left) == length(right) do
-    left =
-      left
-      |> Enum.map(&stable_runnable/1)
-      |> Enum.sort()
+  defp equivalent_runnables?(left, right) do
+    if length(left) != length(right) do
+      false
+    else
+      left =
+        left
+        |> Enum.map(&stable_runnable/1)
+        |> Enum.sort()
 
-    right =
-      right
-      |> Enum.map(&stable_runnable/1)
-      |> Enum.sort()
+      right =
+        right
+        |> Enum.map(&stable_runnable/1)
+        |> Enum.sort()
 
-    left == right
+      left == right
+    end
   end
-
-  defp equivalent_runnables?(_left, _right), do: false
 
   defp stable_runnable(runnable) when is_map(runnable) do
     %{

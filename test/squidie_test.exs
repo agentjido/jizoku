@@ -2554,7 +2554,7 @@ defmodule SquidieTest do
 
       assert [%{runnable_key: ^runnable_key, step: "check_gateway"}] =
                run_entries
-               |> List.last()
+               |> Enum.at(-1)
                |> Map.fetch!(:data)
                |> Map.fetch!(:runnables)
 
@@ -9673,7 +9673,7 @@ defmodule SquidieTest do
                  paused_at: @read_model_visible_at,
                  metadata: %{output: %{}, target: "record_delivery"}
                }
-             } = List.last(run_entries)
+             } = Enum.at(run_entries, -1)
     end
 
     test "journal runtime resumes built-in pause steps through durable manual resolution" do
@@ -10653,7 +10653,7 @@ defmodule SquidieTest do
                :manual_step_paused
              ]
 
-      assert %{data: %{paused_at: @read_model_visible_at}} = List.last(run_entries)
+      assert %{data: %{paused_at: @read_model_visible_at}} = Enum.at(run_entries, -1)
 
       assert {:ok, :none} =
                execute_journal_next(
@@ -12476,7 +12476,7 @@ defmodule SquidieTest do
                  target: "drafts",
                  missing_at: ["draft", "drafts"]
                }
-             } = List.last(run_entries).data
+             } = Enum.at(run_entries, -1).data
 
       assert {:ok, dispatch_entries} =
                Journal.load_entries(@read_model_storage, {:dispatch, @read_model_queue})
@@ -12576,7 +12576,7 @@ defmodule SquidieTest do
                  target: "drafts",
                  missing_at: ["draft", "drafts"]
                }
-             } = List.last(run_entries).data
+             } = Enum.at(run_entries, -1).data
     end
 
     test "inspect_run/2 and explain_run/2 surface successor mapping terminal errors" do
@@ -13892,7 +13892,7 @@ defmodule SquidieTest do
                :attempt_failed
              ]
 
-      assert %{retry_deadline: %{due_at: ^retry_due_at}} = List.last(dispatch_entries).data
+      assert %{retry_deadline: %{due_at: ^retry_due_at}} = Enum.at(dispatch_entries, -1).data
 
       assert {:ok, run_entries} =
                load_read_model_run_entries(started_snapshot.run_id)

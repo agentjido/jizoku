@@ -267,7 +267,7 @@ defmodule Squidie.ReadModel.Explanation do
   defp command_details(commands) when is_list(commands) do
     details = %{
       command_count: length(commands),
-      latest_command: List.last(commands)
+      latest_command: Enum.at(commands, -1)
     }
 
     maybe_put_non_empty(details, :duplicate_commands, duplicate_commands(commands))
