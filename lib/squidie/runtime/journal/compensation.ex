@@ -93,7 +93,7 @@ defmodule Squidie.Runtime.Journal.Compensation do
   def failure(runnable) when is_map(runnable) do
     runnable
     |> dynamic_work()
-    |> Map.get(:failure, %{})
+    |> map_value(:failure, %{})
   end
 
   @doc "Internal API."

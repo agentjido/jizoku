@@ -396,7 +396,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
 
   defp put_planned_runnable(runnable, acc) do
     case runnable_key(runnable) do
-      key when is_binary(key) -> Map.put_new(acc, key, normalize_runnable(runnable))
+      key when is_binary(key) and key != "" -> Map.put_new(acc, key, normalize_runnable(runnable))
       _missing_key -> acc
     end
   end
@@ -747,7 +747,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   defp runnable_key(runnable) when is_map(runnable) do
-    map_value(runnable, :runnable_key) || map_value(runnable, :key) || ""
+    map_value(runnable, :runnable_key) || map_value(runnable, :key)
   end
 
   defp runnable_key(_runnable), do: nil
