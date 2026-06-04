@@ -4,7 +4,7 @@ defmodule Squidie.MixProject do
   def project do
     [
       app: :squidie,
-      version: "0.1.2",
+      version: "0.1.3",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,

@@ -5,6 +5,12 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.1.3] - 2026-06-04
+
+### Fixed
+- ExSlop DocFalseOnPublicFunction rule is now correctly scoped in public runtime
+  modules to avoid release-blocking CI false positives during code quality checks.
+
 ## [0.1.2] - 2026-06-03
 
 ### Changed
