@@ -1739,6 +1739,36 @@ defmodule SquidieTest do
       assert config.queue == "configured_queue"
     end
 
+    test "allows explicit journal storage without a configured repo" do
+      journal_storage = {Jido.Storage.ETS, table: :squidie_config_no_repo_test}
+      original_repo = Application.get_env(:squidie, :repo)
+
+      on_exit(fn ->
+        if is_nil(original_repo) do
+          Application.delete_env(:squidie, :repo)
+        else
+          Application.put_env(:squidie, :repo, original_repo)
+        end
+      end)
+
+      Application.delete_env(:squidie, :repo)
+
+      assert {:ok, config} =
+               Squidie.config(
+                 runtime: :journal,
+                 read_model: :read_model,
+                 journal_storage: journal_storage,
+                 queue: :configured_queue
+               )
+
+      assert config.repo == nil
+      assert config.runtime == :journal
+      assert config.read_model == :read_model
+      assert config.journal_storage.adapter == Jido.Storage.ETS
+      assert config.journal_storage.opts == [table: :squidie_config_no_repo_test]
+      assert config.queue == "configured_queue"
+    end
+
     test "infers Ecto journal storage from the configured repo when runtime uses the journal" do
       required = [
         repo: Squidie.Test.Repo
@@ -1821,6 +1851,17 @@ defmodule SquidieTest do
       Application.delete_env(:squidie, :repo)
 
       assert {:error, {:missing_config, [:repo]}} = Squidie.config()
+
+      assert_raise ArgumentError,
+                   ~r/config :squidie, repo: .*journal_storage:/,
+                   fn ->
+                     Squidie.config!()
+                   end
+    end
+
+    test "reports invalid repo configuration separately from missing repo config" do
+      assert {:error, {:invalid_config, [repo: :invalid]}} =
+               Squidie.config(repo: "not_a_repo")
     end
 
     test "journal-only configuration still rejects unsupported runtimes" do
@@ -5726,6 +5767,34 @@ defmodule SquidieTest do
                  :gateway_recovery,
                  %{account_id: "acct_concise_named"},
                  runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert snapshot.workflow == Atom.to_string(PaymentRecoveryWorkflow)
+      assert snapshot.queue == @read_model_queue
+      assert snapshot.reason == :attempt_visible
+    end
+
+    test "start/4 works with explicit journal storage when no repo is configured" do
+      original_repo = Application.get_env(:squidie, :repo)
+
+      on_exit(fn ->
+        if is_nil(original_repo) do
+          Application.delete_env(:squidie, :repo)
+        else
+          Application.put_env(:squidie, :repo, original_repo)
+        end
+      end)
+
+      Application.delete_env(:squidie, :repo)
+
+      assert {:ok, %Snapshot{} = snapshot} =
+               Squidie.start(
+                 PaymentRecoveryWorkflow,
+                 :gateway_recovery,
+                 %{account_id: "acct_explicit_storage_no_repo"},
                  journal_storage: @read_model_storage,
                  queue: @read_model_queue,
                  now: @read_model_started_at

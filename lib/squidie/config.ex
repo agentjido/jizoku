@@ -12,14 +12,14 @@ defmodule Squidie.Config do
   @type runtime :: :journal
   @type read_model :: :read_model
   @type raw_config :: [
-          repo: module(),
+          repo: module() | nil,
           runtime: runtime(),
           read_model: read_model(),
           journal_storage: term(),
           queue: atom() | String.t()
         ]
   @type t :: %__MODULE__{
-          repo: module(),
+          repo: module() | nil,
           runtime: runtime(),
           read_model: read_model(),
           journal_storage: Squidie.Runtime.Journal.Storage.t() | nil,
@@ -56,15 +56,14 @@ defmodule Squidie.Config do
       |> Application.get_all_env()
       |> Keyword.merge(overrides)
 
-    with :ok <- validate_required_keys(config),
-         {:ok, runtime} <- validate_runtime(Keyword.get(config, :runtime, @default_runtime)),
+    with {:ok, runtime} <- validate_runtime(Keyword.get(config, :runtime, @default_runtime)),
          {:ok, read_model} <-
            validate_read_model(Keyword.get(config, :read_model, @default_read_model)),
          {:ok, queue} <- validate_queue(Keyword.get(config, :queue, @default_queue)),
          {:ok, journal_storage} <- validate_journal_storage(config, runtime, read_model) do
       {:ok,
        %__MODULE__{
-         repo: Keyword.fetch!(config, :repo),
+         repo: Keyword.get(config, :repo),
          runtime: runtime,
          read_model: read_model,
          journal_storage: journal_storage,
@@ -83,10 +82,7 @@ defmodule Squidie.Config do
         config
 
       {:error, {:missing_config, keys}} ->
-        keys = Enum.map_join(keys, ", ", &inspect/1)
-
-        raise ArgumentError,
-              "missing Squidie configuration keys: #{keys}"
+        raise ArgumentError, missing_config_message(keys)
 
       {:error, {:invalid_config, details}} ->
         details =
@@ -97,13 +93,15 @@ defmodule Squidie.Config do
     end
   end
 
-  defp validate_required_keys(config) do
-    missing_keys = Enum.reject([:repo], &Keyword.has_key?(config, &1))
+  defp missing_config_message([:repo]) do
+    "missing Squidie configuration keys: :repo. " <>
+      "Public start APIs infer journal storage from `config :squidie, repo: MyApp.Repo` when `journal_storage:` is not passed explicitly. " <>
+      "Set that config globally or pass an explicit `journal_storage:` override from the host boundary."
+  end
 
-    case missing_keys do
-      [] -> :ok
-      keys -> {:error, {:missing_config, keys}}
-    end
+  defp missing_config_message(keys) do
+    keys = Enum.map_join(keys, ", ", &inspect/1)
+    "missing Squidie configuration keys: #{keys}"
   end
 
   defp validate_runtime(runtime) when runtime in @runtimes, do: {:ok, runtime}
@@ -152,15 +150,21 @@ defmodule Squidie.Config do
   end
 
   defp infer_journal_storage(config) do
-    config
-    |> Keyword.fetch!(:repo)
-    |> then(&Options.storage({Squidie.Runtime.Journal.Storage.Ecto, repo: &1}))
-    |> case do
-      {:ok, storage} ->
-        {:ok, storage}
+    case Keyword.fetch(config, :repo) do
+      {:ok, repo} when is_atom(repo) ->
+        case Options.storage({Squidie.Runtime.Journal.Storage.Ecto, repo: repo}) do
+          {:ok, storage} ->
+            {:ok, storage}
 
-      {:error, {:invalid_option, {:journal_storage, reason}}} ->
-        {:error, {:invalid_config, [journal_storage: reason]}}
+          {:error, {:invalid_option, {:journal_storage, reason}}} ->
+            {:error, {:invalid_config, [journal_storage: reason]}}
+        end
+
+      {:ok, _invalid_repo} ->
+        {:error, {:invalid_config, [repo: :invalid]}}
+
+      _missing_repo ->
+        {:error, {:missing_config, [:repo]}}
     end
   end
 end
