@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal do
   @moduledoc """
   Storage boundary for Squidie durable runtime facts.

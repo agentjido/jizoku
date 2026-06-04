@@ -259,9 +259,11 @@ defmodule Squidie.Runtime.Journal.Storage.Ecto do
         }
       end)
 
+    rows_count = length(rows)
+
     case repo.insert_all(JournalEntry, rows, repo_opts(opts)) do
-      {count, _rows} when count == length(rows) -> :ok
-      {count, _rows} -> {:error, {:entries_not_inserted, count, length(rows)}}
+      {count, _rows} when count == rows_count -> :ok
+      {count, _rows} -> {:error, {:entries_not_inserted, count, rows_count}}
     end
   end
 
@@ -305,7 +307,8 @@ defmodule Squidie.Runtime.Journal.Storage.Ecto do
       rev: thread.rev,
       entries: entries,
       created_at: thread.created_at_ms || (List.first(entries) && List.first(entries).at),
-      updated_at: thread.updated_at_ms || (List.last(entries) && List.last(entries).at),
+      updated_at:
+        thread.updated_at_ms || if(entries == [], do: nil, else: Enum.at(entries, -1).at),
       metadata: thread.metadata || %{},
       stats: %{entry_count: length(entries)}
     }
@@ -315,8 +318,6 @@ defmodule Squidie.Runtime.Journal.Storage.Ecto do
     with :ok <- validate_thread_revision(thread, entries),
          :ok <- validate_entry_sequences(thread, entries) do
       reconstruct_thread(thread, entries)
-    else
-      {:error, reason} -> {:error, reason}
     end
   end
 

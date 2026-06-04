@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Workflow.Spec do
   @moduledoc """
   Serializable, normalized workflow specification used to rebuild planner state.
@@ -404,16 +405,25 @@ defmodule Squidie.Workflow.Spec do
       |> Enum.uniq()
       |> Enum.sort_by(&inspect/1)
 
-    if atom_name?(name) and length(types) > 1 do
-      [
-        error(
-          [:triggers],
-          :conflicting_payload_field,
-          "payload field #{inspect(name)} defines conflicting types across triggers: #{inspect(types)}",
-          %{field: name, types: types}
-        )
-        | errors
-      ]
+    if atom_name?(name) do
+      case types do
+        [_single] ->
+          errors
+
+        [_first, _second | _rest] ->
+          [
+            error(
+              [:triggers],
+              :conflicting_payload_field,
+              "payload field #{inspect(name)} defines conflicting types across triggers: #{inspect(types)}",
+              %{field: name, types: types}
+            )
+            | errors
+          ]
+
+        _other ->
+          errors
+      end
     else
       errors
     end

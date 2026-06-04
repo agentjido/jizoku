@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.RunCatalogProjection do
   @moduledoc """
   Rebuildable projection over the global journal run catalog.

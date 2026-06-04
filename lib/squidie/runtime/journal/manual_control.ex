@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.ManualControl do
   @moduledoc """
   Journal-backed manual intervention controls.
@@ -511,7 +512,7 @@ defmodule Squidie.Runtime.Journal.ManualControl do
   end
 
   defp manual_target(definition, %{step: step, metadata: metadata}) when is_map(metadata) do
-    case Map.get(metadata, :target) || Map.get(metadata, "target") do
+    case map_value(metadata, :target) do
       "__complete__" ->
         {:ok, :complete}
 
@@ -534,7 +535,7 @@ defmodule Squidie.Runtime.Journal.ManualControl do
 
   defp manual_result(%{step: step, metadata: metadata}, %Projection{} = projection)
        when is_map(metadata) do
-    case Map.get(metadata, :output) || Map.get(metadata, "output") do
+    case map_value(metadata, :output) do
       output when is_map(output) ->
         {:ok, output}
 
@@ -565,7 +566,7 @@ defmodule Squidie.Runtime.Journal.ManualControl do
   end
 
   defp review_output_key(definition, step_name, metadata) do
-    case Map.get(metadata, :output_key) || Map.get(metadata, "output_key") do
+    case map_value(metadata, :output_key) do
       nil ->
         Definition.step_output_mapping(definition, step_name)
 
@@ -911,13 +912,27 @@ defmodule Squidie.Runtime.Journal.ManualControl do
     projection
     |> Projection.planned_runnables()
     |> Enum.find_value(%{}, fn runnable ->
-      runnable_step = Map.get(runnable, :step) || Map.get(runnable, "step")
+      runnable_step = map_value(runnable, :step)
 
       if runnable_step == step do
-        Map.get(runnable, :input) || Map.get(runnable, "input") || %{}
+        map_value(runnable, :input, %{})
       end
     end)
   end
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 
   defp successor_input(context, definition, next_step) do
     case Definition.step_input_mapping(definition, next_step) do

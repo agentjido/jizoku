@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Workflow.SparkExtension do
   @moduledoc """
   Spark extension that defines the Squidie workflow DSL.

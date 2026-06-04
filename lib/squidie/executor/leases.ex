@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Executor.Leases do
   @moduledoc """
   Behaviour for backends that own worker claims and lease extension.

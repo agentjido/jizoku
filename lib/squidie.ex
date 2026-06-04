@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie do
   @moduledoc """
   Public entrypoint for the Squidie runtime.
@@ -257,8 +258,6 @@ defmodule Squidie do
         initial_context,
         overrides
       )
-    else
-      {:error, reason} -> {:error, reason}
     end
   end
 

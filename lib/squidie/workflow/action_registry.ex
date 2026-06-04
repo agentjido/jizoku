@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Workflow.ActionRegistry do
   @moduledoc """
   Host-owned trust boundary for runtime-authored workflow actions.
@@ -238,13 +239,27 @@ defmodule Squidie.Workflow.ActionRegistry do
   end
 
   defp registry_entry_module(entry) when is_map(entry) do
-    module = Map.get(entry, :module) || Map.get(entry, "module")
-    enabled? = Map.get(entry, :enabled?, Map.get(entry, "enabled?", true))
+    module = map_value(entry, :module)
+    enabled? = map_value(entry, :enabled?, true)
 
     {module, enabled?}
   end
 
   defp registry_entry_module(_entry), do: {nil, true}
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 
   defp put_action_metadata(step, action) do
     metadata = Map.get(step, :metadata, %{})

@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @moduledoc """
   Rebuildable projection over durable dispatch journal entries.

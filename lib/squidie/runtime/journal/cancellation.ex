@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.Cancellation do
   @moduledoc """
   Journal-backed workflow cancellation.
@@ -195,10 +196,24 @@ defmodule Squidie.Runtime.Journal.Cancellation do
   defp duplicate_cancel_signal?(_workflow_agent, _command), do: false
 
   defp child_run_id(child_run) when is_map(child_run) do
-    Map.get(child_run, :child_run_id) || Map.get(child_run, "child_run_id")
+    map_value(child_run, :child_run_id)
   end
 
   defp child_run_id(_child_run), do: nil
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 
   defp rebuild_workflow_agent(storage, run_id) do
     case WorkflowAgent.rebuild(storage, run_id) do

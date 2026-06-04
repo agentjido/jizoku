@@ -139,6 +139,7 @@ defmodule Squidie.MixProject do
       {:req, "~> 0.5"},
       {:runic, "~> 0.1.0-alpha"},
       {:spark, "~> 2.7"},
+      {:ex_slop, "~> 0.4.2", only: [:dev, :test], runtime: false},
       {:postgrex, "~> 0.20", only: :test},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

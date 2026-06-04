@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.BuiltInStep do
   @moduledoc """
   Executes declarative built-in workflow steps.

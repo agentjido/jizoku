@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.StepInput do
   @moduledoc """
   Step-execution input normalization for the runtime.

@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Step.Context do
   @moduledoc """
   Durable runtime context passed to native Squidie steps.
