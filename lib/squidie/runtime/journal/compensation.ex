@@ -6,7 +6,7 @@ defmodule Squidie.Runtime.Journal.Compensation do
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Workflow.Definition
 
-  @doc false
+  @doc "Internal API."
   @spec next_runnable(
           Agent.t(),
           Definition.t(),
@@ -43,7 +43,7 @@ defmodule Squidie.Runtime.Journal.Compensation do
     end
   end
 
-  @doc false
+  @doc "Internal API."
   @spec applied_runnable_keys(Agent.t()) :: MapSet.t()
   def applied_runnable_keys(%Agent{} = workflow_agent) do
     applied_keys = WorkflowAgent.applied_runnable_keys(workflow_agent)
@@ -61,7 +61,7 @@ defmodule Squidie.Runtime.Journal.Compensation do
     end)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec planned_for_failure?(Agent.t(), String.t() | nil) :: boolean()
   def planned_for_failure?(%Agent{} = workflow_agent, failure_runnable_key)
       when is_binary(failure_runnable_key) do
@@ -77,7 +77,7 @@ defmodule Squidie.Runtime.Journal.Compensation do
 
   def planned_for_failure?(%Agent{}, _failure_runnable_key), do: false
 
-  @doc false
+  @doc "Internal API."
   @spec runnable?(map() | term()) :: boolean()
   def runnable?(runnable) when is_map(runnable) do
     runnable
@@ -88,7 +88,7 @@ defmodule Squidie.Runtime.Journal.Compensation do
 
   def runnable?(_runnable), do: false
 
-  @doc false
+  @doc "Internal API."
   @spec failure(map()) :: map()
   def failure(runnable) when is_map(runnable) do
     runnable
@@ -96,7 +96,7 @@ defmodule Squidie.Runtime.Journal.Compensation do
     |> Map.get(:failure, %{})
   end
 
-  @doc false
+  @doc "Internal API."
   @spec failure_runnable_key(map()) :: String.t() | nil
   def failure_runnable_key(runnable) when is_map(runnable) do
     runnable

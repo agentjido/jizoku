@@ -52,7 +52,7 @@ defmodule Squidie.Runs.GraphInspection do
     dynamic_work_overlays: []
   ]
 
-  @doc false
+  @doc "Internal API."
   @spec from_snapshot(Snapshot.t(), keyword()) :: t()
   def from_snapshot(%Snapshot{} = snapshot, opts) when is_list(opts) do
     source = Keyword.get(opts, :source, :read_model)

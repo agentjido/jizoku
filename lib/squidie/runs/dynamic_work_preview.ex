@@ -33,7 +33,7 @@ defmodule Squidie.Runs.DynamicWorkPreview do
     recordable?: true
   ]
 
-  @doc false
+  @doc "Internal API."
   @spec new(String.t(), map(), boolean(), GraphInspection.t()) :: t()
   def new(run_id, dynamic_work, duplicate?, %GraphInspection{} = graph)
       when is_binary(run_id) and is_map(dynamic_work) and is_boolean(duplicate?) do

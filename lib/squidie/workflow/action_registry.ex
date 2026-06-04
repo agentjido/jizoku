@@ -68,7 +68,7 @@ defmodule Squidie.Workflow.ActionRegistry do
     end
   end
 
-  @doc false
+  @doc "Internal API."
   @spec validate_action(action_key() | term(), registry()) ::
           :ok | {:error, action_validation_error()}
   def validate_action(action, registry) do
@@ -89,7 +89,7 @@ defmodule Squidie.Workflow.ActionRegistry do
     end
   end
 
-  @doc false
+  @doc "Internal API."
   @spec resolve_action(action_key() | term(), registry()) ::
           {:ok, module()} | {:error, action_validation_error()}
   def resolve_action(action, registry) do

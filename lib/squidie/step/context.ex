@@ -30,7 +30,7 @@ defmodule Squidie.Step.Context do
           state: map()
         }
 
-  @doc false
+  @doc "Internal API."
   @spec from_map(map()) :: t()
   def from_map(context) when is_map(context) do
     %__MODULE__{

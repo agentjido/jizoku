@@ -78,7 +78,7 @@ defmodule Squidie.Workflow.RunicPlanner do
     {:ok, %{planner | runic_workflow: Workflow.apply_runnable(planner.runic_workflow, completed)}}
   end
 
-  @doc false
+  @doc "Internal API."
   @spec external_step_result(term()) :: term()
   def external_step_result(input), do: input
 

@@ -74,7 +74,7 @@ defmodule Squidie.Workflow.Spec do
           details: map()
         }
 
-  @doc false
+  @doc "Internal API."
   @spec from_definition(module(), Definition.t()) :: t()
   def from_definition(workflow, definition) when is_atom(workflow) and is_map(definition) do
     %__MODULE__{

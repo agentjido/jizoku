@@ -74,46 +74,46 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
             terminal_error: nil,
             anomalies: []
 
-  @doc false
+  @doc "Internal API."
   @spec new() :: t()
   def new do
     %__MODULE__{applied_runnable_keys: MapSet.new()}
   end
 
-  @doc false
+  @doc "Internal API."
   @spec rebuild([Entry.t()]) :: t()
   def rebuild(entries) when is_list(entries) do
     replay(new(), entries)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec replay(t(), [Entry.t()]) :: t()
   def replay(%__MODULE__{} = projection, entries) when is_list(entries) do
     Enum.reduce(entries, projection, &apply_entry/2)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec status(t()) :: atom()
   def status(%__MODULE__{status: status}), do: status
 
-  @doc false
+  @doc "Internal API."
   @spec terminal?(t()) :: boolean()
   def terminal?(%__MODULE__{terminal_status: nil}), do: false
   def terminal?(%__MODULE__{}), do: true
 
-  @doc false
+  @doc "Internal API."
   @spec terminal_status(t()) :: atom() | nil
   def terminal_status(%__MODULE__{terminal_status: terminal_status}), do: terminal_status
 
-  @doc false
+  @doc "Internal API."
   @spec terminal_error(t()) :: map() | nil
   def terminal_error(%__MODULE__{terminal_error: terminal_error}), do: terminal_error
 
-  @doc false
+  @doc "Internal API."
   @spec manual_state(t()) :: manual_state() | nil
   def manual_state(%__MODULE__{manual_state: manual_state}), do: manual_state
 
-  @doc false
+  @doc "Internal API."
   @spec planned_runnable_keys(t()) :: [String.t()]
   def planned_runnable_keys(%__MODULE__{planned_runnables: planned_runnables}) do
     planned_runnables
@@ -121,7 +121,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Enum.sort()
   end
 
-  @doc false
+  @doc "Internal API."
   @spec planned_runnables(t()) :: [map()]
   def planned_runnables(%__MODULE__{planned_runnables: planned_runnables}) do
     planned_runnables
@@ -129,39 +129,39 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Enum.sort_by(&runnable_key/1)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec planned_runnable(t(), String.t()) :: {:ok, map()} | :error
   def planned_runnable(%__MODULE__{planned_runnables: planned_runnables}, runnable_key)
       when is_binary(runnable_key) do
     Map.fetch(planned_runnables, runnable_key)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec planned_runnable_key?(t(), String.t()) :: boolean()
   def planned_runnable_key?(%__MODULE__{planned_runnables: planned_runnables}, runnable_key)
       when is_binary(runnable_key) do
     Map.has_key?(planned_runnables, runnable_key)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec applied_runnable_keys(t()) :: MapSet.t(String.t())
   def applied_runnable_keys(%__MODULE__{applied_runnable_keys: applied_runnable_keys}) do
     applied_runnable_keys
   end
 
-  @doc false
+  @doc "Internal API."
   @spec applied_results(t()) :: %{optional(String.t()) => map() | nil}
   def applied_results(%__MODULE__{} = projection) do
     Map.get(projection, :applied_results, %{})
   end
 
-  @doc false
+  @doc "Internal API."
   @spec applied_result(t(), String.t()) :: {:ok, map() | nil} | :error
   def applied_result(%__MODULE__{} = projection, runnable_key) when is_binary(runnable_key) do
     Map.fetch(applied_results(projection), runnable_key)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec applied_execution_opts(t(), String.t()) :: keyword()
   def applied_execution_opts(%__MODULE__{} = projection, runnable_key)
       when is_binary(runnable_key) do
@@ -170,7 +170,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Map.get(runnable_key, [])
   end
 
-  @doc false
+  @doc "Internal API."
   @spec applied_at(t(), String.t()) :: DateTime.t() | nil
   def applied_at(%__MODULE__{} = projection, runnable_key) when is_binary(runnable_key) do
     projection
@@ -178,7 +178,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Map.get(runnable_key)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec applied_runnable_key_for_step(t(), String.t()) :: {:ok, String.t()} | :error
   def applied_runnable_key_for_step(%__MODULE__{} = projection, step) when is_binary(step) do
     applied_keys = applied_runnable_keys(projection)
@@ -200,7 +200,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     end
   end
 
-  @doc false
+  @doc "Internal API."
   @spec child_runs(t()) :: [map()]
   def child_runs(%__MODULE__{} = projection) do
     child_runs = Map.get(projection, :child_runs, [])
@@ -210,7 +210,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Enum.sort_by(&{Map.get(&1, :child_key), Map.get(&1, :child_run_id)})
   end
 
-  @doc false
+  @doc "Internal API."
   @spec dynamic_work(t()) :: [map()]
   def dynamic_work(%__MODULE__{} = projection) do
     dynamic_work = Map.get(projection, :dynamic_work, [])
@@ -220,7 +220,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Enum.sort_by(&{Map.get(&1, :dynamic_key), Map.get(&1, :recorded_at)})
   end
 
-  @doc false
+  @doc "Internal API."
   @spec command_history(t()) :: [map()]
   def command_history(%__MODULE__{} = projection) do
     projection
@@ -228,7 +228,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Enum.reverse()
   end
 
-  @doc false
+  @doc "Internal API."
   @spec upgrade(t()) :: t()
   def upgrade(%__MODULE__{} = projection) do
     projection
@@ -238,7 +238,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Map.put_new(:terminal_error, nil)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec anomalies(t()) :: [anomaly()]
   def anomalies(%__MODULE__{anomalies: anomalies}), do: Enum.reverse(anomalies)
 
@@ -378,7 +378,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   defp terminal_error_from_data(data) when is_map(data) do
-    case Map.get(data, :error) || Map.get(data, "error") do
+    case definition_metadata_value(data, :error) do
       error when is_map(error) -> error
       _other -> nil
     end

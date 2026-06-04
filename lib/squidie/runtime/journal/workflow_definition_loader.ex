@@ -18,7 +18,7 @@ defmodule Squidie.Runtime.Journal.WorkflowDefinitionLoader do
     :entry_step
   ]
 
-  @doc false
+  @doc "Internal API."
   @spec load(Journal.storage_config(), String.t(), String.t()) ::
           {:ok, module(), Definition.t()} | {:error, term()}
   def load(storage, run_id, workflow_name)
@@ -34,7 +34,7 @@ defmodule Squidie.Runtime.Journal.WorkflowDefinitionLoader do
     end
   end
 
-  @doc false
+  @doc "Internal API."
   @spec runtime_spec_run?(Journal.storage_config(), String.t()) ::
           {:ok, boolean()} | {:error, term()}
   def runtime_spec_run?(storage, run_id) when is_binary(run_id) do

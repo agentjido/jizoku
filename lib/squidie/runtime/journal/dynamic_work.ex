@@ -45,7 +45,7 @@ defmodule Squidie.Runtime.Journal.DynamicWork do
 
   @spec new_entry(String.t(), map() | keyword(), DateTime.t(), validation_context()) ::
           {:ok, Entry.t() | :duplicate} | {:error, dynamic_work_error() | term()}
-  @doc false
+  @doc "Internal API."
   def new_entry(run_id, attrs, %DateTime{} = occurred_at, context) when is_binary(run_id) do
     with {:ok, %{entry: entry, duplicate?: duplicate?}} <-
            preview(run_id, attrs, occurred_at, context) do
@@ -62,7 +62,7 @@ defmodule Squidie.Runtime.Journal.DynamicWork do
   @spec preview(String.t(), map() | keyword(), DateTime.t(), validation_context()) ::
           {:ok, %{entry: Entry.t(), dynamic_work: map(), duplicate?: boolean()}}
           | {:error, dynamic_work_error() | term()}
-  @doc false
+  @doc "Internal API."
   def preview(run_id, attrs, %DateTime{} = occurred_at, context) when is_binary(run_id) do
     with {:ok, attrs} <- validate_attrs(attrs),
          attrs <- Map.put(attrs, :run_id, run_id),

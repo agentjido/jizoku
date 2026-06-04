@@ -47,7 +47,7 @@ defmodule Squidie.Runtime.Journal.Cancellation do
 
   def cancel(_run_id, _opts), do: {:error, :invalid_run_id}
 
-  @doc false
+  @doc "Internal API."
   @spec apply_signal(Signal.t(), keyword()) ::
           {:ok, Inspection.Snapshot.t()} | {:error, cancel_error() | {:invalid_signal, term()}}
   def apply_signal(

@@ -5,7 +5,7 @@ defmodule Squidie.Workflow.InputMapping do
   @type path_mapping :: keyword([atom()])
   @type t :: selection_mapping() | path_mapping()
 
-  @doc false
+  @doc "Internal API."
   @spec valid?(term()) :: boolean()
   def valid?(mapping) when is_list(mapping) and mapping != [] do
     selection_mapping?(mapping) or path_mapping?(mapping)
@@ -13,7 +13,7 @@ defmodule Squidie.Workflow.InputMapping do
 
   def valid?(_mapping), do: false
 
-  @doc false
+  @doc "Internal API."
   @spec apply(map(), t() | nil) ::
           {:ok, map()} | {:error, {:missing_input_path, map()} | {:invalid_input_mapping, term()}}
   def apply(input, nil) when is_map(input), do: {:ok, input}

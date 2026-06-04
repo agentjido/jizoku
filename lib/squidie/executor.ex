@@ -45,7 +45,7 @@ defmodule Squidie.Executor do
 
   @required_callbacks [enqueue_cron: 4]
 
-  @doc false
+  @doc "Internal API."
   @spec required_callbacks() :: keyword(pos_integer())
   def required_callbacks, do: @required_callbacks
 end

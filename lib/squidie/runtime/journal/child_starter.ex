@@ -20,7 +20,7 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
           | Starter.start_error()
           | term()
 
-  @doc false
+  @doc "Internal API."
   @spec start_child_run(Context.t(), module(), atom(), map(), keyword()) ::
           {:ok, Inspection.Snapshot.t()} | {:error, start_error()}
   def start_child_run(

@@ -31,23 +31,23 @@ defmodule Squidie.Runtime.RunCatalogProjection do
 
   defstruct runs: %{}, anomalies: []
 
-  @doc false
+  @doc "Internal API."
   @spec new() :: t()
   def new, do: %__MODULE__{}
 
-  @doc false
+  @doc "Internal API."
   @spec rebuild([Entry.t()]) :: t()
   def rebuild(entries) when is_list(entries) do
     replay(new(), entries)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec replay(t(), [Entry.t()]) :: t()
   def replay(%__MODULE__{} = projection, entries) when is_list(entries) do
     Enum.reduce(entries, projection, &apply_entry/2)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec runs(t()) :: [run_summary()]
   def runs(%__MODULE__{runs: runs}) do
     runs
@@ -57,7 +57,7 @@ defmodule Squidie.Runtime.RunCatalogProjection do
     end)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec run_ids(t()) :: [String.t()]
   def run_ids(%__MODULE__{} = projection) do
     projection
@@ -65,7 +65,7 @@ defmodule Squidie.Runtime.RunCatalogProjection do
     |> Enum.map(& &1.run_id)
   end
 
-  @doc false
+  @doc "Internal API."
   @spec anomalies(t()) :: [anomaly()]
   def anomalies(%__MODULE__{anomalies: anomalies}), do: Enum.reverse(anomalies)
 

@@ -81,7 +81,7 @@ defmodule Squidie.Runtime.Journal.ManualControl do
           {:ok, Inspection.Snapshot.t()} | {:error, control_error()}
   def reject(run_id, attrs, opts \\ []), do: review(run_id, :rejected, attrs, opts)
 
-  @doc false
+  @doc "Internal API."
   @spec apply_signal(Signal.t(), keyword()) ::
           {:ok, Inspection.Snapshot.t()} | {:error, control_error() | {:invalid_signal, term()}}
   def apply_signal(

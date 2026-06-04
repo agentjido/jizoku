@@ -236,7 +236,7 @@ defmodule Squidie do
     {:error, {:invalid_trigger, trigger_name}}
   end
 
-  @doc false
+  @doc "Internal API."
   @spec start_run_with_initial_context(module(), atom(), map(), map(), keyword()) ::
           {:ok, Squidie.ReadModel.Inspection.Snapshot.t()}
           | {:ok, {:duplicate_schedule_start, Squidie.ReadModel.Inspection.Snapshot.t()}}

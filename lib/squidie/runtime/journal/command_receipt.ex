@@ -4,7 +4,7 @@ defmodule Squidie.Runtime.Journal.CommandReceipt do
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.Entry
 
-  @doc false
+  @doc "Internal API."
   @spec new(atom(), map(), DateTime.t()) :: {:ok, Entry.t()} | {:error, term()}
   def new(signal_type, attrs, %DateTime{} = now) when is_atom(signal_type) and is_map(attrs) do
     attrs =

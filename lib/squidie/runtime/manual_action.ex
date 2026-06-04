@@ -14,7 +14,7 @@ defmodule Squidie.Runtime.ManualAction do
   @type type :: :resumed | :approved | :rejected
   @type persisted :: map()
 
-  @doc false
+  @doc "Internal API."
   @spec validate(attrs(), keyword()) :: :ok | {:error, {:invalid_manual_action, map()}}
   def validate(attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
     attrs
@@ -26,7 +26,7 @@ defmodule Squidie.Runtime.ManualAction do
     end
   end
 
-  @doc false
+  @doc "Internal API."
   @spec build(type(), attrs()) :: persisted()
   @spec build(type(), attrs(), DateTime.t()) :: persisted()
   def build(type, attrs, now \\ DateTime.utc_now(:microsecond))

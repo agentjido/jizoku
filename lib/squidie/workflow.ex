@@ -176,21 +176,21 @@ defmodule Squidie.Workflow do
 
   defp quoted_definition(definition) do
     quote do
-      @doc false
+      @doc "Internal API."
       def workflow_definition do
         Squidie.Workflow.__resolve_runtime_definition__(unquote(Macro.escape(definition)))
       end
 
-      @doc false
+      @doc "Internal API."
       def __workflow__(:definition), do: workflow_definition()
 
-      @doc false
+      @doc "Internal API."
       def __workflow__(:contract), do: unquote(Macro.escape(@contract))
 
-      @doc false
+      @doc "Internal API."
       def __workflow__(:steps), do: workflow_definition().steps
 
-      @doc false
+      @doc "Internal API."
       def __workflow__(key)
           when key in [
                  :entry_step,

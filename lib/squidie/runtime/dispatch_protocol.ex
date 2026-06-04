@@ -141,7 +141,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
                  @run_index_entry_types ++
                  @run_catalog_entry_types
 
-  @doc false
+  @doc "Internal API."
   @spec new_entry(entry_type(), map() | keyword()) ::
           {:ok, Entry.t()} | {:error, {:unknown_entry_type, atom()} | {:missing_fields, [atom()]}}
   def new_entry(type, attrs) when is_atom(type) and type in @entry_types do
