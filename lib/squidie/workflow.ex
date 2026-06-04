@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Workflow do
   @moduledoc """
   Declarative workflow contract for Squidie workflow modules.
@@ -176,25 +177,20 @@ defmodule Squidie.Workflow do
 
   defp quoted_definition(definition) do
     quote do
-      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
       @doc false
       def workflow_definition do
         Squidie.Workflow.__resolve_runtime_definition__(unquote(Macro.escape(definition)))
       end
 
-      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
       @doc false
       def __workflow__(:definition), do: workflow_definition()
 
-      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
       @doc false
       def __workflow__(:contract), do: unquote(Macro.escape(@contract))
 
-      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
       @doc false
       def __workflow__(:steps), do: workflow_definition().steps
 
-      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
       @doc false
       def __workflow__(key)
           when key in [

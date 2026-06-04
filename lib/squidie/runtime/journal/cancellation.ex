@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.Cancellation do
   @moduledoc """
   Journal-backed workflow cancellation.
@@ -47,7 +48,6 @@ defmodule Squidie.Runtime.Journal.Cancellation do
 
   def cancel(_run_id, _opts), do: {:error, :invalid_run_id}
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec apply_signal(Signal.t(), keyword()) ::
           {:ok, Inspection.Snapshot.t()} | {:error, cancel_error() | {:invalid_signal, term()}}

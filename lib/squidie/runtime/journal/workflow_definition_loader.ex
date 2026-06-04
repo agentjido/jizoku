@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.WorkflowDefinitionLoader do
   @moduledoc false
 
@@ -18,7 +19,6 @@ defmodule Squidie.Runtime.Journal.WorkflowDefinitionLoader do
     :entry_step
   ]
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec load(Journal.storage_config(), String.t(), String.t()) ::
           {:ok, module(), Definition.t()} | {:error, term()}
@@ -35,7 +35,6 @@ defmodule Squidie.Runtime.Journal.WorkflowDefinitionLoader do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec runtime_spec_run?(Journal.storage_config(), String.t()) ::
           {:ok, boolean()} | {:error, term()}

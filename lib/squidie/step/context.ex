@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Step.Context do
   @moduledoc """
   Durable runtime context passed to native Squidie steps.
@@ -30,7 +31,6 @@ defmodule Squidie.Step.Context do
           state: map()
         }
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec from_map(map()) :: t()
   def from_map(context) when is_map(context) do

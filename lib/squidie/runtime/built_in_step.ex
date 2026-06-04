@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.BuiltInStep do
   @moduledoc """
   Executes declarative built-in workflow steps.
@@ -12,7 +13,6 @@ defmodule Squidie.Runtime.BuiltInStep do
           {:unknown_built_in_step, Squidie.Workflow.Definition.built_in_step_kind()}
   @type execution_result :: {:ok, map(), keyword()} | {:error, built_in_step_error()}
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec execute_wait(keyword()) :: {:ok, map(), keyword()}
   def execute_wait(opts) do
@@ -20,7 +20,6 @@ defmodule Squidie.Runtime.BuiltInStep do
     {:ok, %{}, [schedule_in: ceil(duration / 1_000)]}
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec execute_log(keyword()) :: {:ok, map(), keyword()}
   def execute_log(opts) do

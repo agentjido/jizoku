@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Workflow.ActionRegistry do
   @moduledoc """
   Host-owned trust boundary for runtime-authored workflow actions.
@@ -68,7 +69,6 @@ defmodule Squidie.Workflow.ActionRegistry do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec validate_action(action_key() | term(), registry()) ::
           :ok | {:error, action_validation_error()}
@@ -90,7 +90,6 @@ defmodule Squidie.Workflow.ActionRegistry do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec resolve_action(action_key() | term(), registry()) ::
           {:ok, module()} | {:error, action_validation_error()}

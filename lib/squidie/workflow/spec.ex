@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Workflow.Spec do
   @moduledoc """
   Serializable, normalized workflow specification used to rebuild planner state.
@@ -74,7 +75,6 @@ defmodule Squidie.Workflow.Spec do
           details: map()
         }
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec from_definition(module(), Definition.t()) :: t()
   def from_definition(workflow, definition) when is_atom(workflow) and is_map(definition) do

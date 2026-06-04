@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.ChildStarter do
   @moduledoc false
 
@@ -20,7 +21,6 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
           | Starter.start_error()
           | term()
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec start_child_run(Context.t(), module(), atom(), map(), keyword()) ::
           {:ok, Inspection.Snapshot.t()} | {:error, start_error()}

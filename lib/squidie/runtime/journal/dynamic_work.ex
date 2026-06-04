@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.DynamicWork do
   @moduledoc false
 
@@ -45,7 +46,6 @@ defmodule Squidie.Runtime.Journal.DynamicWork do
 
   @spec new_entry(String.t(), map() | keyword(), DateTime.t(), validation_context()) ::
           {:ok, Entry.t() | :duplicate} | {:error, dynamic_work_error() | term()}
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   def new_entry(run_id, attrs, %DateTime{} = occurred_at, context) when is_binary(run_id) do
     with {:ok, %{entry: entry, duplicate?: duplicate?}} <-
@@ -63,7 +63,6 @@ defmodule Squidie.Runtime.Journal.DynamicWork do
   @spec preview(String.t(), map() | keyword(), DateTime.t(), validation_context()) ::
           {:ok, %{entry: Entry.t(), dynamic_work: map(), duplicate?: boolean()}}
           | {:error, dynamic_work_error() | term()}
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   def preview(run_id, attrs, %DateTime{} = occurred_at, context) when is_binary(run_id) do
     with {:ok, attrs} <- validate_attrs(attrs),

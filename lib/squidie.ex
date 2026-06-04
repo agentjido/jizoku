@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie do
   @moduledoc """
   Public entrypoint for the Squidie runtime.
@@ -236,7 +237,6 @@ defmodule Squidie do
     {:error, {:invalid_trigger, trigger_name}}
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec start_run_with_initial_context(module(), atom(), map(), map(), keyword()) ::
           {:ok, Squidie.ReadModel.Inspection.Snapshot.t()}

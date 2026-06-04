@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Workflow.SparkExtension do
   @moduledoc """
   Spark extension that defines the Squidie workflow DSL.
@@ -187,7 +188,6 @@ defmodule Squidie.Workflow.SparkExtension do
 
   use Spark.Dsl.Extension, sections: [@workflow]
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec put_step_metadata(Squidie.Workflow.StepSpec.t()) ::
           {:ok, Squidie.Workflow.StepSpec.t()}
@@ -201,7 +201,6 @@ defmodule Squidie.Workflow.SparkExtension do
     {:ok, %{step | metadata: metadata}}
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec put_cron_config(Squidie.Workflow.TriggerDefinitionSpec.t()) ::
           {:ok, Squidie.Workflow.TriggerDefinitionSpec.t()}
@@ -221,7 +220,6 @@ defmodule Squidie.Workflow.SparkExtension do
     {:ok, %{definition | config: normalized_config}}
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec reject_payload_field_outside_payload(Squidie.Workflow.PayloadFieldSpec.t()) ::
           {:error, String.t()}
@@ -229,7 +227,6 @@ defmodule Squidie.Workflow.SparkExtension do
     {:error, "field/3 must be declared inside a trigger payload block"}
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec put_transition_options(Squidie.Workflow.TransitionSpec.t()) ::
           {:ok, Squidie.Workflow.TransitionSpec.t()} | {:error, String.t()}

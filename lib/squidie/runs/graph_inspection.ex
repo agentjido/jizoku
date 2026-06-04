@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runs.GraphInspection do
   @moduledoc """
   Graph-oriented inspection output for one workflow run.
@@ -52,7 +53,6 @@ defmodule Squidie.Runs.GraphInspection do
     dynamic_work_overlays: []
   ]
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec from_snapshot(Snapshot.t(), keyword()) :: t()
   def from_snapshot(%Snapshot{} = snapshot, opts) when is_list(opts) do

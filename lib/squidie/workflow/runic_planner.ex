@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Workflow.RunicPlanner do
   @moduledoc false
 
@@ -78,7 +79,6 @@ defmodule Squidie.Workflow.RunicPlanner do
     {:ok, %{planner | runic_workflow: Workflow.apply_runnable(planner.runic_workflow, completed)}}
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec external_step_result(term()) :: term()
   def external_step_result(input), do: input

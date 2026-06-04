@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.Compensation do
   @moduledoc false
 
@@ -6,7 +7,6 @@ defmodule Squidie.Runtime.Journal.Compensation do
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Workflow.Definition
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec next_runnable(
           Agent.t(),
@@ -44,7 +44,6 @@ defmodule Squidie.Runtime.Journal.Compensation do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec applied_runnable_keys(Agent.t()) :: MapSet.t()
   def applied_runnable_keys(%Agent{} = workflow_agent) do
@@ -63,7 +62,6 @@ defmodule Squidie.Runtime.Journal.Compensation do
     end)
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec planned_for_failure?(Agent.t(), String.t() | nil) :: boolean()
   def planned_for_failure?(%Agent{} = workflow_agent, failure_runnable_key)
@@ -80,7 +78,6 @@ defmodule Squidie.Runtime.Journal.Compensation do
 
   def planned_for_failure?(%Agent{}, _failure_runnable_key), do: false
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec runnable?(map() | term()) :: boolean()
   def runnable?(runnable) when is_map(runnable) do
@@ -92,7 +89,6 @@ defmodule Squidie.Runtime.Journal.Compensation do
 
   def runnable?(_runnable), do: false
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec failure(map()) :: map()
   def failure(runnable) when is_map(runnable) do
@@ -101,7 +97,6 @@ defmodule Squidie.Runtime.Journal.Compensation do
     |> map_value(:failure, %{})
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec failure_runnable_key(map()) :: String.t() | nil
   def failure_runnable_key(runnable) when is_map(runnable) do

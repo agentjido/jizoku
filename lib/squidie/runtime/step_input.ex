@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.StepInput do
   @moduledoc """
   Step-execution input normalization for the runtime.
@@ -11,7 +12,6 @@ defmodule Squidie.Runtime.StepInput do
   @type expected_step :: atom() | String.t() | nil
   @type input_mapping :: InputMapping.t() | nil
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec deserialize_expected_step(expected_step()) ::
           {:ok, atom() | nil} | {:error, {:invalid_step, String.t()}}
@@ -24,7 +24,6 @@ defmodule Squidie.Runtime.StepInput do
     ArgumentError -> {:error, {:invalid_step, step}}
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec deserialize_expected_step(expected_step(), map()) ::
           {:ok, atom() | nil} | {:error, {:invalid_step, String.t()}}
@@ -38,7 +37,6 @@ defmodule Squidie.Runtime.StepInput do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec normalize_map_keys(map()) :: map()
   def normalize_map_keys(map) when is_map(map) do
@@ -56,7 +54,6 @@ defmodule Squidie.Runtime.StepInput do
   defp normalize_value(value) when is_list(value), do: Enum.map(value, &normalize_value/1)
   defp normalize_value(value), do: value
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec apply_input_mapping(map(), input_mapping()) ::
           {:ok, map()} | {:error, {:missing_input_path, map()} | {:invalid_input_mapping, term()}}
@@ -66,13 +63,11 @@ defmodule Squidie.Runtime.StepInput do
     |> InputMapping.apply(input_mapping)
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec input_mapping_error?(term()) :: boolean()
   def input_mapping_error?({:missing_input_path, details}) when is_map(details), do: true
   def input_mapping_error?(_reason), do: false
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec input_mapping_error_to_map({:missing_input_path, map()}) :: map()
   def input_mapping_error_to_map({:missing_input_path, details}) when is_map(details) do

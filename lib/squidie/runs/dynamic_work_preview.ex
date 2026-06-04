@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runs.DynamicWorkPreview do
   @moduledoc """
   Validated, read-only preview of one dynamic work record.
@@ -33,7 +34,6 @@ defmodule Squidie.Runs.DynamicWorkPreview do
     recordable?: true
   ]
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec new(String.t(), map(), boolean(), GraphInspection.t()) :: t()
   def new(run_id, dynamic_work, duplicate?, %GraphInspection{} = graph)

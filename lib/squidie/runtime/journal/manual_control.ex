@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.ManualControl do
   @moduledoc """
   Journal-backed manual intervention controls.
@@ -81,7 +82,6 @@ defmodule Squidie.Runtime.Journal.ManualControl do
           {:ok, Inspection.Snapshot.t()} | {:error, control_error()}
   def reject(run_id, attrs, opts \\ []), do: review(run_id, :rejected, attrs, opts)
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec apply_signal(Signal.t(), keyword()) ::
           {:ok, Inspection.Snapshot.t()} | {:error, control_error() | {:invalid_signal, term()}}

@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Step do
   @moduledoc """
   Public contract for authoring native Squidie workflow steps.
@@ -39,11 +40,9 @@ defmodule Squidie.Step do
       @squidie_step_input_schema input_schema
       @squidie_step_output_schema output_schema
 
-      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
       @doc false
       def __squidie_step__(:contract), do: :squidie_step
 
-      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
       @doc false
       def __squidie_step__(:metadata) do
         %{
@@ -55,17 +54,14 @@ defmodule Squidie.Step do
         }
       end
 
-      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
       @doc false
       def __squidie_step__(:input_schema), do: @squidie_step_input_schema
 
-      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
       @doc false
       def __squidie_step__(:output_schema), do: @squidie_step_output_schema
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec native_step?(module()) :: boolean()
   def native_step?(module) when is_atom(module) do
@@ -73,28 +69,24 @@ defmodule Squidie.Step do
       module.__squidie_step__(:contract) == :squidie_step
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec metadata(module()) :: map() | nil
   def metadata(module) when is_atom(module) do
     if native_step?(module), do: module.__squidie_step__(:metadata), else: nil
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec validate_input(module(), map()) :: {:ok, map()} | {:error, map()}
   def validate_input(module, input) when is_atom(module) and is_map(input) do
     validate_schema(input, module.__squidie_step__(:input_schema), "input")
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec validate_output(module(), map()) :: {:ok, map()} | {:error, map()}
   def validate_output(module, output) when is_atom(module) and is_map(output) do
     validate_schema(output, module.__squidie_step__(:output_schema), "output")
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec normalize_result(result()) :: {:ok, map(), keyword()} | {:error, map()}
   def normalize_result({:ok, output}) when is_map(output), do: {:ok, output, []}

@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal do
   @moduledoc """
   Storage boundary for Squidie durable runtime facts.
@@ -26,7 +27,6 @@ defmodule Squidie.Runtime.Journal do
 
   @namespace "squidie"
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec append_entries(storage_config(), [Entry.t()], keyword()) ::
           {:ok, Thread.t()} | {:error, append_error()}
@@ -49,7 +49,6 @@ defmodule Squidie.Runtime.Journal do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec load_entries(storage_config(), Entry.thread()) ::
           {:ok, [Entry.t()]} | {:error, term()}
@@ -59,7 +58,6 @@ defmodule Squidie.Runtime.Journal do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec load_thread(storage_config(), Entry.thread()) :: {:ok, loaded_thread()} | {:error, term()}
   def load_thread(storage, thread) do
@@ -77,7 +75,6 @@ defmodule Squidie.Runtime.Journal do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec rebuild_dispatch_projection(storage_config(), String.t()) ::
           {:ok, Projection.t()} | {:error, term()}
@@ -87,7 +84,6 @@ defmodule Squidie.Runtime.Journal do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec rebuild_run_index_projection(storage_config(), atom() | String.t()) ::
           {:ok, RunIndexProjection.t()} | {:error, term()}
@@ -107,7 +103,6 @@ defmodule Squidie.Runtime.Journal do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec rebuild_run_catalog_projection(storage_config()) ::
           {:ok, RunCatalogProjection.t()} | {:error, term()}
@@ -119,7 +114,6 @@ defmodule Squidie.Runtime.Journal do
     end
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec put_checkpoint(storage_config(), Entry.thread(), term(), non_neg_integer(), keyword()) ::
           :ok | {:error, term()}
@@ -138,7 +132,6 @@ defmodule Squidie.Runtime.Journal do
     Storage.put_checkpoint(storage, checkpoint_key(thread_id), checkpoint)
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec fetch_checkpoint(storage_config(), Entry.thread()) ::
           {:ok, Checkpoint.t()} | {:error, term()}
@@ -146,7 +139,6 @@ defmodule Squidie.Runtime.Journal do
     Storage.fetch_checkpoint(storage, checkpoint_key(thread_id(thread)))
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec thread_id(Entry.thread()) :: String.t()
   def thread_id({:run, run_id}), do: encode_thread_id("run", run_id)

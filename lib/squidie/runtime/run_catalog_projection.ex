@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.RunCatalogProjection do
   @moduledoc """
   Rebuildable projection over the global journal run catalog.
@@ -31,26 +32,22 @@ defmodule Squidie.Runtime.RunCatalogProjection do
 
   defstruct runs: %{}, anomalies: []
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec new() :: t()
   def new, do: %__MODULE__{}
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec rebuild([Entry.t()]) :: t()
   def rebuild(entries) when is_list(entries) do
     replay(new(), entries)
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec replay(t(), [Entry.t()]) :: t()
   def replay(%__MODULE__{} = projection, entries) when is_list(entries) do
     Enum.reduce(entries, projection, &apply_entry/2)
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec runs(t()) :: [run_summary()]
   def runs(%__MODULE__{runs: runs}) do
@@ -61,7 +58,6 @@ defmodule Squidie.Runtime.RunCatalogProjection do
     end)
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec run_ids(t()) :: [String.t()]
   def run_ids(%__MODULE__{} = projection) do
@@ -70,7 +66,6 @@ defmodule Squidie.Runtime.RunCatalogProjection do
     |> Enum.map(& &1.run_id)
   end
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec anomalies(t()) :: [anomaly()]
   def anomalies(%__MODULE__{anomalies: anomalies}), do: Enum.reverse(anomalies)

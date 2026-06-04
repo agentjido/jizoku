@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Executor.Leases do
   @moduledoc """
   Behaviour for backends that own worker claims and lease extension.
@@ -70,7 +71,6 @@ defmodule Squidie.Executor.Leases do
     fail: 4
   ]
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec required_callbacks() :: keyword(pos_integer())
   def required_callbacks, do: @required_callbacks

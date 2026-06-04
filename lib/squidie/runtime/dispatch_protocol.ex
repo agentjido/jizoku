@@ -1,3 +1,4 @@
+# credo:disable-for-next-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.DispatchProtocol do
   @moduledoc """
   Defines the durable dispatch journal contract.
@@ -141,7 +142,6 @@ defmodule Squidie.Runtime.DispatchProtocol do
                  @run_index_entry_types ++
                  @run_catalog_entry_types
 
-  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
   @doc false
   @spec new_entry(entry_type(), map() | keyword()) ::
           {:ok, Entry.t()} | {:error, {:unknown_entry_type, atom()} | {:missing_fields, [atom()]}}
