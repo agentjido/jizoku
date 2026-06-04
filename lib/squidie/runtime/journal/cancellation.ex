@@ -47,7 +47,8 @@ defmodule Squidie.Runtime.Journal.Cancellation do
 
   def cancel(_run_id, _opts), do: {:error, :invalid_run_id}
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec apply_signal(Signal.t(), keyword()) ::
           {:ok, Inspection.Snapshot.t()} | {:error, cancel_error() | {:invalid_signal, term()}}
   def apply_signal(

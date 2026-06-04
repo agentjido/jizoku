@@ -13,7 +13,8 @@ defmodule Squidie.Runtime.Journal.SignalInterpreter do
   @manual_signal_types [:approve_run, :reject_run, :resume_run]
   @start_signal_types [:start_run, :start_cron]
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec apply(Signal.t(), keyword()) :: {:ok, term()} | {:error, term()}
   def apply(%Signal{type: type} = signal, opts)
       when type in @start_signal_types and is_list(opts) do

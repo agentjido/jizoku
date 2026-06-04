@@ -17,7 +17,8 @@ defmodule Squidie.Workflow.TransitionCondition do
 
   @operators [:equals, :greater_than, :less_than]
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec normalize(term()) :: {:ok, t()} | {:error, error()}
   def normalize(condition) when is_list(condition) or is_map(condition) do
     with {:ok, condition} <- condition_map(condition),
@@ -33,7 +34,8 @@ defmodule Squidie.Workflow.TransitionCondition do
 
   def normalize(_condition), do: {:error, :invalid_condition}
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec normalize!(term()) :: t()
   def normalize!(condition) do
     case normalize(condition) do
@@ -42,7 +44,8 @@ defmodule Squidie.Workflow.TransitionCondition do
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec matches?(map(), t() | map()) :: boolean()
   def matches?(context, condition) when is_map(context) do
     case normalize(condition) do
@@ -68,7 +71,8 @@ defmodule Squidie.Workflow.TransitionCondition do
 
   def matches?(_context, _condition), do: false
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec serialize(t() | map() | nil) :: map() | nil
   def serialize(nil), do: nil
 
@@ -88,7 +92,8 @@ defmodule Squidie.Workflow.TransitionCondition do
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec deserialize(map() | nil) :: t() | nil
   def deserialize(nil), do: nil
 

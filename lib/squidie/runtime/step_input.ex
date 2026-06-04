@@ -11,7 +11,8 @@ defmodule Squidie.Runtime.StepInput do
   @type expected_step :: atom() | String.t() | nil
   @type input_mapping :: InputMapping.t() | nil
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec deserialize_expected_step(expected_step()) ::
           {:ok, atom() | nil} | {:error, {:invalid_step, String.t()}}
   def deserialize_expected_step(nil), do: {:ok, nil}
@@ -23,7 +24,8 @@ defmodule Squidie.Runtime.StepInput do
     ArgumentError -> {:error, {:invalid_step, step}}
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec deserialize_expected_step(expected_step(), map()) ::
           {:ok, atom() | nil} | {:error, {:invalid_step, String.t()}}
   def deserialize_expected_step(nil, _definition), do: {:ok, nil}
@@ -36,7 +38,8 @@ defmodule Squidie.Runtime.StepInput do
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec normalize_map_keys(map()) :: map()
   def normalize_map_keys(map) when is_map(map) do
     Map.new(map, fn
@@ -53,7 +56,8 @@ defmodule Squidie.Runtime.StepInput do
   defp normalize_value(value) when is_list(value), do: Enum.map(value, &normalize_value/1)
   defp normalize_value(value), do: value
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec apply_input_mapping(map(), input_mapping()) ::
           {:ok, map()} | {:error, {:missing_input_path, map()} | {:invalid_input_mapping, term()}}
   def apply_input_mapping(input, input_mapping) when is_map(input) do
@@ -62,12 +66,14 @@ defmodule Squidie.Runtime.StepInput do
     |> InputMapping.apply(input_mapping)
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec input_mapping_error?(term()) :: boolean()
   def input_mapping_error?({:missing_input_path, details}) when is_map(details), do: true
   def input_mapping_error?(_reason), do: false
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec input_mapping_error_to_map({:missing_input_path, map()}) :: map()
   def input_mapping_error_to_map({:missing_input_path, details}) when is_map(details) do
     %{

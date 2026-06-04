@@ -28,7 +28,8 @@ defmodule Squidie.Runtime.Deadline do
           required(:escalation) => %{required(:outcome) => atom(), optional(:target) => term()}
         }
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec from_definition(Definition.t(), atom(), DateTime.t()) ::
           {:ok, map() | nil} | {:error, {:invalid_deadline, term()} | {:unknown_step, atom()}}
   def from_definition(definition, step_name, %DateTime{} = started_at) when is_atom(step_name) do
@@ -38,7 +39,8 @@ defmodule Squidie.Runtime.Deadline do
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec policy_from_opts(keyword()) ::
           {:ok, policy() | nil} | {:error, {:invalid_deadline, term()}}
   def policy_from_opts(opts) when is_list(opts) do
@@ -48,7 +50,8 @@ defmodule Squidie.Runtime.Deadline do
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec normalize_policy(term()) :: {:ok, policy()} | {:error, {:invalid_deadline, term()}}
   def normalize_policy(policy) when is_list(policy) do
     if Keyword.keyword?(policy) do
@@ -82,7 +85,8 @@ defmodule Squidie.Runtime.Deadline do
 
   def normalize_policy(policy), do: {:error, {:invalid_deadline, policy}}
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec from_policy(policy() | nil, DateTime.t()) :: map() | nil
   def from_policy(nil, %DateTime{}), do: nil
 
@@ -100,7 +104,8 @@ defmodule Squidie.Runtime.Deadline do
     })
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec evaluate(term(), DateTime.t(), keyword()) :: map() | nil
   def evaluate(deadline, now, opts \\ [])
 
@@ -128,7 +133,8 @@ defmodule Squidie.Runtime.Deadline do
 
   def evaluate(_deadline, %DateTime{}, _opts), do: nil
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec most_urgent([map() | nil]) :: map() | nil
   def most_urgent(deadlines) when is_list(deadlines) do
     deadlines
@@ -137,7 +143,8 @@ defmodule Squidie.Runtime.Deadline do
     |> List.first()
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec public_summary(term()) :: map() | nil
   def public_summary(deadline) when is_map(deadline) do
     deadline

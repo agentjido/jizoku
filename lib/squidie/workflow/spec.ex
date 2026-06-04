@@ -74,7 +74,8 @@ defmodule Squidie.Workflow.Spec do
           details: map()
         }
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec from_definition(module(), Definition.t()) :: t()
   def from_definition(workflow, definition) when is_atom(workflow) and is_map(definition) do
     %__MODULE__{

@@ -176,21 +176,26 @@ defmodule Squidie.Workflow do
 
   defp quoted_definition(definition) do
     quote do
-      @doc "Internal API."
+      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+      @doc false
       def workflow_definition do
         Squidie.Workflow.__resolve_runtime_definition__(unquote(Macro.escape(definition)))
       end
 
-      @doc "Internal API."
+      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+      @doc false
       def __workflow__(:definition), do: workflow_definition()
 
-      @doc "Internal API."
+      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+      @doc false
       def __workflow__(:contract), do: unquote(Macro.escape(@contract))
 
-      @doc "Internal API."
+      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+      @doc false
       def __workflow__(:steps), do: workflow_definition().steps
 
-      @doc "Internal API."
+      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+      @doc false
       def __workflow__(key)
           when key in [
                  :entry_step,

@@ -33,7 +33,8 @@ defmodule Squidie.Runs.DynamicWorkPreview do
     recordable?: true
   ]
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec new(String.t(), map(), boolean(), GraphInspection.t()) :: t()
   def new(run_id, dynamic_work, duplicate?, %GraphInspection{} = graph)
       when is_binary(run_id) and is_map(dynamic_work) and is_boolean(duplicate?) do

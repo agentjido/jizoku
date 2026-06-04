@@ -236,7 +236,8 @@ defmodule Squidie do
     {:error, {:invalid_trigger, trigger_name}}
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec start_run_with_initial_context(module(), atom(), map(), map(), keyword()) ::
           {:ok, Squidie.ReadModel.Inspection.Snapshot.t()}
           | {:ok, {:duplicate_schedule_start, Squidie.ReadModel.Inspection.Snapshot.t()}}

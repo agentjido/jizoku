@@ -81,7 +81,8 @@ defmodule Squidie.Runtime.Journal.ManualControl do
           {:ok, Inspection.Snapshot.t()} | {:error, control_error()}
   def reject(run_id, attrs, opts \\ []), do: review(run_id, :rejected, attrs, opts)
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec apply_signal(Signal.t(), keyword()) ::
           {:ok, Inspection.Snapshot.t()} | {:error, control_error() | {:invalid_signal, term()}}
   def apply_signal(

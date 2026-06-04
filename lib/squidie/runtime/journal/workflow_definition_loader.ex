@@ -18,7 +18,8 @@ defmodule Squidie.Runtime.Journal.WorkflowDefinitionLoader do
     :entry_step
   ]
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec load(Journal.storage_config(), String.t(), String.t()) ::
           {:ok, module(), Definition.t()} | {:error, term()}
   def load(storage, run_id, workflow_name)
@@ -34,7 +35,8 @@ defmodule Squidie.Runtime.Journal.WorkflowDefinitionLoader do
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec runtime_spec_run?(Journal.storage_config(), String.t()) ::
           {:ok, boolean()} | {:error, term()}
   def runtime_spec_run?(storage, run_id) when is_binary(run_id) do

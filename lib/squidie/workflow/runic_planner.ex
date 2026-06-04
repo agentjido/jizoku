@@ -78,7 +78,8 @@ defmodule Squidie.Workflow.RunicPlanner do
     {:ok, %{planner | runic_workflow: Workflow.apply_runnable(planner.runic_workflow, completed)}}
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec external_step_result(term()) :: term()
   def external_step_result(input), do: input
 

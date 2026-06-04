@@ -39,10 +39,12 @@ defmodule Squidie.Step do
       @squidie_step_input_schema input_schema
       @squidie_step_output_schema output_schema
 
-      @doc "Internal API."
+      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+      @doc false
       def __squidie_step__(:contract), do: :squidie_step
 
-      @doc "Internal API."
+      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+      @doc false
       def __squidie_step__(:metadata) do
         %{
           contract: :squidie_step,
@@ -53,40 +55,47 @@ defmodule Squidie.Step do
         }
       end
 
-      @doc "Internal API."
+      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+      @doc false
       def __squidie_step__(:input_schema), do: @squidie_step_input_schema
 
-      @doc "Internal API."
+      # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+      @doc false
       def __squidie_step__(:output_schema), do: @squidie_step_output_schema
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec native_step?(module()) :: boolean()
   def native_step?(module) when is_atom(module) do
     Code.ensure_loaded?(module) and function_exported?(module, :__squidie_step__, 1) and
       module.__squidie_step__(:contract) == :squidie_step
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec metadata(module()) :: map() | nil
   def metadata(module) when is_atom(module) do
     if native_step?(module), do: module.__squidie_step__(:metadata), else: nil
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec validate_input(module(), map()) :: {:ok, map()} | {:error, map()}
   def validate_input(module, input) when is_atom(module) and is_map(input) do
     validate_schema(input, module.__squidie_step__(:input_schema), "input")
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec validate_output(module(), map()) :: {:ok, map()} | {:error, map()}
   def validate_output(module, output) when is_atom(module) and is_map(output) do
     validate_schema(output, module.__squidie_step__(:output_schema), "output")
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec normalize_result(result()) :: {:ok, map(), keyword()} | {:error, map()}
   def normalize_result({:ok, output}) when is_map(output), do: {:ok, output, []}
 

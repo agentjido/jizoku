@@ -34,25 +34,29 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
             queued_run_ids: MapSet.new(),
             terminal_runs: MapSet.new()
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec new() :: t()
   def new do
     %__MODULE__{queued_run_ids: MapSet.new(), terminal_runs: MapSet.new()}
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec rebuild([Entry.t()]) :: t()
   def rebuild(entries) when is_list(entries) do
     replay(new(), entries)
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec replay(t(), [Entry.t()]) :: t()
   def replay(%__MODULE__{} = projection, entries) when is_list(entries) do
     Enum.reduce(entries, normalize(projection), &apply_entry/2)
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec normalize(t()) :: t()
   def normalize(%__MODULE__{} = projection) do
     %__MODULE__{
@@ -63,7 +67,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     }
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec visible_attempts(t(), DateTime.t()) :: [ActionAttempt.t()]
   def visible_attempts(%__MODULE__{} = projection, %DateTime{} = at) do
     projection
@@ -74,7 +79,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     end)
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec expired_claims(t(), DateTime.t()) :: [ActionAttempt.t()]
   def expired_claims(%__MODULE__{} = projection, %DateTime{} = at) do
     projection
@@ -85,7 +91,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     end)
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec completed_results(t()) :: [ActionAttempt.t()]
   def completed_results(%__MODULE__{} = projection) do
     projection
@@ -93,7 +100,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     |> Enum.filter(&(&1.status == :completed))
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec attempt_runnable_keys(t()) :: MapSet.t(String.t())
   def attempt_runnable_keys(%__MODULE__{attempts: attempts}) do
     attempts
@@ -101,7 +109,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     |> MapSet.new()
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec run_ids(t()) :: MapSet.t(String.t())
   def run_ids(%__MODULE__{attempts: attempts, queued_run_ids: queued_run_ids}) do
     attempts
@@ -111,7 +120,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     |> MapSet.union(queued_run_ids)
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec results_ready_to_apply(t()) :: [ActionAttempt.t()]
   def results_ready_to_apply(%__MODULE__{} = projection) do
     projection
@@ -119,7 +129,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     |> Enum.reject(&(&1.applied? or terminal_run?(projection, &1.run_id)))
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec anomalies(t()) :: [anomaly()]
   def anomalies(%__MODULE__{anomalies: anomalies}), do: Enum.reverse(anomalies)
 

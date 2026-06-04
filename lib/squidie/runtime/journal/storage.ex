@@ -27,7 +27,8 @@ defmodule Squidie.Runtime.Journal.Storage do
           config: config()
         }
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec normalize(term()) :: {:ok, t()} | {:error, {:invalid_option, term()}}
   def normalize(%__MODULE__{adapter: module, opts: opts} = storage)
       when is_atom(module) and is_list(opts) do
@@ -48,7 +49,8 @@ defmodule Squidie.Runtime.Journal.Storage do
 
   def normalize(storage), do: invalid_storage(storage)
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec append_thread(t() | config(), String.t(), [Jido.Thread.Entry.t()], keyword()) ::
           {:ok, Jido.Thread.t()} | {:error, term()}
   def append_thread(storage, thread_id, entries, opts)
@@ -58,7 +60,8 @@ defmodule Squidie.Runtime.Journal.Storage do
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec fetch_thread(t() | config(), String.t()) :: {:ok, Jido.Thread.t()} | {:error, term()}
   def fetch_thread(storage, thread_id) when is_binary(thread_id) do
     with {:ok, %__MODULE__{} = storage} <- normalize(storage) do
@@ -66,7 +69,8 @@ defmodule Squidie.Runtime.Journal.Storage do
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec put_checkpoint(t() | config(), term(), term()) :: :ok | {:error, term()}
   def put_checkpoint(storage, key, checkpoint) do
     with {:ok, %__MODULE__{} = storage} <- normalize(storage) do
@@ -74,7 +78,8 @@ defmodule Squidie.Runtime.Journal.Storage do
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec fetch_checkpoint(t() | config(), term()) :: {:ok, term()} | {:error, term()}
   def fetch_checkpoint(storage, key) do
     with {:ok, %__MODULE__{} = storage} <- normalize(storage) do

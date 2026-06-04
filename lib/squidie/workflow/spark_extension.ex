@@ -187,7 +187,8 @@ defmodule Squidie.Workflow.SparkExtension do
 
   use Spark.Dsl.Extension, sections: [@workflow]
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec put_step_metadata(Squidie.Workflow.StepSpec.t()) ::
           {:ok, Squidie.Workflow.StepSpec.t()}
   def put_step_metadata(%Squidie.Workflow.StepSpec{} = step) do
@@ -200,7 +201,8 @@ defmodule Squidie.Workflow.SparkExtension do
     {:ok, %{step | metadata: metadata}}
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec put_cron_config(Squidie.Workflow.TriggerDefinitionSpec.t()) ::
           {:ok, Squidie.Workflow.TriggerDefinitionSpec.t()}
   def put_cron_config(%Squidie.Workflow.TriggerDefinitionSpec{} = definition) do
@@ -219,14 +221,16 @@ defmodule Squidie.Workflow.SparkExtension do
     {:ok, %{definition | config: normalized_config}}
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec reject_payload_field_outside_payload(Squidie.Workflow.PayloadFieldSpec.t()) ::
           {:error, String.t()}
   def reject_payload_field_outside_payload(%Squidie.Workflow.PayloadFieldSpec{}) do
     {:error, "field/3 must be declared inside a trigger payload block"}
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec put_transition_options(Squidie.Workflow.TransitionSpec.t()) ::
           {:ok, Squidie.Workflow.TransitionSpec.t()} | {:error, String.t()}
   def put_transition_options(%Squidie.Workflow.TransitionSpec{} = transition) do

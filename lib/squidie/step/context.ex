@@ -30,7 +30,8 @@ defmodule Squidie.Step.Context do
           state: map()
         }
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec from_map(map()) :: t()
   def from_map(context) when is_map(context) do
     %__MODULE__{

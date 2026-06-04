@@ -12,14 +12,16 @@ defmodule Squidie.Runtime.BuiltInStep do
           {:unknown_built_in_step, Squidie.Workflow.Definition.built_in_step_kind()}
   @type execution_result :: {:ok, map(), keyword()} | {:error, built_in_step_error()}
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec execute_wait(keyword()) :: {:ok, map(), keyword()}
   def execute_wait(opts) do
     duration = Keyword.fetch!(opts, :duration)
     {:ok, %{}, [schedule_in: ceil(duration / 1_000)]}
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec execute_log(keyword()) :: {:ok, map(), keyword()}
   def execute_log(opts) do
     level = Keyword.get(opts, :level, :info)

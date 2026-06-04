@@ -52,7 +52,8 @@ defmodule Squidie.Runs.GraphInspection do
     dynamic_work_overlays: []
   ]
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec from_snapshot(Snapshot.t(), keyword()) :: t()
   def from_snapshot(%Snapshot{} = snapshot, opts) when is_list(opts) do
     source = Keyword.get(opts, :source, :read_model)

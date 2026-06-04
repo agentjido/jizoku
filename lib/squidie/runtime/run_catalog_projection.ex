@@ -31,23 +31,27 @@ defmodule Squidie.Runtime.RunCatalogProjection do
 
   defstruct runs: %{}, anomalies: []
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec new() :: t()
   def new, do: %__MODULE__{}
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec rebuild([Entry.t()]) :: t()
   def rebuild(entries) when is_list(entries) do
     replay(new(), entries)
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec replay(t(), [Entry.t()]) :: t()
   def replay(%__MODULE__{} = projection, entries) when is_list(entries) do
     Enum.reduce(entries, projection, &apply_entry/2)
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec runs(t()) :: [run_summary()]
   def runs(%__MODULE__{runs: runs}) do
     runs
@@ -57,7 +61,8 @@ defmodule Squidie.Runtime.RunCatalogProjection do
     end)
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec run_ids(t()) :: [String.t()]
   def run_ids(%__MODULE__{} = projection) do
     projection
@@ -65,7 +70,8 @@ defmodule Squidie.Runtime.RunCatalogProjection do
     |> Enum.map(& &1.run_id)
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec anomalies(t()) :: [anomaly()]
   def anomalies(%__MODULE__{anomalies: anomalies}), do: Enum.reverse(anomalies)
 

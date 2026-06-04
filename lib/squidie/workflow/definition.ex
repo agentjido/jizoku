@@ -296,7 +296,8 @@ defmodule Squidie.Workflow.Definition do
     Enum.flat_map(completed_steps, &unsafe_replay_step(definition, &1))
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec normalize_recovery_policy(map()) :: recovery_policy()
   def normalize_recovery_policy(policy) when is_map(policy) do
     irreversible? = boolean_recovery_value(policy, :irreversible?, false)
@@ -314,7 +315,8 @@ defmodule Squidie.Workflow.Definition do
     |> maybe_put(:failure, normalize_failure_recovery(recovery_value(policy, :failure, nil)))
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec serialize_recovery_policy(recovery_policy()) :: map()
   def serialize_recovery_policy(policy) when is_map(policy) do
     policy = normalize_recovery_policy(policy)
@@ -413,7 +415,8 @@ defmodule Squidie.Workflow.Definition do
     end
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec serialize_transition_decision(transition() | nil) :: map() | nil
   def serialize_transition_decision(nil), do: nil
 
@@ -427,7 +430,8 @@ defmodule Squidie.Workflow.Definition do
     |> maybe_put_serialized_recovery(Map.get(transition, :recovery))
   end
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec deserialize_transition_decision(t() | nil, map() | nil) :: map() | nil
   def deserialize_transition_decision(_definition, nil), do: nil
 

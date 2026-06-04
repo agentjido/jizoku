@@ -20,7 +20,8 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
           | Starter.start_error()
           | term()
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec start_child_run(Context.t(), module(), atom(), map(), keyword()) ::
           {:ok, Inspection.Snapshot.t()} | {:error, start_error()}
   def start_child_run(

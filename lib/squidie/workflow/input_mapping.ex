@@ -5,7 +5,8 @@ defmodule Squidie.Workflow.InputMapping do
   @type path_mapping :: keyword([atom()])
   @type t :: selection_mapping() | path_mapping()
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec valid?(term()) :: boolean()
   def valid?(mapping) when is_list(mapping) and mapping != [] do
     selection_mapping?(mapping) or path_mapping?(mapping)
@@ -13,7 +14,8 @@ defmodule Squidie.Workflow.InputMapping do
 
   def valid?(_mapping), do: false
 
-  @doc "Internal API."
+  # credo:disable-next-line ExSlop.Check.Readability.DocFalseOnPublicFunction
+  @doc false
   @spec apply(map(), t() | nil) ::
           {:ok, map()} | {:error, {:missing_input_path, map()} | {:invalid_input_mapping, term()}}
   def apply(input, nil) when is_map(input), do: {:ok, input}
