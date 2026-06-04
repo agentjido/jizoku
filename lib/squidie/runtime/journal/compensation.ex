@@ -212,14 +212,28 @@ defmodule Squidie.Runtime.Journal.Compensation do
   defp sort_time(_missing), do: -1
 
   defp dynamic_work(runnable) when is_map(runnable) do
-    Map.get(runnable, :dynamic_work) || Map.get(runnable, "dynamic_work") || %{}
+    map_value(runnable, :dynamic_work, %{})
   end
 
   defp dynamic_value(dynamic_work, key) when is_map(dynamic_work) and is_atom(key) do
-    Map.get(dynamic_work, key) || Map.get(dynamic_work, Atom.to_string(key))
+    map_value(dynamic_work, key)
   end
 
   defp runnable_value(runnable, key) when is_map(runnable) and is_atom(key) do
-    Map.get(runnable, key) || Map.get(runnable, Atom.to_string(key))
+    map_value(runnable, key)
   end
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 end

@@ -93,7 +93,7 @@ defmodule Squidie.Workflow.TransitionCondition do
   def deserialize(nil), do: nil
 
   def deserialize(condition) when is_map(condition) do
-    path = Map.get(condition, :path) || Map.get(condition, "path")
+    path = map_value(condition, :path)
 
     with true <- is_list(path),
          {:ok, normalized_path} <- deserialize_path(path),
@@ -167,7 +167,21 @@ defmodule Squidie.Workflow.TransitionCondition do
 
   defp track_condition_key(_entry, _seen), do: {:halt, :invalid}
 
-  defp condition_path(condition), do: Map.get(condition, :path) || Map.get(condition, "path")
+  defp condition_path(condition), do: map_value(condition, :path)
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 
   defp condition_keys_valid?(condition) do
     path_key_count(condition) == 1 and Enum.all?(Map.keys(condition), &condition_key?/1)

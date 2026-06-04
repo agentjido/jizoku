@@ -186,8 +186,8 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     projection.planned_runnables
     |> Map.values()
     |> Enum.find_value(fn runnable ->
-      runnable_key = Map.get(runnable, :runnable_key) || Map.get(runnable, "runnable_key")
-      runnable_step = Map.get(runnable, :step) || Map.get(runnable, "step")
+      runnable_key = map_value(runnable, :runnable_key)
+      runnable_step = map_value(runnable, :step)
 
       if runnable_step == step and is_binary(runnable_key) and
            MapSet.member?(applied_keys, runnable_key) do
@@ -709,7 +709,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   defp manual_deadline(data) when is_map(data) do
-    Map.get(data, :deadline) || Map.get(data, "deadline")
+    map_value(data, :deadline)
   end
 
   defp refresh_status(%__MODULE__{terminal_status: terminal_status} = projection)
@@ -747,11 +747,24 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   defp runnable_key(runnable) when is_map(runnable) do
-    Map.get(runnable, :runnable_key) || Map.get(runnable, "runnable_key") ||
-      Map.get(runnable, :key) || Map.get(runnable, "key")
+    map_value(runnable, :runnable_key) || map_value(runnable, :key) || ""
   end
 
   defp runnable_key(_runnable), do: nil
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 
   defp normalize_runnable(runnable) when is_map(runnable), do: Map.new(runnable)
 

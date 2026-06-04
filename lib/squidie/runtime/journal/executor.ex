@@ -1404,11 +1404,10 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp put_latest_planned_runnable(runnable, latest_by_step) do
-    with step when is_binary(step) <- Map.get(runnable, :step) || Map.get(runnable, "step"),
-         key when is_binary(key) <-
-           Map.get(runnable, :runnable_key) || Map.get(runnable, "runnable_key") do
+    with step when is_binary(step) <- map_value(runnable, :step),
+         key when is_binary(key) <- map_value(runnable, :runnable_key) do
       attempt_number =
-        Map.get(runnable, :attempt_number) || Map.get(runnable, "attempt_number") || 1
+        map_value(runnable, :attempt_number) || 1
 
       put_latest_planned_runnable(latest_by_step, step, key, attempt_number)
     else
@@ -1966,7 +1965,7 @@ defmodule Squidie.Runtime.Journal.Executor do
       [
         retry_runnable_key: retry_runnable_key,
         retry_visible_at: retry_visible_at,
-        retry_deadline: Map.get(runnable, :deadline) || Map.get(runnable, "deadline"),
+        retry_deadline: map_value(runnable, :deadline),
         retry_runnable:
           dynamic_retry_runnable(
             runnable,
@@ -1982,10 +1981,10 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp dynamic_retry_max_attempts(runnable) do
-    dynamic_work = Map.get(runnable, :dynamic_work) || Map.get(runnable, "dynamic_work") || %{}
-    retry = Map.get(dynamic_work, :retry) || Map.get(dynamic_work, "retry") || %{}
+    dynamic_work = map_value(runnable, :dynamic_work, %{})
+    retry = map_value(dynamic_work, :retry, %{})
 
-    case Map.get(retry, :max_attempts) || Map.get(retry, "max_attempts") do
+    case map_value(retry, :max_attempts) do
       max_attempts when is_integer(max_attempts) and max_attempts > 0 -> {:ok, max_attempts}
       _missing -> :error
     end
@@ -2003,14 +2002,14 @@ defmodule Squidie.Runtime.Journal.Executor do
       runnable_key: retry_runnable_key,
       idempotency_key: retry_runnable_key,
       attempt_number: attempt_number,
-      queue: Map.get(runnable, :queue) || Map.get(runnable, "queue"),
+      queue: map_value(runnable, :queue),
       step: attempt.step,
       input: attempt.input || %{},
-      recovery: Map.get(runnable, :recovery) || Map.get(runnable, "recovery"),
+      recovery: map_value(runnable, :recovery),
       visible_at: retry_visible_at,
-      deadline: Map.get(runnable, :deadline) || Map.get(runnable, "deadline"),
+      deadline: map_value(runnable, :deadline),
       dynamic?: true,
-      dynamic_work: Map.get(runnable, :dynamic_work) || Map.get(runnable, "dynamic_work")
+      dynamic_work: map_value(runnable, :dynamic_work)
     }
   end
 
@@ -2212,7 +2211,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp runnable_queue(runnable) when is_map(runnable) do
-    Map.get(runnable, :queue) || Map.get(runnable, "queue")
+    map_value(runnable, :queue)
   end
 
   defp pending_dispatch_recovery_result(
@@ -2544,13 +2543,27 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp dynamic_runnable_module(runnable) when is_map(runnable) do
-    dynamic_work = Map.get(runnable, :dynamic_work) || Map.get(runnable, "dynamic_work") || %{}
+    dynamic_work = map_value(runnable, :dynamic_work, %{})
 
-    case Map.get(dynamic_work, :module) || Map.get(dynamic_work, "module") do
+    case map_value(dynamic_work, :module) do
       module when is_atom(module) -> {:ok, module}
       _missing -> {:error, {:invalid_dynamic_runnable, :missing_module}}
     end
   end
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 
   defp step_context(workflow_agent, %ActionAttempt{} = attempt, workflow, step_name, claim_id) do
     %{

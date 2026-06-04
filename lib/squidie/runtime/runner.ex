@@ -9,6 +9,7 @@ defmodule Squidie.Runtime.Runner do
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.ScheduleMetadata
+  alias Squidie.Workflow.Definition
 
   @doc """
   Executes one queued runtime payload.
@@ -83,10 +84,10 @@ defmodule Squidie.Runtime.Runner do
 
   defp start_new_cron_trigger(workflow_name, trigger_name, signal_payload, overrides) do
     with {:ok, workflow, definition} <-
-           Squidie.Workflow.Definition.load_serialized(workflow_name),
+           Definition.load_serialized(workflow_name),
          trigger when is_atom(trigger) <-
-           Squidie.Workflow.Definition.deserialize_trigger(definition, trigger_name),
-         {:ok, trigger_definition} <- Squidie.Workflow.Definition.trigger(definition, trigger),
+           Definition.deserialize_trigger(definition, trigger_name),
+         {:ok, trigger_definition} <- Definition.trigger(definition, trigger),
          {:ok, schedule_context} <-
            ScheduleMetadata.cron_context(workflow, trigger_definition, signal_payload),
          {:ok, run_result} <- start_cron_run(workflow, trigger, schedule_context, overrides) do

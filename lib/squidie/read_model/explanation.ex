@@ -313,7 +313,7 @@ defmodule Squidie.ReadModel.Explanation do
   defp deadline_next_actions(_deadline), do: []
 
   defp dynamic_work_key(dynamic_work) when is_map(dynamic_work) do
-    Map.get(dynamic_work, :dynamic_key) || Map.get(dynamic_work, "dynamic_key")
+    map_value(dynamic_work, :dynamic_key)
   end
 
   defp dynamic_work_key(_dynamic_work), do: nil
@@ -444,8 +444,22 @@ defmodule Squidie.ReadModel.Explanation do
   end
 
   defp item_value(item, key) when is_map(item) and is_atom(key) do
-    Map.get(item, key) || Map.get(item, Atom.to_string(key))
+    map_value(item, key)
   end
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 
   defp maybe_put_non_empty(map, _key, []), do: map
   defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)

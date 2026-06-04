@@ -231,12 +231,12 @@ defmodule Squidie.ReadModel.Listing do
         projection
         |> active_planned_runnables()
         |> Enum.map(fn runnable ->
-          (Map.get(runnable, :deadline) || Map.get(runnable, "deadline"))
-          |> Deadline.evaluate(now,
-            step: runnable_step(runnable),
-            runnable_key: runnable_key(runnable)
+          Deadline.public_summary(
+            Deadline.evaluate(map_value(runnable, :deadline), now,
+              step: runnable_step(runnable),
+              runnable_key: runnable_key(runnable)
+            )
           )
-          |> Deadline.public_summary()
         end)
 
       Deadline.most_urgent([manual_deadline | runnable_deadlines])
@@ -263,20 +263,33 @@ defmodule Squidie.ReadModel.Listing do
   end
 
   defp runnable_key(runnable) when is_map(runnable) do
-    Map.get(runnable, :runnable_key) || Map.get(runnable, "runnable_key") ||
-      Map.get(runnable, :key) || Map.get(runnable, "key") || ""
+    map_value(runnable, :runnable_key) || map_value(runnable, :key) || ""
   end
 
   defp runnable_step(runnable) when is_map(runnable) do
-    Map.get(runnable, :step) || Map.get(runnable, "step") || runnable_key(runnable)
+    map_value(runnable, :step) || runnable_key(runnable)
   end
 
   defp attempt_number(runnable) when is_map(runnable) do
-    case Map.get(runnable, :attempt_number) || Map.get(runnable, "attempt_number") do
+    case map_value(runnable, :attempt_number) do
       attempt_number when is_integer(attempt_number) -> attempt_number
       _missing_or_invalid -> 0
     end
   end
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 
   defp validate_catalog_summary(%Projection{} = projection, run_id, workflow, queue) do
     cond do

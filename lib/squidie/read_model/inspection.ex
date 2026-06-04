@@ -388,7 +388,7 @@ defmodule Squidie.ReadModel.Inspection do
 
   defp normalize_runnable(runnable, %DateTime{} = now) when is_map(runnable) do
     normalized_runnable =
-      case Map.get(runnable, :recovery) || Map.get(runnable, "recovery") do
+      case map_value(runnable, :recovery) do
         recovery when is_map(recovery) ->
           Map.put(runnable, :recovery, normalize_recovery(recovery))
 
@@ -397,9 +397,9 @@ defmodule Squidie.ReadModel.Inspection do
       end
 
     case Deadline.evaluate(
-           Map.get(normalized_runnable, :deadline) || Map.get(normalized_runnable, "deadline"),
+           map_value(normalized_runnable, :deadline),
            now,
-           step: Map.get(normalized_runnable, :step) || Map.get(normalized_runnable, "step"),
+           step: map_value(normalized_runnable, :step),
            runnable_key: runnable_key(normalized_runnable)
          ) do
       nil -> normalized_runnable
@@ -413,9 +413,9 @@ defmodule Squidie.ReadModel.Inspection do
     manual_state = Map.new(manual_state)
 
     case Deadline.evaluate(
-           Map.get(manual_state, :deadline) || Map.get(manual_state, "deadline"),
+           map_value(manual_state, :deadline),
            now,
-           step: Map.get(manual_state, :step) || Map.get(manual_state, "step")
+           step: map_value(manual_state, :step)
          ) do
       nil -> manual_state
       deadline -> Map.put(manual_state, :deadline, deadline)
@@ -426,8 +426,8 @@ defmodule Squidie.ReadModel.Inspection do
     runnables
     |> Enum.flat_map(fn runnable ->
       deadline =
-        Deadline.evaluate(Map.get(runnable, :deadline) || Map.get(runnable, "deadline"), now,
-          step: Map.get(runnable, :step) || Map.get(runnable, "step"),
+        Deadline.evaluate(map_value(runnable, :deadline), now,
+          step: map_value(runnable, :step),
           runnable_key: runnable_key(runnable)
         )
 
@@ -447,8 +447,7 @@ defmodule Squidie.ReadModel.Inspection do
   end
 
   defp runnable_key(runnable) when is_map(runnable) do
-    Map.get(runnable, :runnable_key) || Map.get(runnable, "runnable_key") ||
-      Map.get(runnable, :key) || Map.get(runnable, "key") || ""
+    map_value(runnable, :runnable_key) || map_value(runnable, :key) || ""
   end
 
   defp recovery_by_runnable_key(runnables) when is_list(runnables) do
@@ -460,7 +459,7 @@ defmodule Squidie.ReadModel.Inspection do
   defp deferred_by_runnable_key(runnables) when is_list(runnables) do
     runnables
     |> Enum.flat_map(fn runnable ->
-      case Map.get(runnable, :deferred) || Map.get(runnable, "deferred") do
+      case map_value(runnable, :deferred) do
         deferred when is_map(deferred) -> [{runnable_key(runnable), normalize_deferred(deferred)}]
         _missing -> []
       end
@@ -576,6 +575,20 @@ defmodule Squidie.ReadModel.Inspection do
   defp compact(map) do
     Map.reject(map, fn {_key, value} -> is_nil(value) end)
   end
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 
   defp normalize_step(step) when is_atom(step), do: Atom.to_string(step)
   defp normalize_step(step), do: step

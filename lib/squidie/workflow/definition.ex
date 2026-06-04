@@ -432,24 +432,34 @@ defmodule Squidie.Workflow.Definition do
   def deserialize_transition_decision(_definition, nil), do: nil
 
   def deserialize_transition_decision(definition, transition) when is_map(transition) do
-    from = Map.get(transition, :from) || Map.get(transition, "from")
-    on = Map.get(transition, :on) || Map.get(transition, "on")
-    to = Map.get(transition, :to) || Map.get(transition, "to")
+    from = map_value(transition, :from)
+    on = map_value(transition, :on)
+    to = map_value(transition, :to)
 
     %{
       from: deserialize_step(definition, from),
       on: deserialize_transition_outcome(on),
       to: deserialize_transition_target(definition, to)
     }
-    |> maybe_put_deserialized_condition(
-      Map.get(transition, :condition) || Map.get(transition, "condition")
-    )
-    |> maybe_put_deserialized_recovery(
-      Map.get(transition, :recovery) || Map.get(transition, "recovery")
-    )
+    |> maybe_put_deserialized_condition(map_value(transition, :condition))
+    |> maybe_put_deserialized_recovery(map_value(transition, :recovery))
   end
 
   def deserialize_transition_decision(_definition, _transition), do: nil
+
+  defp map_value(map, key, default \\ nil)
+
+  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key), default)
+    else
+      value
+    end
+  end
+
+  defp map_value(_map, _key, default), do: default
 
   @doc """
   Returns the explicit failure recovery route for a step when one was declared.

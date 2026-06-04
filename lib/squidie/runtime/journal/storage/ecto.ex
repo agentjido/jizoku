@@ -318,8 +318,6 @@ defmodule Squidie.Runtime.Journal.Storage.Ecto do
     with :ok <- validate_thread_revision(thread, entries),
          :ok <- validate_entry_sequences(thread, entries) do
       reconstruct_thread(thread, entries)
-    else
-      {:error, reason} -> {:error, reason}
     end
   end
 

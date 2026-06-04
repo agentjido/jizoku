@@ -510,19 +510,19 @@ defmodule Squidie.Runs.GraphInspection do
     Enum.find_value(step_sources, fn source ->
       case field(source, :action) do
         nil ->
-          metadata_action(Map.get(source, :metadata) || Map.get(source, "metadata"))
+          metadata_action(map_value(source, :metadata))
 
         action when is_atom(action) or is_binary(action) ->
           action
 
         _other ->
-          metadata_action(Map.get(source, :metadata) || Map.get(source, "metadata"))
+          metadata_action(map_value(source, :metadata))
       end
     end)
   end
 
   defp metadata_action(metadata) when is_map(metadata) do
-    case Map.get(metadata, :action) || Map.get(metadata, "action") do
+    case map_value(metadata, :action) do
       nil -> nil
       action when is_atom(action) or is_binary(action) -> action
       _other -> nil
@@ -751,7 +751,13 @@ defmodule Squidie.Runs.GraphInspection do
   defp field(_value, key, default) when is_atom(key), do: default
 
   defp map_value(map, key) when is_map(map) and is_atom(key) do
-    Map.get(map, key, Map.get(map, Atom.to_string(key)))
+    value = Map.get(map, key)
+
+    if is_nil(value) do
+      Map.get(map, Atom.to_string(key))
+    else
+      value
+    end
   end
 
   defp normalize_id(nil), do: nil

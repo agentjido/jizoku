@@ -257,8 +257,6 @@ defmodule Squidie do
         initial_context,
         overrides
       )
-    else
-      {:error, reason} -> {:error, reason}
     end
   end
 

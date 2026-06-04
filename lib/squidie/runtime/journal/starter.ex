@@ -1237,10 +1237,7 @@ defmodule Squidie.Runtime.Journal.Starter do
   end
 
   defp replayed_from_run_id(opts) do
-    case Keyword.get(opts, :replayed_from_run_id) do
-      nil -> nil
-      run_id -> run_id
-    end
+    Keyword.get(opts, :replayed_from_run_id)
   end
 
   defp runnable_value(runnable, key) when is_map(runnable) and is_atom(key) do
