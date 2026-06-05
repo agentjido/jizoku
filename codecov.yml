@@ -6,12 +6,12 @@ coverage:
   status:
     project:
       default:
-        target: 80%
-        threshold: 2%
+        target: 84%
+        threshold: 1%
     patch:
       default:
-        target: 75%
-        threshold: 10%
+        target: 80%
+        threshold: 5%
 
 comment:
   layout: "reach,diff,flags,tree"

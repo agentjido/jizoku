@@ -1694,7 +1694,6 @@ defmodule SquidieTest do
 
       assert config.repo == Squidie.Test.Repo
       refute Map.has_key?(config, :executor)
-      refute Map.has_key?(config, :stale_step_timeout)
       assert config.runtime == :journal
       assert config.read_model == :read_model
       assert config.journal_storage.adapter == Squidie.Runtime.Journal.Storage.Ecto
@@ -1706,13 +1705,11 @@ defmodule SquidieTest do
       assert {:ok, config} =
                Squidie.config(
                  repo: Squidie.Test.Repo,
-                 executor: String,
-                 stale_step_timeout: 60_000
+                 executor: String
                )
 
       assert config.repo == Squidie.Test.Repo
       refute Map.has_key?(config, :executor)
-      refute Map.has_key?(config, :stale_step_timeout)
       assert config.runtime == :journal
       assert config.read_model == :read_model
       assert config.journal_storage.adapter == Squidie.Runtime.Journal.Storage.Ecto
@@ -11364,7 +11361,6 @@ defmodule SquidieTest do
                  runtime: :journal,
                  journal_storage: @read_model_storage,
                  executor: String,
-                 stale_step_timeout: 60_000,
                  now: %{claim_token: "super-secret-token"}
                )
 

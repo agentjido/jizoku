@@ -38,7 +38,6 @@ itself.
 ## Rules To Avoid
 
 - Do not configure `:executor` for step execution.
-- Do not configure `:stale_step_timeout`.
 - Do not use or document `:runtime_tables`.
 - Do not deliver step or compensation payloads through
   `Squidie.Runtime.Runner.perform/2`.
