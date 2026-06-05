@@ -11,7 +11,6 @@
   ```
 
 - Do not configure `:executor` for step execution.
-- Do not configure `:stale_step_timeout`.
 - Use explicit `journal_storage` only when replacing the default inferred Ecto
   storage boundary.
 

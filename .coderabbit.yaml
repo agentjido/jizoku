@@ -37,6 +37,8 @@ reviews:
     - "!_build/**"
     - "!examples/minimal_host_app/deps/**"
     - "!examples/minimal_host_app/_build/**"
+    - "!examples/bedrock_minimal_host_app/deps/**"
+    - "!examples/bedrock_minimal_host_app/_build/**"
   path_instructions:
     - path: "**/*"
       instructions: |
@@ -84,6 +86,16 @@ reviews:
       instructions: |
         Check documentation for accuracy, stale API references, and consistency with the
         current public DSL and runtime behavior.
+    - path: "usage-rules.md"
+      instructions: |
+        Treat usage rules as packaged agent-facing API guidance. Check that they stay
+        aligned with the current public DSL, runtime boundaries, testing expectations,
+        documentation guidance, and example host apps.
+    - path: "usage-rules/**/*.md"
+      instructions: |
+        Treat usage rules as packaged agent-facing API guidance. Check that they stay
+        aligned with the current public DSL, runtime boundaries, testing expectations,
+        documentation guidance, and example host apps.
     - path: "mix.exs"
       instructions: |
         Review dependency and release-impact changes carefully. Flag unexpected runtime
@@ -103,7 +115,7 @@ reviews:
   pre_merge_checks:
     docstrings:
       mode: "warning"
-      threshold: 65
+      threshold: 95
     title:
       mode: "warning"
       requirements: "Use a concise conventional-commit style title without local machine details."
@@ -167,6 +179,9 @@ knowledge_base:
     enabled: true
     filePatterns:
       - "AGENTS.md"
+      - "CONTRIBUTING.md"
+      - "usage-rules.md"
+      - "usage-rules/*.md"
       - ".github/copilot-instructions.md"
       - ".github/instructions/*.md"
   learnings:

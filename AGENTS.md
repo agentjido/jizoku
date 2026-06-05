@@ -19,11 +19,13 @@ workflow authoring docs, tests, or dashboard/tooling APIs.
 - `mix compile --warnings-as-errors` compiles the library and fails on warnings.
 - `mix test` runs the ExUnit suite.
 - `mix format --check-formatted` verifies formatting.
+- `mix precommit` runs the full root verification gate.
+- `MIX_ENV=test mix coveralls` runs the local coverage gate.
 - `cd examples/minimal_host_app && MIX_ENV=test mix example.smoke` runs the
   example host-app smoke path.
 
-For a full local pass before handoff, run format, compile, tests, and the smoke
-path when runtime, workflow, persistence, or public API behavior changed.
+For a full local pass before handoff, run `mix precommit` and the smoke path
+when runtime, workflow, persistence, or public API behavior changed.
 
 ## Coding Style & Naming Conventions
 

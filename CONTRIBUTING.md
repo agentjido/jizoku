@@ -6,7 +6,7 @@ Thanks for contributing to Squidie.
 
 Requirements:
 
-- Elixir `~> 1.17`
+- Elixir `~> 1.18`
 - Erlang/OTP compatible with the current CI matrix
 - Postgres
 
@@ -27,11 +27,10 @@ mix ecto.migrate
 
 ## Local Verification
 
-Run the root test suite:
+Run the root verification gate:
 
 ```sh
-mix test
-mix format --check-formatted
+mix precommit
 ```
 
 Run the example host app test suite:
@@ -44,6 +43,14 @@ MIX_ENV=test mix example.smoke
 
 The example host app is part of the development harness. Changes that affect
 runtime behavior should keep that smoke path green.
+
+Run coverage when changing tests or coverage-sensitive runtime paths:
+
+```sh
+MIX_ENV=test mix coveralls
+```
+
+Coverage thresholds are configured in `coveralls.json` and `codecov.yml`.
 
 ## Workflow For Changes
 

@@ -32,5 +32,7 @@
 
 - Run `mix format` before handoff.
 - Run focused tests first, then `mix precommit` before finishing a code slice.
+- Run `MIX_ENV=test mix coveralls` when tests or coverage-sensitive runtime
+  paths change; coverage gates live in `coveralls.json` and `codecov.yml`.
 - For runtime, workflow, persistence, jobs, state-machine, or public API
   changes, run an end-to-end smoke path in the relevant example app.

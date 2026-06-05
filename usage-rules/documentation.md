@@ -18,8 +18,7 @@
   that not every database is a good production journal store.
 - Do not mention removed executor-direction libraries in user-facing docs unless
   a future design issue explicitly reintroduces them.
-- Do not document `:runtime_tables`, `:executor` step execution config, or
-  `:stale_step_timeout`.
+- Do not document `:runtime_tables` or `:executor` step execution config.
 
 ## Examples And Diagrams
 
