@@ -233,6 +233,17 @@ defmodule BedrockMinimalHostApp.SquidieLeaseAdapterTest do
     assert {:error, :not_found} = WorkflowRuns.cancel(Ecto.UUID.generate())
   end
 
+  test "rejects malformed inbound Jido runtime command signals" do
+    assert {:ok, invalid_jido_signal} =
+             Jido.Signal.new("squidie.runtime.command.cancel_run", %{},
+               source: "/squidie/runtime/commands",
+               subject: Ecto.UUID.generate()
+             )
+
+    assert {:error, {:invalid_signal_adapter, {:data, :missing_signal_payload}}} =
+             RuntimeSignals.apply(invalid_jido_signal)
+  end
+
   test "executes payment recovery through a Bedrock lease with runtime attempt metadata",
        %{queue: queue} do
     Sandbox.mode(Repo, {:shared, self()})
