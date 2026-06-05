@@ -1100,6 +1100,31 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              RuntimeSignals.apply(invalid_jido_signal)
   end
 
+  test "applies native Squidie command signals through the host signal boundary" do
+    assert {:ok, run} =
+             WorkflowRuns.start_cancellable_wait(%{account_id: "acct_native_signal_cancel"})
+
+    assert {:ok, signal} =
+             Signal.cancel_run(run.run_id,
+               metadata: %{source: "native_signal_test"},
+               idempotency_key: "minimal-host-app:native-cancel:#{run.run_id}"
+             )
+
+    assert {:ok, cancelled_run} = RuntimeSignals.apply(signal)
+
+    assert cancelled_run.status == :cancelled
+    assert cancelled_run.visible_attempts == []
+
+    assert [
+             %{signal_type: "start_run"},
+             %{
+               signal_type: "cancel_run",
+               metadata: %{source: "native_signal_test"},
+               idempotency_key: "minimal-host-app:native-cancel:" <> _
+             }
+           ] = cancelled_run.command_history
+  end
+
   test "runs the documented smoke path" do
     assert %{
              payment_recovery: payment_recovery,

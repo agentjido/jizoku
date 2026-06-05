@@ -27,6 +27,33 @@ defmodule Squidie.Tools.HTTPTest do
       assert result.metadata.url == endpoint_url(bypass.port, "/gateway")
     end
 
+    test "sends optional headers, params, and JSON request fields" do
+      bypass = Bypass.open()
+
+      Bypass.expect_once(bypass, "POST", "/search", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+
+        assert conn.query_params == %{"page" => "2"}
+        assert Plug.Conn.get_req_header(conn, "x-request-id") == ["req_123"]
+        assert Jason.decode!(body) == %{"term" => "workflow"}
+
+        Plug.Conn.resp(conn, 201, "created")
+      end)
+
+      assert {:ok, %Result{} = result} =
+               Tools.invoke(HTTP, %{
+                 method: :post,
+                 url: endpoint_url(bypass.port, "/search"),
+                 headers: [{"x-request-id", "req_123"}],
+                 params: %{page: 2},
+                 json: %{term: "workflow"}
+               })
+
+      assert result.payload.status == 201
+      assert result.payload.body == "created"
+    end
+
     test "normalizes HTTP status failures" do
       bypass = Bypass.open()
 
@@ -77,6 +104,24 @@ defmodule Squidie.Tools.HTTPTest do
       assert error.adapter == HTTP
       assert error.kind == :transport
       assert error.retryable? == true
+    end
+
+    test "rejects non-map HTTP requests" do
+      assert {:error, %Error{} = error} = HTTP.invoke({:get, "/gateway"}, %{}, [])
+
+      assert error.kind == :invalid_request
+      assert error.message == "HTTP tool requests must be maps"
+      assert error.details == %{reason: :expected_map}
+      assert error.retryable? == false
+    end
+
+    test "rejects HTTP request maps without a method and URL" do
+      assert {:error, %Error{} = error} = Tools.invoke(HTTP, %{method: "GET", url: ""})
+
+      assert error.kind == :invalid_request
+      assert error.message == "HTTP tool requests require an atom :method and binary :url"
+      assert error.details == %{request: %{method: "GET", url: ""}}
+      assert error.retryable? == false
     end
   end
 

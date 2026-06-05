@@ -47,4 +47,25 @@ defmodule Squidie.ToolsTest do
       assert error.retryable? == false
     end
   end
+
+  describe "Error" do
+    test "serializes normalized tool errors for step error payloads" do
+      error =
+        Error.new(
+          adapter: SuccessfulAdapter,
+          kind: :transport,
+          message: "adapter failed",
+          details: %{reason: ":closed"},
+          retryable?: true
+        )
+
+      assert Error.to_map(error) == %{
+               adapter: "Squidie.ToolsTest.SuccessfulAdapter",
+               kind: :transport,
+               message: "adapter failed",
+               details: %{reason: ":closed"},
+               retryable?: true
+             }
+    end
+  end
 end
