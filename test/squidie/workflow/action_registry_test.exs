@@ -30,6 +30,18 @@ defmodule Squidie.Workflow.ActionRegistryTest do
   end
 
   describe "catalog/1" do
+    test "rejects invalid registries instead of treating them as empty" do
+      assert {:error, {:invalid_action_catalog, errors}} =
+               Squidie.Workflow.ActionRegistry.catalog("bad")
+
+      assert %{
+               path: [:action_registry],
+               code: :invalid_action_registry,
+               message: "action registry must be a map or keyword list",
+               details: %{registry: "bad"}
+             } in errors
+    end
+
     test "is exposed through the workflow public API" do
       registry = %{"billing.load_invoice" => NativeLoadInvoice}
 
@@ -69,6 +81,25 @@ defmodule Squidie.Workflow.ActionRegistryTest do
 
       refute inspect(entry) =~ inspect(NativeLoadInvoice)
       refute inspect(entry) =~ "secret"
+    end
+
+    test "rejects non JSON-safe catalog metadata" do
+      registry = %{
+        "billing.load_invoice" => [
+          module: NativeLoadInvoice,
+          input_contract: %{invoice_id: [type: :string, validate: fn value -> value end]}
+        ]
+      }
+
+      assert {:error, {:invalid_action_catalog, errors}} =
+               Squidie.Workflow.ActionRegistry.catalog(registry)
+
+      assert %{
+               path: [:actions, "billing.load_invoice", :input_contract, "invoice_id", "validate"],
+               code: :unsupported_json_value,
+               message: "action catalog metadata must be JSON-safe",
+               details: %{action: "billing.load_invoice", field: :input_contract}
+             } in errors
     end
 
     test "derives useful defaults from native Squidie step metadata" do

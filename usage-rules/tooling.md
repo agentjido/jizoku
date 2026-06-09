@@ -40,7 +40,7 @@
 - Use `Squidie.Workflow.to_spec/1` for normalized workflow definitions.
 - Use `Squidie.Workflow.validate_spec/1` before trusting compiled workflow
   specs in tooling.
-- Use `Squidie.Workflow.action_catalog/1` to render trusted action palettes
+- Use `Squidie.Workflow.action_catalog/1` to render editor-safe action palettes
   from a host-owned registry; treat catalog metadata as display data, not an
   execution boundary.
 - Use `Squidie.Workflow.validate_spec/2` with `:action_registry` before

@@ -131,7 +131,7 @@ defmodule Squidie.Workflow do
   credential values. Use `validate_spec/2` or `resolve_spec_actions/2` with the
   same registry before activating runtime-authored specs.
   """
-  @spec action_catalog(ActionRegistry.registry()) ::
+  @spec action_catalog(term()) ::
           {:ok, [ActionRegistry.catalog_entry()]}
           | {:error, {:invalid_action_catalog, [ActionRegistry.catalog_error()]}}
   def action_catalog(registry), do: ActionRegistry.catalog(registry)

@@ -53,22 +53,12 @@ defmodule Squidie.Workflow.ActionRegistry do
   requirements so editor clients can build palettes while `validate_action/2`
   and `resolve_action/2` remain the execution trust boundary.
   """
-  @spec catalog(registry()) ::
+  @spec catalog(term()) ::
           {:ok, [catalog_entry()]} | {:error, {:invalid_action_catalog, [catalog_error()]}}
   def catalog(registry) do
-    {entries, errors} =
-      registry
-      |> registry_pairs()
-      |> Enum.reduce({[], []}, fn {action, entry}, {entries, errors} ->
-        case catalog_entry(action, entry) do
-          {:ok, catalog_entry} -> {[catalog_entry | entries], errors}
-          {:error, error} -> {entries, [error | errors]}
-        end
-      end)
-
-    case errors do
-      [] -> {:ok, Enum.reverse(entries)}
-      errors -> {:error, {:invalid_action_catalog, Enum.reverse(errors)}}
+    case registry_pairs(registry) do
+      {:ok, pairs} -> catalog_entries(pairs)
+      {:error, error} -> {:error, {:invalid_action_catalog, [error]}}
     end
   end
 
@@ -275,13 +265,41 @@ defmodule Squidie.Workflow.ActionRegistry do
     end
   end
 
-  defp registry_pairs(registry) when is_map(registry), do: Enum.to_list(registry)
+  defp catalog_entries(pairs) do
+    {entries, errors} =
+      Enum.reduce(pairs, {[], []}, fn {action, entry}, {entries, errors} ->
+        case catalog_entry(action, entry) do
+          {:ok, catalog_entry} -> {[catalog_entry | entries], errors}
+          {:error, error} -> {entries, [error | errors]}
+        end
+      end)
 
-  defp registry_pairs(registry) when is_list(registry) do
-    if Keyword.keyword?(registry), do: registry, else: []
+    case errors do
+      [] -> {:ok, Enum.reverse(entries)}
+      errors -> {:error, {:invalid_action_catalog, Enum.reverse(errors)}}
+    end
   end
 
-  defp registry_pairs(_registry), do: []
+  defp registry_pairs(registry) when is_map(registry), do: {:ok, Enum.to_list(registry)}
+
+  defp registry_pairs(registry) when is_list(registry) do
+    if Keyword.keyword?(registry) do
+      {:ok, registry}
+    else
+      {:error, invalid_registry_error(registry)}
+    end
+  end
+
+  defp registry_pairs(registry), do: {:error, invalid_registry_error(registry)}
+
+  defp invalid_registry_error(registry) do
+    catalog_error(
+      [:action_registry],
+      :invalid_action_registry,
+      "action registry must be a map or keyword list",
+      %{registry: registry}
+    )
+  end
 
   defp catalog_entry(action, entry) do
     {module, enabled?} = registry_entry_module(entry)
@@ -306,35 +324,41 @@ defmodule Squidie.Workflow.ActionRegistry do
          )}
 
       true ->
-        {:ok, catalog_metadata(action, entry, module, enabled?)}
+        catalog_metadata(action, entry, module, enabled?)
     end
   end
 
   defp catalog_metadata(action, entry, module, enabled?) do
     metadata = module_metadata(module)
 
-    %{
-      key: action,
-      display_name: display_name(entry, metadata, action),
-      category:
-        entry
-        |> entry_value(:category, metadata_value(metadata, :category))
-        |> json_value(),
-      description: description(entry, metadata),
-      enabled?: enabled? != false,
-      input_contract:
-        entry
-        |> entry_value(:input_contract, metadata_input_contract(metadata))
-        |> json_value(),
-      output_contract:
-        entry
-        |> entry_value(:output_contract, metadata_output_contract(metadata))
-        |> json_value(),
-      credential_requirements:
-        entry
-        |> entry_value(:credential_requirements, [])
-        |> json_value()
-    }
+    with {:ok, category} <-
+           entry
+           |> entry_value(:category, metadata_value(metadata, :category))
+           |> catalog_json_value(action, :category),
+         {:ok, input_contract} <-
+           entry
+           |> entry_value(:input_contract, metadata_input_contract(metadata))
+           |> catalog_json_value(action, :input_contract),
+         {:ok, output_contract} <-
+           entry
+           |> entry_value(:output_contract, metadata_output_contract(metadata))
+           |> catalog_json_value(action, :output_contract),
+         {:ok, credential_requirements} <-
+           entry
+           |> entry_value(:credential_requirements, [])
+           |> catalog_json_value(action, :credential_requirements) do
+      {:ok,
+       %{
+         key: action,
+         display_name: display_name(entry, metadata, action),
+         category: category,
+         description: description(entry, metadata),
+         enabled?: enabled? != false,
+         input_contract: input_contract,
+         output_contract: output_contract,
+         credential_requirements: credential_requirements
+       }}
+    end
   end
 
   defp module_metadata(module) do
@@ -420,31 +444,75 @@ defmodule Squidie.Workflow.ActionRegistry do
 
   defp map_value(_map, _key, default), do: default
 
-  defp json_value(nil), do: nil
-  defp json_value(value) when is_boolean(value), do: value
-  defp json_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp catalog_json_value(value, action, field) do
+    case json_value(value, [field]) do
+      {:ok, value} ->
+        {:ok, value}
 
-  defp json_value(value) when is_tuple(value) do
-    value
-    |> Tuple.to_list()
-    |> json_value()
-  end
-
-  defp json_value([]), do: []
-
-  defp json_value(value) when is_list(value) do
-    if Keyword.keyword?(value) do
-      Map.new(value, fn {key, item} -> {to_string(key), json_value(item)} end)
-    else
-      Enum.map(value, &json_value/1)
+      {:error, path} ->
+        {:error,
+         catalog_error(
+           [:actions, action | Enum.reverse(path)],
+           :unsupported_json_value,
+           "action catalog metadata must be JSON-safe",
+           %{action: action, field: field}
+         )}
     end
   end
 
-  defp json_value(value) when is_map(value) do
-    Map.new(value, fn {key, item} -> {to_string(key), json_value(item)} end)
+  defp json_value(nil, _path), do: {:ok, nil}
+  defp json_value(value, _path) when is_boolean(value), do: {:ok, value}
+  defp json_value(value, _path) when is_integer(value), do: {:ok, value}
+  defp json_value(value, _path) when is_float(value), do: {:ok, value}
+  defp json_value(value, _path) when is_binary(value), do: {:ok, value}
+  defp json_value(value, _path) when is_atom(value), do: {:ok, Atom.to_string(value)}
+
+  defp json_value(value, path) when is_tuple(value) do
+    value
+    |> Tuple.to_list()
+    |> json_value(path)
   end
 
-  defp json_value(value), do: value
+  defp json_value([], _path), do: {:ok, []}
+
+  defp json_value(value, path) when is_list(value) do
+    if Keyword.keyword?(value), do: json_map(value, path), else: json_list(value, path)
+  end
+
+  defp json_value(value, path) when is_map(value), do: json_map(Map.to_list(value), path)
+
+  defp json_value(_value, path), do: {:error, path}
+
+  defp json_map(pairs, path) do
+    Enum.reduce_while(pairs, {:ok, %{}}, fn {key, item}, {:ok, acc} ->
+      with {:ok, key} <- json_key(key, path),
+           {:ok, item} <- json_value(item, [key | path]) do
+        {:cont, {:ok, Map.put(acc, key, item)}}
+      else
+        {:error, path} -> {:halt, {:error, path}}
+      end
+    end)
+  end
+
+  defp json_key(key, _path) when is_atom(key), do: {:ok, Atom.to_string(key)}
+  defp json_key(key, _path) when is_binary(key), do: {:ok, key}
+  defp json_key(key, _path) when is_integer(key), do: {:ok, Integer.to_string(key)}
+  defp json_key(_key, path), do: {:error, path}
+
+  defp json_list(list, path) do
+    list
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn {item, index}, {:ok, acc} ->
+      case json_value(item, [index | path]) do
+        {:ok, item} -> {:cont, {:ok, [item | acc]}}
+        {:error, path} -> {:halt, {:error, path}}
+      end
+    end)
+    |> case do
+      {:ok, items} -> {:ok, Enum.reverse(items)}
+      {:error, path} -> {:error, path}
+    end
+  end
 
   defp put_action_metadata(step, action) do
     metadata = Map.get(step, :metadata, %{})
