@@ -10,6 +10,9 @@
   the workflow definition when operators need to understand them.
 - Use `Squidie.Workflow.to_spec/1` and `Squidie.Workflow.validate_spec/1`
   when tooling needs a normalized data representation.
+- Use `Squidie.Workflow.action_catalog/1` to expose editor palette metadata
+  from a host-owned registry without exposing executable modules or credential
+  values.
 - Use `Squidie.Workflow.validate_spec/2` with `:action_registry` before
   trusting runtime-authored spec data that references executable actions.
 - Use `Squidie.start_spec/3` or `Squidie.start_spec/4` to activate

@@ -124,6 +124,19 @@ defmodule Squidie.Workflow do
   end
 
   @doc """
+  Projects a host-owned action registry into editor-safe action catalog metadata.
+
+  The catalog includes stable action keys, display metadata, contracts, enabled
+  state, and credential requirements without exposing executable modules or
+  credential values. Use `validate_spec/2` or `resolve_spec_actions/2` with the
+  same registry before activating runtime-authored specs.
+  """
+  @spec action_catalog(term()) ::
+          {:ok, [ActionRegistry.catalog_entry()]}
+          | {:error, {:invalid_action_catalog, [ActionRegistry.catalog_error()]}}
+  def action_catalog(registry), do: ActionRegistry.catalog(registry)
+
+  @doc """
   Resolves runtime-authored `:action` step keys to host-approved modules.
   """
   @spec resolve_spec_actions(Spec.t() | map() | term(), keyword()) ::
