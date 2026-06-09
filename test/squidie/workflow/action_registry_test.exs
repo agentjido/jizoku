@@ -4,6 +4,7 @@ defmodule Squidie.Workflow.ActionRegistryTest do
   defmodule NativeLoadInvoice do
     use Squidie.Step,
       name: :load_invoice,
+      description: "Loads invoice data",
       input_schema: [
         invoice_id: [type: :string, required: true]
       ],
@@ -26,6 +27,117 @@ defmodule Squidie.Workflow.ActionRegistryTest do
 
   defmodule IncompatibleAction do
     def run(_params, _context), do: {:ok, %{}}
+  end
+
+  describe "catalog/1" do
+    test "is exposed through the workflow public API" do
+      registry = %{"billing.load_invoice" => NativeLoadInvoice}
+
+      assert {:ok, [entry]} = Squidie.Workflow.action_catalog(registry)
+      assert entry.key == "billing.load_invoice"
+    end
+
+    test "exposes editor-safe metadata without modules or credential values" do
+      registry = %{
+        "billing.load_invoice" => [
+          module: NativeLoadInvoice,
+          display_name: "Load invoice",
+          category: "Billing",
+          credential_requirements: [%{name: "billing_api", required?: true}],
+          credentials: %{api_key: "secret"}
+        ]
+      }
+
+      assert {:ok, [entry]} = Squidie.Workflow.ActionRegistry.catalog(registry)
+
+      assert entry == %{
+               key: "billing.load_invoice",
+               display_name: "Load invoice",
+               category: "Billing",
+               description: "Loads invoice data",
+               enabled?: true,
+               input_contract: %{
+                 "invoice_id" => %{"required" => true, "type" => "string"}
+               },
+               output_contract: %{
+                 "invoice" => %{"required" => true, "type" => "map"}
+               },
+               credential_requirements: [
+                 %{"name" => "billing_api", "required?" => true}
+               ]
+             }
+
+      refute inspect(entry) =~ inspect(NativeLoadInvoice)
+      refute inspect(entry) =~ "secret"
+    end
+
+    test "derives useful defaults from native Squidie step metadata" do
+      registry = %{"billing.load_invoice" => NativeLoadInvoice}
+
+      assert {:ok, [entry]} = Squidie.Workflow.ActionRegistry.catalog(registry)
+
+      assert %{
+               key: "billing.load_invoice",
+               display_name: "Load invoice",
+               category: nil,
+               description: "Loads invoice data",
+               enabled?: true,
+               input_contract: %{
+                 "invoice_id" => %{"required" => true, "type" => "string"}
+               },
+               output_contract: %{
+                 "invoice" => %{"required" => true, "type" => "map"}
+               },
+               credential_requirements: []
+             } = entry
+    end
+
+    test "derives useful defaults from Jido action metadata" do
+      registry = %{"billing.send_email" => JidoSendEmail}
+
+      assert {:ok, [entry]} = Squidie.Workflow.ActionRegistry.catalog(registry)
+
+      assert %{
+               key: "billing.send_email",
+               display_name: "Send email",
+               category: nil,
+               description: "Sends an invoice reminder email",
+               enabled?: true,
+               input_contract: [],
+               output_contract: [],
+               credential_requirements: []
+             } = entry
+    end
+
+    test "keeps disabled actions visible but unavailable at validation time" do
+      registry = %{
+        "billing.load_invoice" => [module: NativeLoadInvoice, enabled?: false]
+      }
+
+      assert {:ok, [entry]} = Squidie.Workflow.ActionRegistry.catalog(registry)
+      assert entry.enabled? == false
+
+      assert {:error, :disabled_action_key} =
+               Squidie.Workflow.ActionRegistry.validate_action(
+                 "billing.load_invoice",
+                 registry
+               )
+    end
+
+    test "rejects incompatible catalog entries with structured errors" do
+      registry = %{"billing.load_invoice" => IncompatibleAction}
+
+      assert {:error, {:invalid_action_catalog, errors}} =
+               Squidie.Workflow.ActionRegistry.catalog(registry)
+
+      assert %{
+               path: [:actions, "billing.load_invoice"],
+               code: :incompatible_action_module,
+               message:
+                 "action \"billing.load_invoice\" references an incompatible action module",
+               details: %{action: "billing.load_invoice"}
+             } in errors
+    end
   end
 
   describe "validate_spec/2 with an action registry" do
