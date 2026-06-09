@@ -2,7 +2,7 @@
 
 # Squidie - Durable Workflow Runtime
 
-<img width="500" alt="squidie-logo" src="https://github.com/user-attachments/assets/8604607c-c5cf-4c54-970f-0198fe36e349" />
+<img width="450" alt="squidie-logo" src="https://github.com/user-attachments/assets/8604607c-c5cf-4c54-970f-0198fe36e349" />
 
 <br />
 
