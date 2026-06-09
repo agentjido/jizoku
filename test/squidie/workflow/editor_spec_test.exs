@@ -122,6 +122,103 @@ defmodule Squidie.Workflow.EditorSpecTest do
       assert direct_graph["edges"] == graph["edges"]
     end
 
+    test "round-trips editor metadata through JSON, preview, and diff without changing runtime graph" do
+      assert {:ok, spec} = Squidie.Workflow.to_spec(PaymentRecovery)
+
+      editor_metadata = %{
+        nodes: %{
+          load_invoice: %{
+            position: %{x: 120, y: 80},
+            group: "billing",
+            note: "confirm the invoice payload before reminding"
+          },
+          send_reminder: %{position: %{x: 360, y: 80}, group: "billing"}
+        },
+        groups: [%{id: "billing", label: "Billing"}],
+        notes: [%{id: "n1", text: "kept for visual editor users only"}]
+      }
+
+      editor_map =
+        spec
+        |> Map.from_struct()
+        |> Map.put(:editor, editor_metadata)
+        |> EditorSpec.to_map()
+
+      round_tripped =
+        editor_map
+        |> Jason.encode!()
+        |> Jason.decode!()
+
+      source_map = Map.delete(round_tripped, "editor")
+
+      assert :ok = EditorSpec.validate_map(round_tripped)
+      assert {:ok, source_graph} = EditorSpec.preview_graph(source_map)
+      assert {:ok, graph} = EditorSpec.preview_graph(round_tripped)
+
+      assert source_graph["editor"] == %{}
+      assert graph["editor"] == round_tripped["editor"]
+      assert Map.delete(graph, "editor") == Map.delete(source_graph, "editor")
+
+      assert {:ok, diff} = EditorSpec.diff(source_map, round_tripped)
+
+      assert diff["editor"] == %{
+               "changed?" => true,
+               "before" => %{},
+               "after" => round_tripped["editor"]
+             }
+
+      assert diff["summary"]["editor_changed"] == true
+      assert diff["summary"]["nodes_changed"] == 0
+      assert diff["summary"]["edges_changed"] == 0
+    end
+
+    test "rejects runtime-owned fields inside editor metadata" do
+      assert {:ok, spec} = Squidie.Workflow.to_spec(PaymentRecovery)
+
+      editor_map =
+        spec
+        |> EditorSpec.to_map()
+        |> Map.put("editor", %{"run_id" => "run_123"})
+
+      assert {:error, {:invalid_workflow_editor_spec, errors}} =
+               EditorSpec.validate_map(editor_map)
+
+      assert_error(errors, [:editor, :run_id], :runtime_owned_field)
+    end
+
+    test "rejects non-map editor metadata" do
+      assert {:ok, spec} = Squidie.Workflow.to_spec(PaymentRecovery)
+
+      editor_map =
+        spec
+        |> EditorSpec.to_map()
+        |> Map.put("editor", ["not", "metadata"])
+
+      assert {:error, {:invalid_workflow_editor_spec, errors}} =
+               EditorSpec.validate_map(editor_map)
+
+      assert %{
+               path: [:editor],
+               code: :invalid_editor_metadata,
+               message: "editor metadata must be a map",
+               details: %{type: "non_object"}
+             } in errors
+    end
+
+    test "rejects non JSON-safe values inside editor metadata" do
+      assert {:ok, spec} = Squidie.Workflow.to_spec(PaymentRecovery)
+
+      editor_map =
+        spec
+        |> EditorSpec.to_map()
+        |> Map.put("editor", %{"notes" => [%{"text" => fn -> :ok end}]})
+
+      assert {:error, {:invalid_workflow_editor_spec, errors}} =
+               EditorSpec.validate_map(editor_map)
+
+      assert_error(errors, [:editor, :notes, 0, :text], :unsupported_json_value)
+    end
+
     test "previews dependency graphs from JSON-safe maps without explicit transitions" do
       editor_map =
         EditorSpec.to_map(%{
@@ -411,7 +508,8 @@ defmodule Squidie.Workflow.EditorSpecTest do
                "nodes_changed" => 0,
                "edges_added" => 0,
                "edges_removed" => 0,
-               "edges_changed" => 0
+               "edges_changed" => 0,
+               "editor_changed" => false
              }
     end
 
