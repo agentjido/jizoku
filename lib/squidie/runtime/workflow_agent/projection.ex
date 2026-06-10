@@ -35,6 +35,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
           trigger: String.t() | nil,
           input: map() | nil,
           context: map(),
+          started_at: DateTime.t() | nil,
           replayed_from_run_id: String.t() | nil,
           definition_version: String.t() | nil,
           definition_fingerprint: String.t() | nil,
@@ -49,6 +50,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
           dynamic_work: [map()],
           manual_state: manual_state() | nil,
           terminal_status: atom() | nil,
+          terminal_at: DateTime.t() | nil,
           terminal_error: map() | nil,
           anomalies: [anomaly()]
         }
@@ -58,6 +60,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
             trigger: nil,
             input: nil,
             context: %{},
+            started_at: nil,
             replayed_from_run_id: nil,
             definition_version: nil,
             definition_fingerprint: nil,
@@ -72,6 +75,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
             dynamic_work: [],
             manual_state: nil,
             terminal_status: nil,
+            terminal_at: nil,
             terminal_error: nil,
             anomalies: []
 
@@ -262,6 +266,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       |> Map.put(:trigger, Map.get(data, :trigger))
       |> Map.put(:input, Map.get(data, :input))
       |> Map.put(:context, Map.get(data, :context, %{}))
+      |> Map.put(:started_at, Map.get(data, :occurred_at, entry.occurred_at))
       |> Map.put(:replayed_from_run_id, Map.get(data, :replayed_from_run_id))
       |> Map.put(:definition_version, definition_metadata_value(data, :definition_version))
       |> Map.put(
@@ -354,6 +359,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
           status: status,
           manual_state: nil,
           terminal_status: status,
+          terminal_at: Map.get(data, :occurred_at, entry.occurred_at),
           terminal_error: terminal_error_from_data(data)
       }
     else

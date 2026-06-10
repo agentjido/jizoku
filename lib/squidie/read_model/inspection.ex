@@ -16,6 +16,7 @@ defmodule Squidie.ReadModel.Inspection do
 
   alias Jido.Agent
   alias Squidie.ReadModel.Inspection.Snapshot
+  alias Squidie.ReadModel.Timeline
   alias Squidie.Runtime.Deadline
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
@@ -148,6 +149,7 @@ defmodule Squidie.ReadModel.Inspection do
       workflow: workflow,
       trigger: workflow_projection.trigger,
       input: workflow_projection.input,
+      started_at: workflow_projection.started_at,
       definition_version: workflow_projection.definition_version,
       context: snapshot_context(workflow_projection),
       parent_run: parent_run(workflow_projection),
@@ -169,6 +171,7 @@ defmodule Squidie.ReadModel.Inspection do
         ),
       terminal?: terminal?,
       terminal_status: WorkflowAgent.Projection.terminal_status(workflow_projection),
+      terminal_at: workflow_projection.terminal_at,
       terminal_error:
         public_terminal_error(WorkflowAgent.Projection.terminal_error(workflow_projection)),
       deadline:
@@ -191,6 +194,7 @@ defmodule Squidie.ReadModel.Inspection do
         |> WorkflowAgent.applied_runnable_keys()
         |> MapSet.to_list()
         |> Enum.sort(),
+      applied_at: Map.get(workflow_projection, :applied_at, %{}),
       pending_dispatches: normalized_pending_dispatches,
       pending_results: pending_result_snapshots,
       visible_attempts: visible_attempt_snapshots,
@@ -201,6 +205,12 @@ defmodule Squidie.ReadModel.Inspection do
       anomalies: projection_anomalies(workflow_projection, dispatch_projection)
     }
   end
+
+  @doc """
+  Builds a chronological, redaction-safe operator timeline from an inspection snapshot.
+  """
+  @spec timeline(Snapshot.t()) :: {:ok, Timeline.t()}
+  def timeline(%Snapshot{} = snapshot), do: {:ok, Timeline.from_snapshot(snapshot)}
 
   defp snapshot_reason(
          %WorkflowAgent.Projection{} = workflow_projection,
@@ -480,12 +490,15 @@ defmodule Squidie.ReadModel.Inspection do
       attempt_number: attempt.attempt_number,
       step: normalize_step(attempt.step),
       input: attempt.input,
+      scheduled_at: attempt.scheduled_at,
       visible_at: attempt.visible_at,
       idempotency_key: attempt.idempotency_key,
       claim_id: attempt.claim_id,
       owner_id: attempt.owner_id,
       lease_until: attempt.lease_until,
+      claimed_at: attempt.claimed_at,
       result: attempt.result,
+      completed_at: attempt.completed_at,
       transition: attempt.transition,
       error: attempt.error,
       recovery: Map.get(recovery_by_runnable_key, attempt.runnable_key),

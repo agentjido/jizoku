@@ -19,6 +19,8 @@ Use these public APIs as the stable observability boundary:
   anomalies.
 - `Squidie.inspect_run_graph/2` - graph-oriented node and edge state for UI
   builders.
+- `Squidie.inspect_run_timeline/2` - chronological operator events for trace
+  views without parsing raw journal entries.
 - `Squidie.explain_run/2` - operator-facing reason, details, evidence, and
   next actions.
 
@@ -48,8 +50,8 @@ default.
 `Squidie.ReadModel.Visibility.redact/3` provide the built-in projection
 helper for that boundary. For comprehensive documentation on actor visibility
 and redaction patterns, see the [Actor Visibility Guide](./actor_visibility.md). The helper accepts an existing listing summary,
-inspection snapshot, graph inspection, or explanation diagnostic plus a
-host-owned actor. The two-arity form defaults to `:external`; the three-arity
+inspection snapshot, graph inspection, timeline, or explanation diagnostic plus
+a host-owned actor. The two-arity form defaults to `:external`; the three-arity
 form accepts a host policy. Policies may return `:external`, `:operator`, or
 `:auditor`; auditor views preserve the full read model, while external and
 operator views keep high-level runtime status and current/manual task shape

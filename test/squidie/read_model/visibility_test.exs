@@ -4,6 +4,8 @@ defmodule Squidie.ReadModel.VisibilityTest do
   alias Squidie.ReadModel.Explanation.Diagnostic
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.ReadModel.Listing.Summary
+  alias Squidie.ReadModel.Timeline
+  alias Squidie.ReadModel.Timeline.Event
   alias Squidie.ReadModel.Visibility
   alias Squidie.Runs.GraphInspection
   alias Squidie.Runs.GraphInspection.Node
@@ -102,6 +104,53 @@ defmodule Squidie.ReadModel.VisibilityTest do
     snapshot = snapshot()
 
     assert {:ok, ^snapshot} = Visibility.redact(snapshot, %{role: :auditor}, RolePolicy)
+  end
+
+  test "redacts timeline event details for external actors" do
+    timeline = %Timeline{
+      run_id: "run_123",
+      workflow: "BillingWorkflow",
+      queue: "default",
+      status: :running,
+      terminal?: false,
+      terminal_status: nil,
+      events: [
+        %Event{
+          type: :attempt_completed,
+          occurred_at: @now,
+          run_id: "run_123",
+          step_id: "charge_card",
+          runnable_key: "run_123:charge_card:1",
+          status: :completed,
+          summary: "charge_card attempt completed",
+          details: %{
+            attempt_number: 1,
+            payment_id: "pay_secret_123",
+            nested: %{token: "super-secret-token"}
+          }
+        }
+      ]
+    }
+
+    assert {:ok, redacted} = Visibility.redact(timeline, %{role: :external}, RolePolicy)
+
+    assert %Timeline{} = redacted
+
+    assert [
+             %Event{
+               type: :attempt_completed,
+               occurred_at: @now,
+               run_id: "run_123",
+               step_id: "charge_card",
+               runnable_key: "run_123:charge_card:1",
+               status: :completed,
+               summary: "charge_card attempt completed",
+               details: %{attempt_number: 1}
+             }
+           ] = redacted.events
+
+    refute inspect(redacted.events) =~ "pay_secret_123"
+    refute inspect(redacted.events) =~ "super-secret-token"
   end
 
   test "accepts policy modules that return ok tuples" do

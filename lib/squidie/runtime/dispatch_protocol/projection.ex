@@ -364,12 +364,14 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
           | runnable_key: retry_key,
             attempt_number: attempt.attempt_number + 1,
             status: :retry_scheduled,
+            scheduled_at: data.occurred_at,
             visible_at: retry_visible_at,
             deadline: Map.get(data, :retry_deadline),
             claim_id: nil,
             claim_token_hash: nil,
             owner_id: nil,
             lease_until: nil,
+            claimed_at: nil,
             result: nil,
             completed_at: nil,
             transition: nil,
@@ -393,6 +395,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
       attempt_number: data.attempt_number,
       step: data.step,
       input: data.input,
+      scheduled_at: data.occurred_at,
       visible_at: data.visible_at,
       deadline: Map.get(data, :deadline),
       status: :available
@@ -413,7 +416,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
         claim_id: data.claim_id,
         claim_token_hash: data.claim_token_hash,
         owner_id: data.owner_id,
-        lease_until: data.lease_until
+        lease_until: data.lease_until,
+        claimed_at: data.occurred_at
     })
   end
 

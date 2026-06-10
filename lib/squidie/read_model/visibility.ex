@@ -11,6 +11,8 @@ defmodule Squidie.ReadModel.Visibility do
   alias Squidie.ReadModel.Explanation.Diagnostic
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.ReadModel.Listing.Summary
+  alias Squidie.ReadModel.Timeline
+  alias Squidie.ReadModel.Timeline.Event
   alias Squidie.Runs.GraphInspection
   alias Squidie.Runs.GraphInspection.Node
 
@@ -84,6 +86,22 @@ defmodule Squidie.ReadModel.Visibility do
     :child_trigger,
     :child_key,
     :origin
+  ]
+  @timeline_event_fields [
+    :type,
+    :occurred_at,
+    :run_id,
+    :step_id,
+    :runnable_key,
+    :status,
+    :summary
+  ]
+  @timeline_detail_fields [
+    :attempt_number,
+    :visible_at,
+    :signal_type,
+    :kind,
+    :reason
   ]
 
   @type scope :: :external | :operator | :auditor
@@ -192,6 +210,12 @@ defmodule Squidie.ReadModel.Visibility do
     }
   end
 
+  defp redact_view(%Timeline{} = timeline, _scope) do
+    %Timeline{timeline | events: Enum.map(timeline.events, &summarize_timeline_event/1)}
+  end
+
+  defp redact_view(%Event{} = event, _scope), do: summarize_timeline_event(event)
+
   defp redact_view(%Diagnostic{} = diagnostic, _scope) do
     %Diagnostic{
       diagnostic
@@ -275,6 +299,33 @@ defmodule Squidie.ReadModel.Visibility do
   end
 
   defp summarize_run(_run), do: nil
+
+  defp summarize_timeline_event(%Event{} = event) do
+    %Event{
+      event
+      | details:
+          event.details
+          |> take_dual_keys(@timeline_detail_fields)
+          |> compact()
+    }
+  end
+
+  defp summarize_timeline_event(event) when is_map(event) do
+    event
+    |> take_dual_keys(@timeline_event_fields)
+    |> Map.put(:details, summarize_timeline_details(value(event, :details)))
+    |> compact()
+  end
+
+  defp summarize_timeline_event(_event), do: nil
+
+  defp summarize_timeline_details(details) when is_map(details) do
+    details
+    |> take_dual_keys(@timeline_detail_fields)
+    |> compact()
+  end
+
+  defp summarize_timeline_details(_details), do: %{}
 
   defp summarize_runnable(runnable) when is_map(runnable) do
     runnable
