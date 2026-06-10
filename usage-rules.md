@@ -25,8 +25,8 @@ itself.
 - Keep delivery and job boundaries thin; call host-owned modules that wrap
   Squidie public APIs.
 - Use `Squidie.list_runs/2` for index views and
-  `Squidie.inspect_run/2`, `Squidie.inspect_run_graph/2`, or
-  `Squidie.explain_run/2` for details.
+  `Squidie.inspect_run/2`, `Squidie.inspect_run_graph/2`,
+  `Squidie.inspect_run_timeline/2`, or `Squidie.explain_run/2` for details.
 - Use `Squidie.record_dynamic_work/3` when host/runtime code needs to persist
   bounded, inspection-only dynamic work metadata for a run.
 - Use `Squidie.preview_dynamic_work/3` when dashboards or visual editors need

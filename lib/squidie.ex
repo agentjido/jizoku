@@ -11,6 +11,7 @@ defmodule Squidie do
   alias Squidie.Config
   alias Squidie.ReadModel.Inspection
   alias Squidie.ReadModel.Listing
+  alias Squidie.ReadModel.Timeline
   alias Squidie.Runs.DynamicWorkPreview
   alias Squidie.Runs.GraphInspection
   alias Squidie.Runtime.DispatchAgent
@@ -375,6 +376,28 @@ defmodule Squidie do
     with {:ok, :read_model} <- read_model(overrides),
          {:ok, inspection} <- inspect_graph_source(run_id, :read_model, overrides) do
       {:ok, graph_inspection(inspection, :read_model, overrides)}
+    end
+  end
+
+  @doc """
+  Fetches one workflow run as chronological operator timeline events.
+
+  The timeline projection is derived from the same durable read-model snapshot
+  as `inspect_run/2`. Events carry stable ordering fields and redaction-safe
+  details so clients do not need to parse raw journal entries.
+  """
+  @spec inspect_run_timeline(String.t(), keyword()) ::
+          {:ok, Timeline.t()}
+          | {:error,
+             :not_found
+             | :invalid_run_id
+             | read_option_error()
+             | Config.config_error()
+             | Inspection.snapshot_error()}
+  def inspect_run_timeline(run_id, overrides \\ []) do
+    with {:ok, :read_model} <- read_model(overrides),
+         {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides) do
+      Inspection.timeline(snapshot)
     end
   end
 

@@ -11,6 +11,8 @@ defmodule Squidie.ReadModel.Visibility do
   alias Squidie.ReadModel.Explanation.Diagnostic
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.ReadModel.Listing.Summary
+  alias Squidie.ReadModel.Timeline
+  alias Squidie.ReadModel.Timeline.Event
   alias Squidie.Runs.GraphInspection
   alias Squidie.Runs.GraphInspection.Node
 
@@ -84,6 +86,22 @@ defmodule Squidie.ReadModel.Visibility do
     :child_trigger,
     :child_key,
     :origin
+  ]
+  @timeline_event_fields [
+    :type,
+    :occurred_at,
+    :run_id,
+    :step_id,
+    :runnable_key,
+    :status,
+    :summary
+  ]
+  @timeline_detail_fields [
+    :attempt_number,
+    :visible_at,
+    :signal_type,
+    :kind,
+    :reason
   ]
 
   @type scope :: :external | :operator | :auditor
@@ -192,6 +210,12 @@ defmodule Squidie.ReadModel.Visibility do
     }
   end
 
+  defp redact_view(%Timeline{} = timeline, _scope) do
+    %Timeline{timeline | events: Enum.map(timeline.events, &summarize_timeline_event/1)}
+  end
+
+  defp redact_view(%Event{} = event, _scope), do: summarize_timeline_event(event)
+
   defp redact_view(%Diagnostic{} = diagnostic, _scope) do
     %Diagnostic{
       diagnostic
@@ -201,16 +225,21 @@ defmodule Squidie.ReadModel.Visibility do
   end
 
   defp redact_view(view, _scope) when is_map(view) do
-    if graph_map?(view) do
-      view
-      |> remove_sensitive_nested()
-      |> update_dual_list(:child_runs, &summarize_run/1)
-      |> update_dual_list(:child_links, &summarize_child_link/1)
-      |> update_dual_list(:dynamic_work, &summarize_dynamic_work/1)
-      |> update_dual_list(:dynamic_work_overlays, &summarize_dynamic_work_overlay/1)
-      |> update_dual_list(:anomalies, &summarize_anomaly/1)
-    else
-      remove_sensitive_nested(view)
+    cond do
+      timeline_event_map?(view) ->
+        summarize_timeline_event(view)
+
+      graph_map?(view) ->
+        view
+        |> remove_sensitive_nested()
+        |> update_dual_list(:child_runs, &summarize_run/1)
+        |> update_dual_list(:child_links, &summarize_child_link/1)
+        |> update_dual_list(:dynamic_work, &summarize_dynamic_work/1)
+        |> update_dual_list(:dynamic_work_overlays, &summarize_dynamic_work_overlay/1)
+        |> update_dual_list(:anomalies, &summarize_anomaly/1)
+
+      true ->
+        remove_sensitive_nested(view)
     end
   end
 
@@ -221,6 +250,11 @@ defmodule Squidie.ReadModel.Visibility do
   defp graph_map?(view) when is_map(view) do
     is_list(value(view, :nodes)) and is_list(value(view, :edges)) and
       (not is_nil(value(view, :run_id)) or not is_nil(value(view, :workflow)))
+  end
+
+  defp timeline_event_map?(view) when is_map(view) do
+    not is_nil(value(view, :type)) and not is_nil(value(view, :occurred_at)) and
+      not is_nil(value(view, :run_id)) and not is_nil(value(view, :summary))
   end
 
   defp update_dual_list(map, key, fun)
@@ -275,6 +309,27 @@ defmodule Squidie.ReadModel.Visibility do
   end
 
   defp summarize_run(_run), do: nil
+
+  defp summarize_timeline_event(%Event{} = event) do
+    %Event{event | details: summarize_timeline_details(event.details)}
+  end
+
+  defp summarize_timeline_event(event) when is_map(event) do
+    event
+    |> take_dual_keys(@timeline_event_fields)
+    |> Map.put(:details, summarize_timeline_details(value(event, :details)))
+    |> compact()
+  end
+
+  defp summarize_timeline_event(_event), do: nil
+
+  defp summarize_timeline_details(details) when is_map(details) do
+    details
+    |> take_dual_keys(@timeline_detail_fields)
+    |> compact()
+  end
+
+  defp summarize_timeline_details(_details), do: %{}
 
   defp summarize_runnable(runnable) when is_map(runnable) do
     runnable

@@ -63,6 +63,135 @@ defmodule Squidie.ReadModel.InspectionTest do
     assert snapshot.terminal? == false
   end
 
+  test "builds chronological timeline events from snapshot facts" do
+    append_run_entries([
+      run_signal_received(),
+      run_started(),
+      runnables_planned(),
+      runnable_applied(),
+      run_terminal(:completed)
+    ])
+
+    append_dispatch_entries([attempt_scheduled(), attempt_claimed(), attempt_completed()])
+
+    assert {:ok, %Snapshot{} = snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert {:ok, timeline} = Inspection.timeline(snapshot)
+
+    assert timeline.run_id == @run_id
+    assert timeline.workflow == @workflow
+    assert timeline.queue == @queue
+    assert timeline.status == :completed
+
+    assert Enum.map(timeline.events, & &1.type) == [
+             :command_received,
+             :run_started,
+             :attempt_scheduled,
+             :attempt_claimed,
+             :attempt_completed,
+             :runnable_applied,
+             :run_terminal
+           ]
+
+    assert [
+             %{
+               type: :command_received,
+               occurred_at: @started_at,
+               summary: "start_run command received"
+             },
+             %{type: :run_started, occurred_at: @started_at, summary: "run started"},
+             %{
+               type: :attempt_scheduled,
+               occurred_at: @started_at,
+               step_id: "charge_card",
+               status: :available,
+               summary: "charge_card attempt scheduled"
+             },
+             %{
+               type: :attempt_claimed,
+               occurred_at: @claimed_at,
+               step_id: "charge_card",
+               status: :claimed,
+               summary: "charge_card attempt claimed"
+             },
+             %{
+               type: :attempt_completed,
+               occurred_at: @completed_at,
+               step_id: "charge_card",
+               status: :completed,
+               summary: "charge_card attempt completed"
+             },
+             %{
+               type: :runnable_applied,
+               occurred_at: @completed_at,
+               step_id: "charge_card",
+               status: :applied,
+               summary: "charge_card result applied"
+             },
+             %{
+               type: :run_terminal,
+               occurred_at: @completed_at,
+               status: :completed,
+               summary: "run completed"
+             }
+           ] = timeline.events
+
+    refute inspect(timeline.events) =~ "pay_123"
+    refute inspect(timeline.events) =~ "captured"
+  end
+
+  test "builds failed timeline events" do
+    append_run_entries([
+      run_started(),
+      runnables_planned(),
+      run_terminal(:failed, error: %{code: "gateway_error"})
+    ])
+
+    append_dispatch_entries([attempt_scheduled(), attempt_claimed(), attempt_failed()])
+
+    assert {:ok, %Snapshot{} = snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert {:ok, timeline} = Inspection.timeline(snapshot)
+
+    assert %{
+             type: :attempt_failed,
+             occurred_at: @completed_at,
+             step_id: "charge_card",
+             status: :failed,
+             summary: "charge_card attempt failed"
+           } = Enum.find(timeline.events, &(&1.type == :attempt_failed))
+
+    assert %{
+             type: :run_terminal,
+             occurred_at: @completed_at,
+             status: :failed,
+             summary: "run failed"
+           } = Enum.find(timeline.events, &(&1.type == :run_terminal))
+  end
+
+  test "builds manual timeline events without dropping false details" do
+    append_run_entries([
+      run_started(),
+      runnables_planned(),
+      manual_step_paused(reason: false)
+    ])
+
+    assert {:ok, %Snapshot{} = snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert {:ok, timeline} = Inspection.timeline(snapshot)
+
+    assert %{
+             type: :manual_step_paused,
+             occurred_at: @completed_at,
+             step_id: "wait_for_review",
+             status: :paused,
+             details: %{kind: "approval", reason: false}
+           } = Enum.find(timeline.events, &(&1.type == :manual_step_paused))
+  end
+
   test "shows scheduled attempts before they become visible" do
     append_run_entries([run_started(), runnables_planned()])
     append_dispatch_entries([attempt_scheduled()])
@@ -686,6 +815,7 @@ defmodule Squidie.ReadModel.InspectionTest do
       run_id: @run_id,
       step: :wait_for_review,
       kind: :approval,
+      reason: Keyword.get(overrides, :reason),
       metadata: %{output_key: "approval"},
       deadline: Keyword.get(overrides, :deadline),
       occurred_at: @completed_at
@@ -717,6 +847,18 @@ defmodule Squidie.ReadModel.InspectionTest do
       claim_token_hash: "token_hash_1",
       queue: @queue,
       result: %{"status" => "captured"},
+      occurred_at: @completed_at
+    })
+  end
+
+  defp attempt_failed do
+    entry!(:attempt_failed, %{
+      run_id: @run_id,
+      runnable_key: @runnable_key,
+      claim_id: "claim_1",
+      claim_token_hash: "token_hash_1",
+      queue: @queue,
+      error: %{code: "gateway_error", message: "gateway failed"},
       occurred_at: @completed_at
     })
   end

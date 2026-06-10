@@ -1913,6 +1913,49 @@ defmodule SquidieTest do
                Squidie.replay(Ecto.UUID.generate(), repo: Repo)
     end
 
+    test "inspect_run_timeline/2 returns chronological redaction-safe operator events" do
+      storage = {Jido.Storage.ETS, table: :squidie_public_timeline_test}
+      queue = "public-timeline-test"
+      started_at = ~U[2026-05-15 00:00:00Z]
+      executed_at = ~U[2026-05-15 00:00:10Z]
+
+      put_squidie_config(
+        repo: Repo,
+        runtime: :journal,
+        read_model: :read_model,
+        journal_storage: storage,
+        queue: queue
+      )
+
+      assert {:ok, %Snapshot{} = started} =
+               Squidie.start(BillingWorkflow, :billing, %{payment_id: "pay_secret_123"},
+                 now: started_at
+               )
+
+      assert {:ok, %Snapshot{} = _completed_step} =
+               Squidie.execute_next(owner_id: "timeline-worker", now: executed_at)
+
+      assert {:ok, timeline} = Squidie.inspect_run_timeline(started.run_id, now: executed_at)
+
+      assert timeline.run_id == started.run_id
+      assert timeline.workflow == "Elixir.SquidieTest.BillingWorkflow"
+
+      assert [
+               :command_received,
+               :run_started,
+               :attempt_scheduled,
+               :attempt_claimed,
+               :attempt_completed,
+               :runnable_applied,
+               :attempt_scheduled
+               | _remaining_event_types
+             ] = Enum.map(timeline.events, & &1.type)
+
+      assert Enum.all?(timeline.events, &match?(%DateTime{}, &1.occurred_at))
+      refute inspect(timeline.events) =~ "pay_secret_123"
+      refute inspect(timeline.events) =~ "charged"
+    end
+
     test "cron starts run through the journal default and expose schedule context" do
       storage = {Jido.Storage.ETS, table: :squidie_journal_cron_context_test}
       queue = "journal-cron-context-test"
