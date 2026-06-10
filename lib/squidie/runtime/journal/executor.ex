@@ -338,7 +338,7 @@ defmodule Squidie.Runtime.Journal.Executor do
        when is_list(opts) do
     case executable_step(storage, workflow_agent, attempt) do
       {:ok, workflow, definition, step_name, step} ->
-        context = step_context(workflow_agent, attempt, workflow, step_name, claim_id)
+        context = step_context(workflow_agent, attempt, workflow, step_name, step, claim_id)
         finished_at = lifecycle_time(opts, claim_now)
         runtime = %{storage: storage, queue: queue, now: finished_at}
 
@@ -2517,7 +2517,8 @@ defmodule Squidie.Runtime.Journal.Executor do
            WorkflowDefinitionLoader.load(storage, attempt.run_id, workflow_agent.state.workflow),
          {:ok, runnable} <- dynamic_planned_runnable(workflow_agent, attempt),
          {:ok, module} <- dynamic_runnable_module(runnable) do
-      {:ok, workflow, definition, step_name, %{module: module, opts: [], dynamic?: true}}
+      {:ok, workflow, definition, step_name,
+       %{module: module, opts: dynamic_runnable_opts(runnable), dynamic?: true}}
     else
       {:error, _reason} = error -> error
     end
@@ -2551,6 +2552,15 @@ defmodule Squidie.Runtime.Journal.Executor do
     end
   end
 
+  defp dynamic_runnable_opts(runnable) when is_map(runnable) do
+    dynamic_work = map_value(runnable, :dynamic_work, %{})
+
+    case map_value(dynamic_work, :action_opts, []) do
+      opts when is_list(opts) -> [action_opts: opts]
+      _invalid -> []
+    end
+  end
+
   defp map_value(map, key, default \\ nil)
 
   defp map_value(map, key, default) when is_map(map) and is_atom(key) do
@@ -2565,11 +2575,19 @@ defmodule Squidie.Runtime.Journal.Executor do
 
   defp map_value(_map, _key, default), do: default
 
-  defp step_context(workflow_agent, %ActionAttempt{} = attempt, workflow, step_name, claim_id) do
+  defp step_context(
+         workflow_agent,
+         %ActionAttempt{} = attempt,
+         workflow,
+         step_name,
+         step,
+         claim_id
+       ) do
     %{
       run_id: attempt.run_id,
       workflow: workflow,
       step: step_name,
+      step_opts: Map.get(step, :opts, []),
       attempt: attempt.attempt_number,
       runnable_key: attempt.runnable_key,
       idempotency_key: attempt.idempotency_key,

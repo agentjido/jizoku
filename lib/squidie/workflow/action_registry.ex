@@ -134,6 +134,19 @@ defmodule Squidie.Workflow.ActionRegistry do
     end
   end
 
+  @doc false
+  @spec resolve_action_opts(action_key() | term(), registry()) ::
+          {:ok, keyword()} | {:error, action_validation_error()}
+  def resolve_action_opts(action, registry) do
+    with :ok <- validate_action(action, registry),
+         {:ok, entry} <- fetch_registry_entry(registry, action) do
+      case entry_value(entry, :action_opts, []) do
+        opts when is_list(opts) -> {:ok, opts}
+        _invalid -> {:ok, []}
+      end
+    end
+  end
+
   defp resolve_spec_map(spec, registry) do
     case spec_steps(spec) do
       {steps_key, steps} when is_list(steps) ->
@@ -251,6 +264,8 @@ defmodule Squidie.Workflow.ActionRegistry do
          step
          |> normalize_step_action(action_key, action)
          |> Map.put(:module, module)
+         |> delete_user_action_opts()
+         |> put_action_opts(entry)
          |> put_action_metadata(action)}
     end
   end
@@ -521,6 +536,36 @@ defmodule Squidie.Workflow.ActionRegistry do
       Map.put(step, :metadata, Map.put(metadata, :action, action))
     else
       step
+    end
+  end
+
+  defp put_action_opts(step, entry) do
+    case entry_value(entry, :action_opts, nil) do
+      opts when is_list(opts) ->
+        put_host_action_opts(step, opts)
+
+      _missing_or_invalid ->
+        step
+    end
+  end
+
+  defp delete_user_action_opts(step) do
+    case Map.fetch(step, :opts) do
+      {:ok, opts} when is_list(opts) -> Map.put(step, :opts, Keyword.delete(opts, :action_opts))
+      _missing_or_invalid -> step
+    end
+  end
+
+  defp put_host_action_opts(step, opts) do
+    case Map.fetch(step, :opts) do
+      {:ok, step_opts} when is_list(step_opts) ->
+        Map.put(step, :opts, Keyword.put(step_opts, :action_opts, opts))
+
+      :error ->
+        Map.put(step, :opts, action_opts: opts)
+
+      {:ok, _invalid} ->
+        step
     end
   end
 

@@ -31,7 +31,7 @@ defmodule Squidie.Step.HTTPTest do
                      timeout: 1_000
                    }
                  },
-                 context()
+                 context(allowed_hosts: ["127.0.0.1"], persist_response_body?: true)
                )
 
       assert response.status == 201
@@ -53,7 +53,7 @@ defmodule Squidie.Step.HTTPTest do
                      url: endpoint_url(bypass.port, "/gateway")
                    }
                  },
-                 context()
+                 context(allowed_hosts: ["127.0.0.1"], persist_response_body?: true)
                )
 
       assert error.kind == :http
@@ -77,7 +77,7 @@ defmodule Squidie.Step.HTTPTest do
                      url: endpoint_url(bypass.port, "/missing")
                    }
                  },
-                 context()
+                 context(allowed_hosts: ["127.0.0.1"], persist_response_body?: true)
                )
 
       assert error.kind == :http
@@ -102,7 +102,7 @@ defmodule Squidie.Step.HTTPTest do
                      bindings: %{"invoice_id" => "inv_123"}
                    }
                  },
-                 context()
+                 context(allowed_hosts: ["127.0.0.1"], persist_response_body?: true)
                )
 
       assert response.status == 200
@@ -134,11 +134,85 @@ defmodule Squidie.Step.HTTPTest do
                      "body" => "payload"
                    }
                  },
-                 context()
+                 context(
+                   allowed_hosts: ["127.0.0.1"],
+                   allow_body?: true,
+                   persist_response_body?: true
+                 )
                )
 
       assert response.status == 200
       assert response.body == "updated"
+    end
+
+    test "requires execution-time allowed hosts from host-owned action options" do
+      assert {:error, error} =
+               HTTP.run(
+                 %{request: %{method: :get, url: "https://api.example.test/invoices"}},
+                 context()
+               )
+
+      assert error == %{
+               message: "HTTP action request validation failed",
+               validation_errors: %{allowed_hosts: "allowed_hosts policy is required"},
+               retryable?: false
+             }
+    end
+
+    test "redacts sensitive response headers and truncates persisted response bodies" do
+      bypass = Bypass.open()
+      body = String.duplicate("a", 20)
+
+      Bypass.expect_once(bypass, "GET", "/large", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("set-cookie", "session=secret")
+        |> Plug.Conn.put_resp_header("x-request-id", "req_123")
+        |> Plug.Conn.resp(200, body)
+      end)
+
+      assert {:ok, %{http_response: response}} =
+               HTTP.run(
+                 %{
+                   request: %{
+                     method: :get,
+                     url: endpoint_url(bypass.port, "/large")
+                   }
+                 },
+                 context(
+                   allowed_hosts: ["127.0.0.1"],
+                   max_body_bytes: 8,
+                   persist_response_body?: true
+                 )
+               )
+
+      assert response.status == 200
+      assert response.body == "aaaaaaaa"
+      assert response.body_truncated? == true
+      assert response.headers["set-cookie"] == "[REDACTED]"
+      assert response.headers["x-request-id"] == "req_123"
+    end
+
+    test "omits response bodies unless the host opts into persistence" do
+      bypass = Bypass.open()
+
+      Bypass.expect_once(bypass, "GET", "/sensitive", fn conn ->
+        Plug.Conn.resp(conn, 200, "secret response")
+      end)
+
+      assert {:ok, %{http_response: response}} =
+               HTTP.run(
+                 %{
+                   request: %{
+                     method: :get,
+                     url: endpoint_url(bypass.port, "/sensitive")
+                   }
+                 },
+                 context(allowed_hosts: ["127.0.0.1"])
+               )
+
+      assert response.status == 200
+      assert response.body == nil
+      assert response.body_truncated? == false
     end
 
     test "rejects invalid credential references" do
@@ -148,7 +222,7 @@ defmodule Squidie.Step.HTTPTest do
                    request: %{method: :get, url: "https://example.test/invoices"},
                    credential_refs: %{billing_api: ""}
                  },
-                 context()
+                 context(allowed_hosts: ["example.test"])
                )
 
       assert error == %{
@@ -165,7 +239,7 @@ defmodule Squidie.Step.HTTPTest do
                    request: %{method: :get, url: "https://example.test/invoices"},
                    credential_refs: "billing_api"
                  },
-                 context()
+                 context(allowed_hosts: ["example.test"])
                )
 
       assert error == %{
@@ -185,13 +259,94 @@ defmodule Squidie.Step.HTTPTest do
                      credentials: %{api_key: "secret"}
                    }
                  },
-                 context()
+                 context(allowed_hosts: ["example.test"])
                )
 
       assert error == %{
                message: "HTTP action request validation failed",
                validation_errors: %{credentials: "credential values are not allowed"},
                retryable?: false
+             }
+    end
+
+    test "rejects secret-bearing headers and payload keys" do
+      assert {:error, error} =
+               HTTP.run(
+                 %{
+                   request: %{
+                     method: :post,
+                     url: "https://example.test/invoices",
+                     headers: %{"api-key" => "secret"},
+                     json: %{api_key: "secret"},
+                     query_params: %{token: "secret"}
+                   }
+                 },
+                 context(allowed_hosts: ["example.test"])
+               )
+
+      assert error.validation_errors == %{
+               headers: "secret-bearing request headers are not allowed",
+               json: "secret-bearing request values are not allowed",
+               query_params: "secret-bearing request values are not allowed"
+             }
+    end
+
+    test "rejects URL query strings, userinfo, fragments, and raw body without host opt-in" do
+      assert {:error, url_error} =
+               HTTP.run(
+                 %{
+                   request: %{
+                     method: :get,
+                     url: "https://user:pass@example.test/invoices?token=secret"
+                   }
+                 },
+                 context(allowed_hosts: ["example.test"])
+               )
+
+      assert url_error.validation_errors == %{url: "url must not include userinfo"}
+
+      assert {:error, query_error} =
+               HTTP.run(
+                 %{
+                   request: %{
+                     method: :get,
+                     url: "https://example.test/invoices?token=secret"
+                   }
+                 },
+                 context(allowed_hosts: ["example.test"])
+               )
+
+      assert query_error.validation_errors == %{
+               url: "url must not include query string; use query_params instead"
+             }
+
+      assert {:error, fragment_error} =
+               HTTP.run(
+                 %{
+                   request: %{
+                     method: :get,
+                     url: "https://example.test/invoices#access_token=secret"
+                   }
+                 },
+                 context(allowed_hosts: ["example.test"])
+               )
+
+      assert fragment_error.validation_errors == %{url: "url must not include fragment"}
+
+      assert {:error, body_error} =
+               HTTP.run(
+                 %{
+                   request: %{
+                     method: :post,
+                     url: "https://example.test/invoices",
+                     body: "payload"
+                   }
+                 },
+                 context(allowed_hosts: ["example.test"])
+               )
+
+      assert body_error.validation_errors == %{
+               body: "raw body requires host action option allow_body?: true"
              }
     end
 
@@ -202,6 +357,37 @@ defmodule Squidie.Step.HTTPTest do
                message: "HTTP action request validation failed",
                validation_errors: %{request: "HTTP action request is required"},
                retryable?: false
+             }
+    end
+
+    test "validates a planned action input with host-owned action options" do
+      assert :ok =
+               HTTP.validate_action_input(
+                 %{request: %{method: "GET", url: "https://api.example.test/invoices"}},
+                 allowed_hosts: ["api.example.test"]
+               )
+
+      assert {:error, error} =
+               HTTP.validate_action_input(
+                 %{request: %{method: "GET", url: "https://metadata.internal/latest"}},
+                 allowed_hosts: ["api.example.test"]
+               )
+
+      assert error.validation_errors == %{url: "host is not allowed"}
+    end
+
+    test "rejects unexpected top-level action input fields before persistence" do
+      assert {:error, error} =
+               HTTP.validate_action_input(
+                 %{
+                   request: %{method: "GET", url: "https://api.example.test/invoices"},
+                   secrets: %{api_key: "secret"}
+                 },
+                 allowed_hosts: ["api.example.test"]
+               )
+
+      assert error.validation_errors == %{
+               input: "unsupported HTTP action input fields: secrets"
              }
     end
   end
@@ -262,6 +448,19 @@ defmodule Squidie.Step.HTTPTest do
              }
     end
 
+    test "rejects invalid map header values without raising" do
+      assert {:error, error} =
+               HTTP.validate_request(%{
+                 method: :get,
+                 url: "https://example.test/invoices",
+                 headers: %{"x-bad" => %{nested: true}}
+               })
+
+      assert error.validation_errors == %{
+               headers: "headers must be a map or list of name/value pairs"
+             }
+    end
+
     test "rejects invalid URL template bindings shape" do
       assert {:error, error} =
                HTTP.validate_request(%{
@@ -275,6 +474,28 @@ defmodule Squidie.Step.HTTPTest do
                validation_errors: %{url: "url_template bindings must be a map"},
                retryable?: false
              }
+    end
+
+    test "rejects invalid URL template binding values without raising" do
+      assert {:error, error} =
+               HTTP.validate_request(%{
+                 method: "GET",
+                 url_template: "https://example.test/invoices/{{ invoice_id }}",
+                 bindings: %{invoice_id: %{nested: true}}
+               })
+
+      assert error.validation_errors == %{
+               url: "url_template bindings must be strings, numbers, or booleans"
+             }
+    end
+
+    test "expands false URL template bindings" do
+      assert :ok =
+               HTTP.validate_request(%{
+                 method: "GET",
+                 url_template: "https://example.test/invoices/{{ dry_run }}",
+                 bindings: %{dry_run: false}
+               })
     end
   end
 
@@ -374,12 +595,13 @@ defmodule Squidie.Step.HTTPTest do
     "http://127.0.0.1:#{port}#{path}"
   end
 
-  defp context do
+  defp context(opts \\ []) do
     %Squidie.Step.Context{
       run_id: "00000000-0000-4000-8000-000000000358",
       workflow: __MODULE__.RuntimeWorkflow,
       step: :http_request,
       attempt: 1,
+      step_opts: [action_opts: opts],
       state: %{}
     }
   end

@@ -19,6 +19,7 @@ defmodule Squidie.RuntimeSpecStartTest do
   @run_id "00000000-0000-4000-8000-000000000254"
   @missing_action_run_id "00000000-0000-4000-8000-000000000255"
   @http_action_run_id "00000000-0000-4000-8000-000000000358"
+  @invalid_http_action_run_id "00000000-0000-4000-8000-000000000359"
 
   test "starts and executes a validated runtime-authored spec" do
     registry = action_registry()
@@ -140,7 +141,7 @@ defmodule Squidie.RuntimeSpecStartTest do
                    bindings: %{invoice_id: "inv_123"}
                  }
                },
-               action_registry: %{"http.request" => Squidie.Step.HTTP},
+               action_registry: http_action_registry(["127.0.0.1"], persist_response_body?: true),
                journal_storage: @storage,
                run_id: @http_action_run_id
              )
@@ -155,10 +156,49 @@ defmodule Squidie.RuntimeSpecStartTest do
     assert completed.context.http_response.body == "paid"
   end
 
+  test "rejects invalid HTTP action config before creating a runtime-authored run" do
+    assert {:error, {:invalid_workflow_spec, errors}} =
+             Squidie.start_spec(
+               runtime_http_spec(),
+               :manual,
+               %{
+                 request: %{
+                   method: "GET",
+                   url: "https://metadata.internal/latest"
+                 }
+               },
+               action_registry: http_action_registry(["api.example.test"]),
+               journal_storage: @storage,
+               run_id: @invalid_http_action_run_id
+             )
+
+    assert %{
+             path: [:steps, 0, :input],
+             code: :invalid_action_input,
+             message: "step :fetch_invoice action input is invalid",
+             details: %{
+               step: :fetch_invoice,
+               validation_errors: %{url: "host is not allowed"}
+             }
+           } in errors
+
+    assert {:error, :not_found} =
+             Squidie.inspect_run(@invalid_http_action_run_id, journal_storage: @storage)
+  end
+
   defp action_registry do
     %{
       "billing.load_invoice" => LoadInvoice,
       "billing.send_reminder" => SendReminder
+    }
+  end
+
+  defp http_action_registry(allowed_hosts, opts \\ []) do
+    %{
+      "http.request" => [
+        module: Squidie.Step.HTTP,
+        action_opts: Keyword.put(opts, :allowed_hosts, allowed_hosts)
+      ]
     }
   end
 

@@ -277,6 +277,7 @@ registry = %{
   "http.request" => [
     module: Squidie.Step.HTTP,
     category: "HTTP",
+    action_opts: [allowed_hosts: ["api.example.test"]],
     credential_requirements: [%{name: "billing_api", required?: true}]
   ]
 }
@@ -290,11 +291,15 @@ registry = %{
   }, allowed_hosts: ["api.example.test"])
 ```
 
-HTTP action inputs are normal step inputs. Keep credential values outside the
-request map; use host-owned `credential_refs` and action-catalog metadata to
-describe which references the host can supply. Successful requests add
-`http_response` to run context. Retryable HTTP or transport failures return
-structured retry errors so workflow retry policy controls the next attempt.
+HTTP action inputs are normal step inputs. Host-owned `action_opts` are copied
+into the resolved runtime spec and enforced both before run start and during
+step execution. Keep credential values outside the request map; use
+host-owned `credential_refs` and action-catalog metadata to describe which
+references the host can supply. URLs must not include userinfo or query
+strings; raw bodies and response-body persistence require explicit host
+`action_opts`. Successful requests add a redacted `http_response` to run
+context. Retryable HTTP or transport failures return structured retry errors so
+workflow retry policy controls the next attempt.
 
 The spec is an Elixir data representation with atom keys and module atoms:
 

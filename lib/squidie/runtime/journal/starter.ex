@@ -118,6 +118,7 @@ defmodule Squidie.Runtime.Journal.Starter do
          {:ok, resolved_payload} <- Definition.resolve_payload(trigger, payload),
          {:ok, planner} <- RunicPlanner.new(spec),
          {:ok, _planned, runnables} <- RunicPlanner.plan(planner, resolved_payload),
+         :ok <- validate_planned_action_inputs(definition, runnables),
          {:ok, run_id} <- run_id(opts),
          :ok <- validate_initial_context(opts),
          {:ok, journal_runnables} <- journal_runnables(definition, run_id, queue, runnables, now),
@@ -150,6 +151,55 @@ defmodule Squidie.Runtime.Journal.Starter do
          resolved_spec <- to_spec_struct(resolved_spec),
          :ok <- Spec.validate(resolved_spec) do
       {:ok, resolved_spec}
+    end
+  end
+
+  defp validate_planned_action_inputs(definition, runnables) when is_list(runnables) do
+    runnables
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {runnable, index}, :ok ->
+      case validate_planned_action_input(definition, runnable, index) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_planned_action_input(definition, %{step: step, input: input}, index)
+       when is_atom(step) and is_map(input) do
+    with {:ok, step_definition} <- Definition.step(definition, step) do
+      module = Map.get(step_definition, :module)
+      opts = Map.get(step_definition, :opts, [])
+
+      if is_atom(module) and function_exported?(module, :validate_action_input, 2) do
+        validate_action_input(module, step, input, opts, index)
+      else
+        :ok
+      end
+    end
+  end
+
+  defp validate_planned_action_input(_definition, _runnable, _index), do: :ok
+
+  defp validate_action_input(module, step, input, opts, index) do
+    case module.validate_action_input(input, Keyword.get(opts, :action_opts, [])) do
+      :ok ->
+        :ok
+
+      {:error, error} ->
+        {:error,
+         {:invalid_workflow_spec,
+          [
+            %{
+              path: [:steps, index, :input],
+              code: :invalid_action_input,
+              message: "step #{inspect(step)} action input is invalid",
+              details: %{
+                step: step,
+                validation_errors: Map.get(error, :validation_errors, %{})
+              }
+            }
+          ]}}
     end
   end
 

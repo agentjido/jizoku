@@ -1206,34 +1206,48 @@ defmodule Squidie do
   end
 
   defp dynamic_work_runnable(run_id, dynamic_work, node, queue, %DateTime{} = now, registry) do
-    case ActionRegistry.resolve_action(Map.get(node, :action), registry) do
-      {:ok, module} ->
-        node_id = Map.fetch!(node, :id)
-        runnable_key = Enum.join([run_id, node_id, 1], ":")
+    with {:ok, module} <- ActionRegistry.resolve_action(Map.get(node, :action), registry),
+         {:ok, action_opts} <-
+           ActionRegistry.resolve_action_opts(Map.get(node, :action), registry),
+         :ok <- validate_dynamic_action_input(module, Map.get(node, :input, %{}), action_opts) do
+      node_id = Map.fetch!(node, :id)
+      runnable_key = Enum.join([run_id, node_id, 1], ":")
 
-        {:ok,
-         %{
-           run_id: run_id,
-           runnable_key: runnable_key,
-           idempotency_key: runnable_key,
-           attempt_number: 1,
-           queue: queue,
-           step: node_id,
-           input: Map.get(node, :input, %{}),
-           visible_at: now,
-           recovery: dynamic_work_recovery(Map.get(node, :action)),
-           dynamic?: true,
-           dynamic_work: %{
-             dynamic_key: dynamic_work.dynamic_key,
-             action: Map.get(node, :action),
-             module: module,
-             retry: Map.get(node, :retry),
-             origin: dynamic_work.origin
-           }
-         }}
-
+      {:ok,
+       %{
+         run_id: run_id,
+         runnable_key: runnable_key,
+         idempotency_key: runnable_key,
+         attempt_number: 1,
+         queue: queue,
+         step: node_id,
+         input: Map.get(node, :input, %{}),
+         visible_at: now,
+         recovery: dynamic_work_recovery(Map.get(node, :action)),
+         dynamic?: true,
+         dynamic_work: %{
+           dynamic_key: dynamic_work.dynamic_key,
+           action: Map.get(node, :action),
+           module: module,
+           action_opts: action_opts,
+           retry: Map.get(node, :retry),
+           origin: dynamic_work.origin
+         }
+       }}
+    else
       {:error, reason} ->
         {:error, {:invalid_dynamic_work, {:nodes, {:action, reason}}}}
+    end
+  end
+
+  defp validate_dynamic_action_input(module, input, action_opts) do
+    if {:validate_action_input, 2} in module.__info__(:functions) do
+      case module.validate_action_input(input || %{}, action_opts) do
+        :ok -> :ok
+        {:error, error} -> {:error, {:action_input, Map.get(error, :validation_errors, %{})}}
+      end
+    else
+      :ok
     end
   end
 
