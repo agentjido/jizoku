@@ -21,7 +21,8 @@ defmodule Squidie.Workflow.EditorSpec do
     "retries",
     "entry_steps",
     "initial_step",
-    "entry_step"
+    "entry_step",
+    "editor"
   ]
 
   @collection_fields ["triggers", "payload", "steps", "transitions", "retries", "entry_steps"]
@@ -45,7 +46,7 @@ defmodule Squidie.Workflow.EditorSpec do
 
   @type editor_map :: %{String.t() => term()}
   @type validation_error :: %{
-          path: [atom() | non_neg_integer()],
+          path: [atom() | String.t() | non_neg_integer()],
           code: atom(),
           message: String.t(),
           details: map()
@@ -98,6 +99,7 @@ defmodule Squidie.Workflow.EditorSpec do
     errors =
       []
       |> validate_runtime_owned_fields(map)
+      |> validate_editor_metadata(map)
       |> validate_collections(map)
       |> validate_steps(map)
       |> validate_unique_step_names(map)
@@ -155,6 +157,7 @@ defmodule Squidie.Workflow.EditorSpec do
          "current_node_id" => nil,
          "current_node_ids" => [],
          "terminal?" => false,
+         "editor" => editor_metadata(map),
          "nodes" => preview_nodes(map),
          "edges" => preview_edges(map)
        }}
@@ -206,6 +209,73 @@ defmodule Squidie.Workflow.EditorSpec do
         acc
       end
     end)
+  end
+
+  defp validate_editor_metadata(errors, map) do
+    case Map.fetch(map, "editor") do
+      :error ->
+        errors
+
+      {:ok, editor} when is_map(editor) ->
+        validate_editor_metadata_value(errors, editor, [:editor])
+
+      {:ok, _editor} ->
+        [
+          error(
+            [:editor],
+            :invalid_editor_metadata,
+            "editor metadata must be a map",
+            %{type: "non_object"}
+          )
+          | errors
+        ]
+    end
+  end
+
+  defp validate_editor_metadata_value(errors, value, path) when is_map(value) do
+    Enum.reduce(value, errors, fn {key, item}, acc ->
+      key = string_key(key)
+      path = [path_atom(key) | path]
+
+      if key in @runtime_owned_fields do
+        [
+          error(
+            Enum.reverse(path),
+            :runtime_owned_field,
+            "editor.#{key} is runtime-owned and cannot be edited",
+            %{field: key}
+          )
+          | acc
+        ]
+      else
+        validate_editor_metadata_value(acc, item, path)
+      end
+    end)
+  end
+
+  defp validate_editor_metadata_value(errors, values, path) when is_list(values) do
+    values
+    |> Enum.with_index()
+    |> Enum.reduce(errors, fn {value, index}, acc ->
+      validate_editor_metadata_value(acc, value, [index | path])
+    end)
+  end
+
+  defp validate_editor_metadata_value(errors, value, _path)
+       when is_nil(value) or is_binary(value) or is_number(value) or is_boolean(value) do
+    errors
+  end
+
+  defp validate_editor_metadata_value(errors, _value, path) do
+    [
+      error(
+        Enum.reverse(path),
+        :unsupported_json_value,
+        "editor metadata must contain only JSON-safe values",
+        %{type: "unsupported"}
+      )
+      | errors
+    ]
   end
 
   defp validate_collections(errors, map) do
@@ -667,13 +737,15 @@ defmodule Squidie.Workflow.EditorSpec do
   defp graph_diff(source_graph, draft_graph) do
     node_diff = collection_diff(source_graph["nodes"], draft_graph["nodes"])
     edge_diff = collection_diff(source_graph["edges"], draft_graph["edges"])
+    editor_diff = metadata_diff(source_graph["editor"], draft_graph["editor"])
 
     %{
       "source" => "workflow_spec",
       "status" => "draft_diff",
-      "summary" => diff_summary(node_diff, edge_diff),
+      "summary" => diff_summary(node_diff, edge_diff, editor_diff),
       "nodes" => node_diff,
-      "edges" => edge_diff
+      "edges" => edge_diff,
+      "editor" => editor_diff
     }
   end
 
@@ -718,15 +790,34 @@ defmodule Squidie.Workflow.EditorSpec do
     Map.new(items, fn item -> {item["id"], item} end)
   end
 
-  defp diff_summary(node_diff, edge_diff) do
+  defp metadata_diff(source_metadata, draft_metadata) do
+    source_metadata = source_metadata || %{}
+    draft_metadata = draft_metadata || %{}
+
+    %{
+      "before" => source_metadata,
+      "after" => draft_metadata,
+      "changed?" => source_metadata != draft_metadata
+    }
+  end
+
+  defp diff_summary(node_diff, edge_diff, editor_diff) do
     %{
       "nodes_added" => length(node_diff["added"]),
       "nodes_removed" => length(node_diff["removed"]),
       "nodes_changed" => length(node_diff["changed"]),
       "edges_added" => length(edge_diff["added"]),
       "edges_removed" => length(edge_diff["removed"]),
-      "edges_changed" => length(edge_diff["changed"])
+      "edges_changed" => length(edge_diff["changed"]),
+      "editor_changed" => editor_diff["changed?"]
     }
+  end
+
+  defp editor_metadata(map) do
+    case Map.get(map, "editor") do
+      editor when is_map(editor) -> editor
+      _other -> %{}
+    end
   end
 
   defp json_value(nil), do: nil
@@ -779,6 +870,16 @@ defmodule Squidie.Workflow.EditorSpec do
   defp path_atom("attempts"), do: :attempts
   defp path_atom("dispatches"), do: :dispatches
   defp path_atom("history"), do: :history
+  defp path_atom("nodes"), do: :nodes
+  defp path_atom("groups"), do: :groups
+  defp path_atom("notes"), do: :notes
+  defp path_atom("position"), do: :position
+  defp path_atom("x"), do: :x
+  defp path_atom("y"), do: :y
+  defp path_atom("group"), do: :group
+  defp path_atom("id"), do: :id
+  defp path_atom("label"), do: :label
+  defp path_atom("text"), do: :text
   defp path_atom("triggers"), do: :triggers
   defp path_atom("payload"), do: :payload
   defp path_atom("steps"), do: :steps
@@ -786,6 +887,7 @@ defmodule Squidie.Workflow.EditorSpec do
   defp path_atom("retries"), do: :retries
   defp path_atom("from"), do: :from
   defp path_atom("to"), do: :to
+  defp path_atom(field) when is_binary(field), do: field
 
   defp list_field(map, field) do
     case Map.get(map, field) do
