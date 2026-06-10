@@ -1,18 +1,12 @@
-<div align="center">
-
 # Squidie - Durable Workflow Runtime
 
-<img width="450" alt="squidie-logo" src="https://github.com/user-attachments/assets/8604607c-c5cf-4c54-970f-0198fe36e349" />
-
-<br />
+![Squidie logo](https://github.com/user-attachments/assets/8604607c-c5cf-4c54-970f-0198fe36e349)
 
 [![CI](https://github.com/dark-trench/squidie/actions/workflows/ci.yml/badge.svg)](https://github.com/dark-trench/squidie/actions/workflows/ci.yml)
 [![Codecov](https://codecov.io/gh/dark-trench/squidie/branch/main/graph/badge.svg)](https://codecov.io/gh/dark-trench/squidie)
 [![Hex.pm](https://img.shields.io/hexpm/v/squidie)](https://hex.pm/packages/squidie)
 [![HexDocs](https://img.shields.io/badge/docs-hexdocs-purple)](https://hexdocs.pm/squidie)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/dark-trench/squidie/blob/main/LICENSE)
-
-</div>
 
 ---
 
