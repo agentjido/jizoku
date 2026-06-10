@@ -1,12 +1,20 @@
-# Squidie - Durable Workflow Runtime
+<div align="center">
+  <h1>Squidie - Durable Workflow Runtime</h1>
 
-![Squidie logo](https://github.com/user-attachments/assets/8604607c-c5cf-4c54-970f-0198fe36e349)
+  <img
+    src="https://github.com/user-attachments/assets/8604607c-c5cf-4c54-970f-0198fe36e349"
+    alt="Squidie logo"
+    width="450"
+  />
 
-[![CI](https://github.com/dark-trench/squidie/actions/workflows/ci.yml/badge.svg)](https://github.com/dark-trench/squidie/actions/workflows/ci.yml)
-[![Codecov](https://codecov.io/gh/dark-trench/squidie/branch/main/graph/badge.svg)](https://codecov.io/gh/dark-trench/squidie)
-[![Hex.pm](https://img.shields.io/hexpm/v/squidie)](https://hex.pm/packages/squidie)
-[![HexDocs](https://img.shields.io/badge/docs-hexdocs-purple)](https://hexdocs.pm/squidie)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/dark-trench/squidie/blob/main/LICENSE)
+  <p>
+    <a href="https://github.com/dark-trench/squidie/actions/workflows/ci.yml"><img src="https://github.com/dark-trench/squidie/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://codecov.io/gh/dark-trench/squidie"><img src="https://codecov.io/gh/dark-trench/squidie/branch/main/graph/badge.svg" alt="Codecov" /></a>
+    <a href="https://hex.pm/packages/squidie"><img src="https://img.shields.io/hexpm/v/squidie" alt="Hex.pm" /></a>
+    <a href="https://hexdocs.pm/squidie"><img src="https://img.shields.io/badge/docs-hexdocs-purple" alt="HexDocs" /></a>
+    <a href="https://github.com/dark-trench/squidie/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
+  </p>
+</div>
 
 ---
 
