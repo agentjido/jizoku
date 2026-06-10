@@ -187,6 +187,83 @@ defmodule Squidie.Workflow.ActionRegistryTest do
       assert :ok = Squidie.Workflow.validate_spec(spec, action_registry: registry)
     end
 
+    test "copies host-owned action opts into resolved step opts without exposing them as metadata" do
+      spec =
+        spec_with_steps([
+          %{
+            name: :load_invoice,
+            action: "billing.load_invoice",
+            opts: [input: [:invoice_id], action_opts: [allowed_hosts: ["metadata.internal"]]]
+          }
+        ])
+
+      registry = %{
+        "billing.load_invoice" => [
+          module: NativeLoadInvoice,
+          action_opts: [allowed_hosts: ["api.example.test"]]
+        ]
+      }
+
+      assert {:ok, resolved} =
+               Squidie.Workflow.resolve_spec_actions(spec, action_registry: registry)
+
+      assert [
+               %{
+                 opts: opts,
+                 metadata: %{action: "billing.load_invoice"}
+               }
+             ] = resolved.steps
+
+      assert Keyword.fetch!(opts, :input) == [:invoice_id]
+      assert Keyword.fetch!(opts, :action_opts) == [allowed_hosts: ["api.example.test"]]
+    end
+
+    test "removes runtime-authored action opts when registry does not provide them" do
+      spec =
+        spec_with_steps([
+          %{
+            name: :load_invoice,
+            action: "billing.load_invoice",
+            opts: [action_opts: [allowed_hosts: ["metadata.internal"]]]
+          }
+        ])
+
+      registry = %{"billing.load_invoice" => NativeLoadInvoice}
+
+      assert {:ok, resolved} =
+               Squidie.Workflow.resolve_spec_actions(spec, action_registry: registry)
+
+      assert [%{opts: []}] = resolved.steps
+    end
+
+    test "does not crash before structural validation when runtime opts are malformed" do
+      spec =
+        spec_with_steps([
+          %{
+            name: :load_invoice,
+            action: "billing.load_invoice",
+            opts: %{}
+          }
+        ])
+
+      registry = %{
+        "billing.load_invoice" => [
+          module: NativeLoadInvoice,
+          action_opts: [allowed_hosts: ["api.example.test"]]
+        ]
+      }
+
+      assert {:error, {:invalid_workflow_spec, errors}} =
+               Squidie.Workflow.validate_spec(spec, action_registry: registry)
+
+      assert %{
+               path: [:steps, 0, :opts],
+               code: :invalid_step_opts,
+               message: "step :load_invoice opts must be a keyword list",
+               details: %{step: :load_invoice, opts: %{}}
+             } in errors
+    end
+
     test "rejects unknown action keys before activation" do
       spec =
         spec_with_steps([

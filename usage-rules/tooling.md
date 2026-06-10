@@ -43,6 +43,13 @@
 - Use `Squidie.Workflow.action_catalog/1` to render editor-safe action palettes
   from a host-owned registry; treat catalog metadata as display data, not an
   execution boundary.
+- Use `Squidie.Step.HTTP` for host-approved HTTP nodes in runtime-authored
+  specs. Validate request config with `Squidie.Step.HTTP.validate_request/1`,
+  use registry-owned `action_opts: [allowed_hosts: [...]]` for destination
+  policy, expose it only through an action-registry key, and represent
+  credentials as host-owned references instead of request values. Keep URL
+  query strings, userinfo, secret-bearing headers, and secret-bearing payload
+  keys out of HTTP action requests.
 - Use `Squidie.Workflow.validate_spec/2` with `:action_registry` before
   trusting runtime-authored specs that reference executable actions.
 - Use `Squidie.start_spec/3` or `Squidie.start_spec/4` for runtime-authored

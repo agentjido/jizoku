@@ -58,27 +58,31 @@ defmodule Squidie.Tools.HTTP do
 
   @spec build_req_options(request()) :: keyword()
   defp build_req_options(request) do
-    Enum.reduce(request, [method: request.method, retry: false, url: request.url], fn
-      {:headers, headers}, opts ->
-        Keyword.put(opts, :headers, headers)
+    Enum.reduce(
+      request,
+      [method: request.method, redirect: false, retry: false, url: request.url],
+      fn
+        {:headers, headers}, opts ->
+          Keyword.put(opts, :headers, headers)
 
-      {:params, params}, opts ->
-        Keyword.put(opts, :params, params)
+        {:params, params}, opts ->
+          Keyword.put(opts, :params, params)
 
-      {:json, json}, opts ->
-        Keyword.put(opts, :json, json)
+        {:json, json}, opts ->
+          Keyword.put(opts, :json, json)
 
-      {:body, body}, opts ->
-        Keyword.put(opts, :body, body)
+        {:body, body}, opts ->
+          Keyword.put(opts, :body, body)
 
-      {:timeout, timeout}, opts when is_integer(timeout) and timeout > 0 ->
-        opts
-        |> Keyword.put(:receive_timeout, timeout)
-        |> Keyword.put(:connect_options, timeout: timeout)
+        {:timeout, timeout}, opts when is_integer(timeout) and timeout > 0 ->
+          opts
+          |> Keyword.put(:receive_timeout, timeout)
+          |> Keyword.put(:connect_options, timeout: timeout)
 
-      {_key, _value}, opts ->
-        opts
-    end)
+        {_key, _value}, opts ->
+          opts
+      end
+    )
   end
 
   @spec normalize_response({:ok, Req.Response.t()} | {:error, term()}, request()) ::
@@ -102,7 +106,7 @@ defmodule Squidie.Tools.HTTP do
            |> Req.Response.to_map()
            |> Map.put(:method, request.method)
            |> Map.put(:url, request.url),
-         retryable?: response.status >= 500
+         retryable?: retryable_status?(response.status)
        )}
     end
   end
@@ -135,4 +139,7 @@ defmodule Squidie.Tools.HTTP do
   defp timeout_reason?(reason) do
     reason in [:timeout, :connect_timeout]
   end
+
+  defp retryable_status?(status) when status in [408, 429], do: true
+  defp retryable_status?(status), do: status >= 500
 end

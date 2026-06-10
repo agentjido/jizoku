@@ -17,6 +17,7 @@ defmodule Squidie.Step.Context do
     :runnable_key,
     :idempotency_key,
     :claim_id,
+    :step_opts,
     state: %{}
   ]
 
@@ -27,6 +28,7 @@ defmodule Squidie.Step.Context do
           runnable_key: String.t() | nil,
           idempotency_key: String.t() | nil,
           claim_id: String.t() | nil,
+          step_opts: keyword(),
           attempt: pos_integer() | nil,
           state: map()
         }
@@ -42,6 +44,7 @@ defmodule Squidie.Step.Context do
       runnable_key: Map.get(context, :runnable_key),
       idempotency_key: Map.get(context, :idempotency_key),
       claim_id: Map.get(context, :claim_id),
+      step_opts: Map.get(context, :step_opts, []),
       state: Map.get(context, :state, %{})
     }
   end

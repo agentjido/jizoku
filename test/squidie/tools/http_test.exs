@@ -75,6 +75,44 @@ defmodule Squidie.Tools.HTTPTest do
       assert error.details.body == "gateway_unavailable"
     end
 
+    test "treats throttling and request timeout responses as retryable" do
+      for status <- [408, 429] do
+        bypass = Bypass.open()
+
+        Bypass.expect_once(bypass, "GET", "/retryable", fn conn ->
+          Plug.Conn.resp(conn, status, "try_later")
+        end)
+
+        assert {:error, %Error{} = error} =
+                 Tools.invoke(HTTP, %{
+                   method: :get,
+                   url: endpoint_url(bypass.port, "/retryable")
+                 })
+
+        assert error.retryable? == true
+        assert error.details.status == status
+      end
+    end
+
+    test "does not follow redirects automatically" do
+      bypass = Bypass.open()
+
+      Bypass.expect_once(bypass, "GET", "/redirect", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("location", "http://metadata.internal/latest")
+        |> Plug.Conn.resp(302, "redirect")
+      end)
+
+      assert {:ok, %Result{} = result} =
+               Tools.invoke(HTTP, %{
+                 method: :get,
+                 url: endpoint_url(bypass.port, "/redirect")
+               })
+
+      assert result.payload.status == 302
+      assert result.payload.body == "redirect"
+    end
+
     test "normalizes timeout failures" do
       {server_pid, port} = start_hanging_server()
       on_exit(fn -> Process.exit(server_pid, :kill) end)
