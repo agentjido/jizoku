@@ -5,6 +5,30 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.2.0] - 2026-06-10
+
+### Added
+- Added editor-safe action catalog metadata for host-owned runtime action
+  registries.
+- Added the reusable `Squidie.Step.HTTP` runtime action with request validation,
+  host-enforced destination policy, credential references, redacted responses,
+  and bounded response-body persistence controls.
+- Added the reusable `Squidie.Step.Elixir` runtime action for host-approved
+  adapter keys, safe persisted adapter metadata, and execution-time registry
+  policy.
+- Added editor metadata preservation and diff output for visual workflow specs.
+
+### Changed
+- Runtime-authored specs now carry registry-owned action options into planned
+  steps and validate runtime action inputs at start and execution boundaries.
+- Refreshed dependency and CI tooling versions, including Ecto SQL, Spark,
+  Jido, Credo, Codecov, and TruffleHog.
+- Ratcheted static-analysis and behavior-coverage gates.
+
+### Fixed
+- Hardened action catalog metadata validation and HTTP action policy
+  enforcement for runtime-authored specs.
+
 ## [0.1.3] - 2026-06-04
 
 ### Fixed
