@@ -247,7 +247,10 @@ defmodule Squidie.ReadModel.Timeline do
   end
 
   defp value(map, key) when is_map(map) and is_atom(key) do
-    Map.get(map, key) || Map.get(map, Atom.to_string(key))
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Atom.to_string(key))
+    end
   end
 
   defp put_detail(details, key, value), do: Map.put(details, key, value)

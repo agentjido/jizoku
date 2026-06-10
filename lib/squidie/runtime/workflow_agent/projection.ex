@@ -631,6 +631,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       compact(%{
         step: data.step,
         kind: data.kind,
+        reason: Map.get(data, :reason),
         paused_at: manual_paused_at(data, entry),
         metadata: Map.get(data, :metadata, %{}),
         deadline: manual_deadline(data)
@@ -651,6 +652,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       compact(%{
         step: data.step,
         kind: data.kind,
+        reason: Map.get(data, :reason),
         paused_at: manual_paused_at(data, entry),
         metadata: Map.get(data, :metadata, %{}),
         deadline: manual_deadline(data)

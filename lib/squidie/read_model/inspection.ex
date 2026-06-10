@@ -194,7 +194,7 @@ defmodule Squidie.ReadModel.Inspection do
         |> WorkflowAgent.applied_runnable_keys()
         |> MapSet.to_list()
         |> Enum.sort(),
-      applied_at: Map.get(workflow_projection, :applied_at, %{}),
+      applied_at: workflow_projection.applied_at,
       pending_dispatches: normalized_pending_dispatches,
       pending_results: pending_result_snapshots,
       visible_attempts: visible_attempt_snapshots,

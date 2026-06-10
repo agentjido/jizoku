@@ -225,16 +225,21 @@ defmodule Squidie.ReadModel.Visibility do
   end
 
   defp redact_view(view, _scope) when is_map(view) do
-    if graph_map?(view) do
-      view
-      |> remove_sensitive_nested()
-      |> update_dual_list(:child_runs, &summarize_run/1)
-      |> update_dual_list(:child_links, &summarize_child_link/1)
-      |> update_dual_list(:dynamic_work, &summarize_dynamic_work/1)
-      |> update_dual_list(:dynamic_work_overlays, &summarize_dynamic_work_overlay/1)
-      |> update_dual_list(:anomalies, &summarize_anomaly/1)
-    else
-      remove_sensitive_nested(view)
+    cond do
+      timeline_event_map?(view) ->
+        summarize_timeline_event(view)
+
+      graph_map?(view) ->
+        view
+        |> remove_sensitive_nested()
+        |> update_dual_list(:child_runs, &summarize_run/1)
+        |> update_dual_list(:child_links, &summarize_child_link/1)
+        |> update_dual_list(:dynamic_work, &summarize_dynamic_work/1)
+        |> update_dual_list(:dynamic_work_overlays, &summarize_dynamic_work_overlay/1)
+        |> update_dual_list(:anomalies, &summarize_anomaly/1)
+
+      true ->
+        remove_sensitive_nested(view)
     end
   end
 
@@ -245,6 +250,11 @@ defmodule Squidie.ReadModel.Visibility do
   defp graph_map?(view) when is_map(view) do
     is_list(value(view, :nodes)) and is_list(value(view, :edges)) and
       (not is_nil(value(view, :run_id)) or not is_nil(value(view, :workflow)))
+  end
+
+  defp timeline_event_map?(view) when is_map(view) do
+    not is_nil(value(view, :type)) and not is_nil(value(view, :occurred_at)) and
+      not is_nil(value(view, :run_id)) and not is_nil(value(view, :summary))
   end
 
   defp update_dual_list(map, key, fun)
@@ -301,13 +311,7 @@ defmodule Squidie.ReadModel.Visibility do
   defp summarize_run(_run), do: nil
 
   defp summarize_timeline_event(%Event{} = event) do
-    %Event{
-      event
-      | details:
-          event.details
-          |> take_dual_keys(@timeline_detail_fields)
-          |> compact()
-    }
+    %Event{event | details: summarize_timeline_details(event.details)}
   end
 
   defp summarize_timeline_event(event) when is_map(event) do

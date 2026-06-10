@@ -141,6 +141,57 @@ defmodule Squidie.ReadModel.InspectionTest do
     refute inspect(timeline.events) =~ "captured"
   end
 
+  test "builds failed timeline events" do
+    append_run_entries([
+      run_started(),
+      runnables_planned(),
+      run_terminal(:failed, error: %{code: "gateway_error"})
+    ])
+
+    append_dispatch_entries([attempt_scheduled(), attempt_claimed(), attempt_failed()])
+
+    assert {:ok, %Snapshot{} = snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert {:ok, timeline} = Inspection.timeline(snapshot)
+
+    assert %{
+             type: :attempt_failed,
+             occurred_at: @completed_at,
+             step_id: "charge_card",
+             status: :failed,
+             summary: "charge_card attempt failed"
+           } = Enum.find(timeline.events, &(&1.type == :attempt_failed))
+
+    assert %{
+             type: :run_terminal,
+             occurred_at: @completed_at,
+             status: :failed,
+             summary: "run failed"
+           } = Enum.find(timeline.events, &(&1.type == :run_terminal))
+  end
+
+  test "builds manual timeline events without dropping false details" do
+    append_run_entries([
+      run_started(),
+      runnables_planned(),
+      manual_step_paused(reason: false)
+    ])
+
+    assert {:ok, %Snapshot{} = snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert {:ok, timeline} = Inspection.timeline(snapshot)
+
+    assert %{
+             type: :manual_step_paused,
+             occurred_at: @completed_at,
+             step_id: "wait_for_review",
+             status: :paused,
+             details: %{kind: "approval", reason: false}
+           } = Enum.find(timeline.events, &(&1.type == :manual_step_paused))
+  end
+
   test "shows scheduled attempts before they become visible" do
     append_run_entries([run_started(), runnables_planned()])
     append_dispatch_entries([attempt_scheduled()])
@@ -764,6 +815,7 @@ defmodule Squidie.ReadModel.InspectionTest do
       run_id: @run_id,
       step: :wait_for_review,
       kind: :approval,
+      reason: Keyword.get(overrides, :reason),
       metadata: %{output_key: "approval"},
       deadline: Keyword.get(overrides, :deadline),
       occurred_at: @completed_at
@@ -795,6 +847,18 @@ defmodule Squidie.ReadModel.InspectionTest do
       claim_token_hash: "token_hash_1",
       queue: @queue,
       result: %{"status" => "captured"},
+      occurred_at: @completed_at
+    })
+  end
+
+  defp attempt_failed do
+    entry!(:attempt_failed, %{
+      run_id: @run_id,
+      runnable_key: @runnable_key,
+      claim_id: "claim_1",
+      claim_token_hash: "token_hash_1",
+      queue: @queue,
+      error: %{code: "gateway_error", message: "gateway failed"},
       occurred_at: @completed_at
     })
   end

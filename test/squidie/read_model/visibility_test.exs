@@ -153,6 +153,84 @@ defmodule Squidie.ReadModel.VisibilityTest do
     refute inspect(redacted.events) =~ "super-secret-token"
   end
 
+  test "redacts malformed timeline event details without raising" do
+    timeline = %Timeline{
+      run_id: "run_123",
+      workflow: "BillingWorkflow",
+      queue: "default",
+      status: :running,
+      terminal?: false,
+      terminal_status: nil,
+      events: [
+        %Event{
+          type: :attempt_completed,
+          occurred_at: @now,
+          run_id: "run_123",
+          step_id: "charge_card",
+          summary: "charge_card attempt completed",
+          details: nil
+        },
+        %Event{
+          type: :attempt_claimed,
+          occurred_at: @now,
+          run_id: "run_123",
+          step_id: "charge_card",
+          summary: "charge_card attempt claimed",
+          details: "malformed"
+        }
+      ]
+    }
+
+    assert {:ok, redacted} = Visibility.redact(timeline, %{role: :external}, RolePolicy)
+
+    assert Enum.map(redacted.events, & &1.details) == [%{}, %{}]
+  end
+
+  test "redacts individual timeline events" do
+    event = %Event{
+      type: :manual_step_paused,
+      occurred_at: @now,
+      run_id: "run_123",
+      step_id: "wait_for_review",
+      status: :paused,
+      summary: "wait_for_review paused for manual intervention",
+      details: %{kind: "approval", reason: false, access_token: "secret"}
+    }
+
+    assert {:ok, redacted} = Visibility.redact(event, %{role: :external}, RolePolicy)
+
+    assert %Event{details: %{kind: "approval", reason: false}} = redacted
+    refute inspect(redacted) =~ "secret"
+  end
+
+  test "redacts JSON-ready timeline event maps" do
+    event = %{
+      "type" => "attempt_completed",
+      "occurred_at" => DateTime.to_iso8601(@now),
+      "run_id" => "run_123",
+      "step_id" => "charge_card",
+      "status" => "completed",
+      "summary" => "charge_card attempt completed",
+      "details" => %{
+        "attempt_number" => 1,
+        "payment_id" => "pay_secret_123"
+      },
+      "raw_payload" => %{"token" => "secret"}
+    }
+
+    assert {:ok, redacted} = Visibility.redact(event, %{role: :external}, RolePolicy)
+
+    assert redacted == %{
+             type: "attempt_completed",
+             occurred_at: DateTime.to_iso8601(@now),
+             run_id: "run_123",
+             step_id: "charge_card",
+             status: "completed",
+             summary: "charge_card attempt completed",
+             details: %{attempt_number: 1}
+           }
+  end
+
   test "accepts policy modules that return ok tuples" do
     assert {:ok, redacted} = Visibility.redact(snapshot(), %{role: :external}, OkScopePolicy)
 

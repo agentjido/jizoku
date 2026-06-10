@@ -352,6 +352,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     put_attempt(projection, %ActionAttempt{
       attempt
       | status: :failed,
+        completed_at: entry.occurred_at,
         error: entry.data.error
     })
   end
