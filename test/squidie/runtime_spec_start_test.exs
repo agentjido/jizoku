@@ -15,11 +15,28 @@ defmodule Squidie.RuntimeSpecStartTest do
     def run(input, _context), do: {:ok, %{sent_invoice_id: input.invoice.id}}
   end
 
+  defmodule ElixirAdapters do
+    @spec load_invoice(map(), Squidie.Step.Context.t()) :: {:ok, map()}
+    def load_invoice(%{"invoice_id" => invoice_id}, _context) do
+      {:ok, %{invoice: %{id: invoice_id}}}
+    end
+
+    def load_invoice(%{invoice_id: invoice_id}, _context) do
+      {:ok, %{invoice: %{id: invoice_id}}}
+    end
+
+    def load_invoice(params, _context) do
+      {:ok, %{invoice: %{id: Map.fetch!(params, "invoice_id")}}}
+    end
+  end
+
   @storage {Jido.Storage.ETS, table: :squidie_runtime_spec_start_test}
   @run_id "00000000-0000-4000-8000-000000000254"
   @missing_action_run_id "00000000-0000-4000-8000-000000000255"
   @http_action_run_id "00000000-0000-4000-8000-000000000358"
   @invalid_http_action_run_id "00000000-0000-4000-8000-000000000359"
+  @elixir_action_run_id "00000000-0000-4000-8000-000000000360"
+  @invalid_elixir_action_run_id "00000000-0000-4000-8000-000000000361"
 
   test "starts and executes a validated runtime-authored spec" do
     registry = action_registry()
@@ -186,6 +203,62 @@ defmodule Squidie.RuntimeSpecStartTest do
              Squidie.inspect_run(@invalid_http_action_run_id, journal_storage: @storage)
   end
 
+  test "executes an approved Elixir action adapter from a runtime-authored spec" do
+    assert {:ok, snapshot} =
+             Squidie.start_spec(
+               runtime_elixir_spec(),
+               :manual,
+               %{
+                 adapter: "billing.load_invoice",
+                 params: %{"invoice_id" => "inv_123"}
+               },
+               action_registry: elixir_action_registry(),
+               journal_storage: @storage,
+               run_id: @elixir_action_run_id
+             )
+
+    assert [%{step: "load_invoice", status: :available}] = snapshot.visible_attempts
+    assert_persisted_elixir_action_opts_are_safe(@elixir_action_run_id)
+
+    assert {:ok, completed} =
+             Squidie.execute_next(
+               journal_storage: @storage,
+               owner_id: "elixir-worker",
+               action_registry: elixir_action_registry()
+             )
+
+    assert completed.status == :completed
+    assert completed.context.result.invoice.id == "inv_123"
+  end
+
+  test "rejects invalid Elixir action adapters before creating a runtime-authored run" do
+    assert {:error, {:invalid_workflow_spec, errors}} =
+             Squidie.start_spec(
+               runtime_elixir_spec(),
+               :manual,
+               %{
+                 adapter: "billing.unknown",
+                 params: %{"invoice_id" => "inv_123"}
+               },
+               action_registry: elixir_action_registry(),
+               journal_storage: @storage,
+               run_id: @invalid_elixir_action_run_id
+             )
+
+    assert %{
+             path: [:steps, 0, :input],
+             code: :invalid_action_input,
+             message: "step :load_invoice action input is invalid",
+             details: %{
+               step: :load_invoice,
+               validation_errors: %{adapter: "adapter is not approved"}
+             }
+           } in errors
+
+    assert {:error, :not_found} =
+             Squidie.inspect_run(@invalid_elixir_action_run_id, journal_storage: @storage)
+  end
+
   defp action_registry do
     %{
       "billing.load_invoice" => LoadInvoice,
@@ -198,6 +271,19 @@ defmodule Squidie.RuntimeSpecStartTest do
       "http.request" => [
         module: Squidie.Step.HTTP,
         action_opts: Keyword.put(opts, :allowed_hosts, allowed_hosts)
+      ]
+    }
+  end
+
+  defp elixir_action_registry do
+    %{
+      "elixir.run" => [
+        module: Squidie.Step.Elixir,
+        action_opts: [
+          adapters: %{
+            "billing.load_invoice" => {ElixirAdapters, :load_invoice}
+          }
+        ]
       ]
     }
   end
@@ -254,5 +340,58 @@ defmodule Squidie.RuntimeSpecStartTest do
       initial_step: :fetch_invoice,
       entry_step: :fetch_invoice
     }
+  end
+
+  defp runtime_elixir_spec do
+    %{
+      workflow: __MODULE__.RuntimeElixirWorkflow,
+      definition_version: "runtime-elixir-v1",
+      triggers: [
+        %{
+          name: :manual,
+          type: :manual,
+          config: %{},
+          payload: [
+            %{name: :adapter, type: :string, opts: []},
+            %{name: :params, type: :map, opts: []}
+          ]
+        }
+      ],
+      payload: [
+        %{name: :adapter, type: :string, opts: []},
+        %{name: :params, type: :map, opts: []}
+      ],
+      steps: [
+        %{name: :load_invoice, action: "elixir.run", opts: []}
+      ],
+      transitions: [
+        %{from: :load_invoice, on: :ok, to: :complete}
+      ],
+      retries: [],
+      entry_steps: [:load_invoice],
+      initial_step: :load_invoice,
+      entry_step: :load_invoice
+    }
+  end
+
+  defp assert_persisted_elixir_action_opts_are_safe(run_id) do
+    assert {:ok, %{entries: entries}} =
+             Squidie.Runtime.Journal.load_thread(@storage, {:run, run_id})
+
+    assert %{definition_spec: %{steps: [step]}} =
+             Enum.find_value(entries, fn
+               %{type: :run_started, data: data} -> data
+               _entry -> nil
+             end)
+
+    assert [
+             action_opts: [
+               adapters: %{
+                 "billing.load_invoice" => %{}
+               }
+             ]
+           ] = step.opts
+
+    refute inspect(step.opts) =~ inspect(ElixirAdapters)
   end
 end

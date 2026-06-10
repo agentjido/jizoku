@@ -119,17 +119,20 @@ defmodule Squidie.Runtime.Journal.Starter do
          {:ok, planner} <- RunicPlanner.new(spec),
          {:ok, _planned, runnables} <- RunicPlanner.plan(planner, resolved_payload),
          :ok <- validate_planned_action_inputs(definition, runnables),
+         persisted_spec <- persisted_runtime_spec(spec),
+         persisted_definition <- definition_from_spec(persisted_spec),
          {:ok, run_id} <- run_id(opts),
          :ok <- validate_initial_context(opts),
-         {:ok, journal_runnables} <- journal_runnables(definition, run_id, queue, runnables, now),
+         {:ok, journal_runnables} <-
+           journal_runnables(persisted_definition, run_id, queue, runnables, now),
          {:ok, start_state} <-
            ensure_run_started(
              storage,
              %{
-               workflow: spec.workflow,
-               definition: definition,
+               workflow: persisted_spec.workflow,
+               definition: persisted_definition,
                definition_source: :runtime_spec,
-               definition_spec: spec,
+               definition_spec: persisted_spec,
                trigger: trigger,
                input: resolved_payload,
                run_id: run_id
@@ -164,6 +167,35 @@ defmodule Squidie.Runtime.Journal.Starter do
       end
     end)
   end
+
+  defp persisted_runtime_spec(%Spec{} = spec) do
+    %Spec{spec | steps: persisted_steps(spec.steps)}
+  end
+
+  defp persisted_steps(steps) when is_list(steps), do: Enum.map(steps, &persisted_step/1)
+
+  defp persisted_step(step) when is_map(step) do
+    module = Map.get(step, :module)
+
+    if is_atom(module) and function_exported?(module, :persisted_action_opts, 1) do
+      Map.update(step, :opts, [], &persisted_step_opts(module, &1))
+    else
+      step
+    end
+  end
+
+  defp persisted_step(step), do: step
+
+  defp persisted_step_opts(module, opts) when is_list(opts) do
+    action_opts =
+      opts
+      |> Keyword.get(:action_opts, [])
+      |> module.persisted_action_opts()
+
+    Keyword.put(opts, :action_opts, action_opts)
+  end
+
+  defp persisted_step_opts(_module, opts), do: opts
 
   defp validate_planned_action_input(definition, %{step: step, input: input}, index)
        when is_atom(step) and is_map(input) do

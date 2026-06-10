@@ -450,6 +450,11 @@ defmodule SquidieTest do
     end
   end
 
+  defmodule DynamicElixirAdapters do
+    @spec deliver(map(), Squidie.Step.Context.t()) :: {:ok, map()}
+    def deliver(params, _context), do: {:ok, %{delivered: params}}
+  end
+
   defmodule JournalConditionalWorkflow do
     use Squidie.Workflow
 
@@ -4383,6 +4388,97 @@ defmodule SquidieTest do
                  journal_storage: @read_model_storage,
                  queue: @read_model_queue
                )
+    end
+
+    test "schedule_dynamic_work/3 strips unsafe Elixir adapter metadata before persistence" do
+      assert {:ok, %Snapshot{} = started} =
+               Squidie.start(
+                 BillingWorkflow,
+                 %{payment_id: "pay_123"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert [%{runnable_key: charge_key}] = started.visible_attempts
+
+      assert {:ok, %Snapshot{terminal?: false}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_charge",
+                 claim_id: "claim_charge",
+                 claim_token: "token_charge",
+                 now: @read_model_visible_at
+               )
+
+      registry = %{
+        "elixir.run" => [
+          module: Squidie.Step.Elixir,
+          action_opts: [
+            adapters: %{
+              "digest.deliver" => [
+                module: DynamicElixirAdapters,
+                function: :deliver,
+                display_name: {DynamicElixirAdapters, :deliver},
+                description: "Deliver digest",
+                category: DynamicElixirAdapters,
+                enabled?: true
+              ]
+            }
+          ]
+        ]
+      }
+
+      assert {:ok, %Snapshot{} = scheduled} =
+               Squidie.schedule_dynamic_work(
+                 started.run_id,
+                 %{
+                   dynamic_key: "subscription_digest_elixir",
+                   origin: %{
+                     runnable_key: charge_key,
+                     step: "charge_card",
+                     attempt: 1
+                   },
+                   reason: :runtime_fanout,
+                   nodes: [
+                     %{
+                       id: "deliver_digest:elixir",
+                       action: "elixir.run",
+                       input: %{adapter: "digest.deliver", params: %{subscription_id: "sub_123"}}
+                     }
+                   ]
+                 },
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at,
+                 action_registry: registry
+               )
+
+      assert [%{dynamic_key: "subscription_digest_elixir"}] = scheduled.dynamic_work
+
+      assert {:ok, %{entries: entries}} =
+               Journal.load_thread(@read_model_storage, {:run, started.run_id})
+
+      assert %{runnables: [runnable]} =
+               entries
+               |> Enum.filter(&(&1.type == :runnables_planned))
+               |> List.last()
+               |> Map.fetch!(:data)
+
+      assert %{
+               action_opts: [
+                 adapters: %{
+                   "digest.deliver" => %{description: "Deliver digest", enabled?: true}
+                 }
+               ]
+             } = runnable.dynamic_work
+
+      refute inspect(runnable.dynamic_work.action_opts) =~ inspect(DynamicElixirAdapters)
+      refute inspect(runnable.dynamic_work.action_opts) =~ "deliver}"
     end
 
     test "schedule_dynamic_work/3 retries dynamic nodes with persisted retry metadata" do

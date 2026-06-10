@@ -110,6 +110,54 @@ step errors with redacted details; retryable tool errors return `{:retry, error}
 so normal workflow retry policy remains the only retry scheduler. Redirects are
 disabled at the shared HTTP adapter boundary.
 
+## Elixir Runtime Action
+
+`Squidie.Step.Elixir` invokes host-approved Elixir adapters from
+runtime-authored specs. Hosts expose the step through the action registry and
+provide executable adapter definitions in registry-owned `action_opts`:
+
+```elixir
+registry = %{
+  "elixir.run" => [
+    module: Squidie.Step.Elixir,
+    category: "Elixir",
+    input_contract: %{
+      adapter: %{type: :string, required?: true, enum: ["billing.load_invoice"]},
+      params: %{type: :map, required?: true}
+    },
+    action_opts: [
+      adapters: %{
+        "billing.load_invoice" => {Billing.Actions, :load_invoice},
+        "billing.reprice" => Billing.Actions.Reprice
+      }
+    ]
+  ]
+}
+```
+
+Runtime input names only an approved `adapter` key and a `params` map:
+
+```elixir
+%{
+  adapter: "billing.load_invoice",
+  params: %{invoice_id: "inv_123"}
+}
+```
+
+The reusable action never loads modules, creates atoms, or selects functions
+from runtime-authored text. Start-time validation uses the registry action
+options, but persisted runtime specs store only safe adapter metadata. Workers
+that execute Elixir runtime actions should pass the same host-owned
+`action_registry:` to `Squidie.execute_next/1` so current adapter policy is
+resolved at execution.
+
+Hosts should override `input_contract` when they want editor catalogs to show
+the approved adapter choices. Adapter definitions may be a module with `run/2`
+or `run/1`, a `{module, function}` tuple, or a keyword/map entry with
+`:module`, `:function`, display metadata, and optional boolean `:enabled?`.
+Adapter functions return `{:ok, map}`, `{:error, reason}`, or
+`{:retry, reason}`.
+
 ## Retry Boundary
 
 The HTTP adapter disables Req's built-in retry loop.

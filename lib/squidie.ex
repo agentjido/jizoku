@@ -59,7 +59,8 @@ defmodule Squidie do
     :owner_id,
     :lease_for,
     :heartbeat_interval_ms,
-    :now
+    :now,
+    :action_registry
   ]
   @journal_dynamic_work_options [
     :runtime,
@@ -574,7 +575,16 @@ defmodule Squidie do
   end
 
   defp public_execute_option_keys do
-    [:runtime, :journal_storage, :queue, :owner_id, :lease_for, :heartbeat_interval_ms, :now]
+    [
+      :runtime,
+      :journal_storage,
+      :queue,
+      :owner_id,
+      :lease_for,
+      :heartbeat_interval_ms,
+      :now,
+      :action_registry
+    ]
   end
 
   defp public_child_start_options(opts) do
@@ -1229,7 +1239,7 @@ defmodule Squidie do
            dynamic_key: dynamic_work.dynamic_key,
            action: Map.get(node, :action),
            module: module,
-           action_opts: action_opts,
+           action_opts: persisted_action_opts(module, action_opts),
            retry: Map.get(node, :retry),
            origin: dynamic_work.origin
          }
@@ -1250,6 +1260,17 @@ defmodule Squidie do
       :ok
     end
   end
+
+  defp persisted_action_opts(module, action_opts)
+       when is_atom(module) and is_list(action_opts) do
+    if function_exported?(module, :persisted_action_opts, 1) do
+      module.persisted_action_opts(action_opts)
+    else
+      action_opts
+    end
+  end
+
+  defp persisted_action_opts(_module, _action_opts), do: []
 
   defp dynamic_work_recovery(action) do
     %{

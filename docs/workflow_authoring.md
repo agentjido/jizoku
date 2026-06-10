@@ -301,6 +301,57 @@ strings; raw bodies and response-body persistence require explicit host
 context. Retryable HTTP or transport failures return structured retry errors so
 workflow retry policy controls the next attempt.
 
+Hosts that want runtime-authored workflows to call custom Elixir logic can
+expose `Squidie.Step.Elixir` and keep executable ownership in registry
+`action_opts`:
+
+```elixir
+registry = %{
+  "elixir.run" => [
+    module: Squidie.Step.Elixir,
+    category: "Elixir",
+    input_contract: %{
+      adapter: %{type: :string, required?: true, enum: ["billing.load_invoice"]},
+      params: %{type: :map, required?: true}
+    },
+    action_opts: [
+      adapters: %{
+        "billing.load_invoice" => {Billing.Actions, :load_invoice}
+      }
+    ]
+  ]
+}
+```
+
+Runtime-authored inputs provide an approved adapter key and a params map:
+
+```elixir
+%{
+  adapter: "billing.load_invoice",
+  params: %{invoice_id: "inv_123"}
+}
+```
+
+Pass the registry at start and execution boundaries:
+
+```elixir
+{:ok, run} =
+  Squidie.start_spec(spec, :manual, payload,
+    action_registry: registry
+  )
+
+{:ok, snapshot} =
+  Squidie.execute_next(
+    owner_id: "worker",
+    action_registry: registry
+  )
+```
+
+Do not let editor data provide module names, function names, or code snippets.
+`Squidie.Step.Elixir` rejects those fields, validates adapter keys before run
+start, persists only safe adapter metadata in runtime specs, and converts
+adapter failures into structured action errors.
+
 The spec is an Elixir data representation with atom keys and module atoms:
 
 ```elixir

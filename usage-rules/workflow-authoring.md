@@ -19,6 +19,11 @@
   a stable registry key, and keep credential values, URL query strings, URL
   userinfo, secret-bearing headers, and secret-bearing payload keys out of
   request maps.
+- Use `Squidie.Step.Elixir` for reusable host-approved Elixir actions.
+  Configure registry-owned `action_opts: [adapters: ...]`, expose the step
+  through a stable registry key, pass `:action_registry` when executing runs
+  that use it, and keep module names, function names, atom creation, and code
+  snippets out of runtime-authored input.
 - Use `Squidie.Workflow.validate_spec/2` with `:action_registry` before
   trusting runtime-authored spec data that references executable actions.
 - Use `Squidie.start_spec/3` or `Squidie.start_spec/4` to activate
