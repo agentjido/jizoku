@@ -269,6 +269,33 @@ activation still happens at the Squidie start boundary so action allowlists,
 payload validation, durable definition persistence, and journal inspection stay
 centralized.
 
+Hosts that want a reusable HTTP node can expose `Squidie.Step.HTTP` through the
+same registry:
+
+```elixir
+registry = %{
+  "http.request" => [
+    module: Squidie.Step.HTTP,
+    category: "HTTP",
+    credential_requirements: [%{name: "billing_api", required?: true}]
+  ]
+}
+
+:ok =
+  Squidie.Step.HTTP.validate_request(%{
+    method: "GET",
+    url_template: "https://api.example.test/invoices/{{ invoice_id }}",
+    bindings: %{"invoice_id" => "inv_123"},
+    timeout: 1_000
+  }, allowed_hosts: ["api.example.test"])
+```
+
+HTTP action inputs are normal step inputs. Keep credential values outside the
+request map; use host-owned `credential_refs` and action-catalog metadata to
+describe which references the host can supply. Successful requests add
+`http_response` to run context. Retryable HTTP or transport failures return
+structured retry errors so workflow retry policy controls the next attempt.
+
 The spec is an Elixir data representation with atom keys and module atoms:
 
 ```elixir

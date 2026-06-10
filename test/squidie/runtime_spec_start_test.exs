@@ -18,6 +18,7 @@ defmodule Squidie.RuntimeSpecStartTest do
   @storage {Jido.Storage.ETS, table: :squidie_runtime_spec_start_test}
   @run_id "00000000-0000-4000-8000-000000000254"
   @missing_action_run_id "00000000-0000-4000-8000-000000000255"
+  @http_action_run_id "00000000-0000-4000-8000-000000000358"
 
   test "starts and executes a validated runtime-authored spec" do
     registry = action_registry()
@@ -121,6 +122,39 @@ defmodule Squidie.RuntimeSpecStartTest do
              Squidie.replay(run_id, journal_storage: @storage)
   end
 
+  test "executes an approved HTTP action key from a runtime-authored spec" do
+    bypass = Bypass.open()
+
+    Bypass.expect_once(bypass, "GET", "/invoices/inv_123", fn conn ->
+      Plug.Conn.resp(conn, 200, "paid")
+    end)
+
+    assert {:ok, snapshot} =
+             Squidie.start_spec(
+               runtime_http_spec(),
+               :manual,
+               %{
+                 request: %{
+                   method: "GET",
+                   url_template: "http://127.0.0.1:#{bypass.port}/invoices/{{ invoice_id }}",
+                   bindings: %{invoice_id: "inv_123"}
+                 }
+               },
+               action_registry: %{"http.request" => Squidie.Step.HTTP},
+               journal_storage: @storage,
+               run_id: @http_action_run_id
+             )
+
+    assert [%{step: "fetch_invoice", status: :available}] = snapshot.visible_attempts
+
+    assert {:ok, completed} =
+             Squidie.execute_next(journal_storage: @storage, owner_id: "http-worker")
+
+    assert completed.status == :completed
+    assert completed.context.http_response.status == 200
+    assert completed.context.http_response.body == "paid"
+  end
+
   defp action_registry do
     %{
       "billing.load_invoice" => LoadInvoice,
@@ -153,6 +187,32 @@ defmodule Squidie.RuntimeSpecStartTest do
       entry_steps: [:load_invoice],
       initial_step: :load_invoice,
       entry_step: :load_invoice
+    }
+  end
+
+  defp runtime_http_spec do
+    %{
+      workflow: __MODULE__.RuntimeHTTPWorkflow,
+      definition_version: "runtime-http-v1",
+      triggers: [
+        %{
+          name: :manual,
+          type: :manual,
+          config: %{},
+          payload: [%{name: :request, type: :map, opts: []}]
+        }
+      ],
+      payload: [%{name: :request, type: :map, opts: []}],
+      steps: [
+        %{name: :fetch_invoice, action: "http.request", opts: []}
+      ],
+      transitions: [
+        %{from: :fetch_invoice, on: :ok, to: :complete}
+      ],
+      retries: [],
+      entry_steps: [:fetch_invoice],
+      initial_step: :fetch_invoice,
+      entry_step: :fetch_invoice
     }
   end
 end

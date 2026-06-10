@@ -66,6 +66,39 @@ Successful responses are normalized to:
 HTTP responses with status `>= 400`, transport failures, and timeouts are
 normalized into `Squidie.Tools.Error`.
 
+## HTTP Runtime Action
+
+`Squidie.Step.HTTP` wraps the HTTP adapter as a native workflow step for
+runtime-authored specs. Hosts expose it through the action registry under a
+stable key:
+
+```elixir
+registry = %{
+  "http.request" => [
+    module: Squidie.Step.HTTP,
+    category: "HTTP",
+    credential_requirements: [%{name: "billing_api", required?: true}]
+  ]
+}
+```
+
+The step expects a `request` map with `method` plus either `url` or
+`url_template`. Supported request fields are `headers`, `query_params` or
+`params`, `body`, `json`, and `timeout`. `url_template` placeholders use
+`{{ name }}` syntax and are expanded from the `bindings` map.
+
+Use `Squidie.Step.HTTP.validate_request/1` to validate request configuration
+before starting a runtime-authored run. Use `validate_request/2` with
+`allowed_hosts: [...]` when the host needs an allowed-destination policy check.
+Credential values do not belong in the request map; pass host-owned references
+through `credential_refs` and let the host registry or wrapping step decide how
+references become transport headers.
+
+Successful responses are returned as `%{http_response: response}`. HTTP and
+transport errors are converted to structured step errors; retryable tool errors
+return `{:retry, error}` so normal workflow retry policy remains the only retry
+scheduler.
+
 ## Retry Boundary
 
 The HTTP adapter disables Req's built-in retry loop.

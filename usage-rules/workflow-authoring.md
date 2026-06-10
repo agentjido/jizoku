@@ -13,6 +13,11 @@
 - Use `Squidie.Workflow.action_catalog/1` to expose editor palette metadata
   from a host-owned registry without exposing executable modules or credential
   values.
+- Use `Squidie.Step.HTTP` for reusable host-approved HTTP actions. Validate
+  request config with `Squidie.Step.HTTP.validate_request/1`, use
+  `validate_request/2` with `allowed_hosts` for destination policy checks,
+  expose the step through a stable registry key, and keep credential values out
+  of request maps.
 - Use `Squidie.Workflow.validate_spec/2` with `:action_registry` before
   trusting runtime-authored spec data that references executable actions.
 - Use `Squidie.start_spec/3` or `Squidie.start_spec/4` to activate
