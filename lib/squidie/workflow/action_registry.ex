@@ -147,6 +147,32 @@ defmodule Squidie.Workflow.ActionRegistry do
     end
   end
 
+  @doc false
+  @spec resolve_dry_run(action_key() | term(), registry()) ::
+          {:ok, {module(), atom()}} | {:error, action_validation_error() | :unsupported_preview}
+  def resolve_dry_run(action, registry) do
+    with :ok <- validate_action(action, registry),
+         {:ok, entry} <- fetch_registry_entry(registry, action) do
+      {module, _enabled?} = registry_entry_module(entry)
+
+      case entry_value(entry, :dry_run, false) do
+        true ->
+          dry_run_callback(module, :dry_run)
+
+        {callback_module, callback_function}
+        when is_atom(callback_module) and is_atom(callback_function) ->
+          dry_run_callback(callback_module, callback_function)
+
+        [callback_module, callback_function]
+        when is_atom(callback_module) and is_atom(callback_function) ->
+          dry_run_callback(callback_module, callback_function)
+
+        _unsupported ->
+          {:error, :unsupported_preview}
+      end
+    end
+  end
+
   defp resolve_spec_map(spec, registry) do
     case spec_steps(spec) do
       {steps_key, steps} when is_list(steps) ->
@@ -444,6 +470,14 @@ defmodule Squidie.Workflow.ActionRegistry do
   end
 
   defp registry_entry_module(_entry), do: {nil, true}
+
+  defp dry_run_callback(module, function) do
+    if is_atom(module) and function_exported?(module, function, 2) do
+      {:ok, {module, function}}
+    else
+      {:error, :unsupported_preview}
+    end
+  end
 
   defp map_value(map, key, default \\ nil)
 

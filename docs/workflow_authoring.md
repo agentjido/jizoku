@@ -203,6 +203,30 @@ sequenceDiagram
   Preview-->>Editor: draft diff {added, removed, changed}
 ```
 
+Use `Squidie.preview_spec/3` when an editor needs execution-style node output
+for a sample payload before publishing or starting a run. Preview execution is
+read-only: it resolves action keys through the host registry, calls only entries
+that opt into `dry_run` behavior, returns per-node outputs or unsupported
+markers, and does not append journal state.
+
+```elixir
+registry = %{
+  "billing.load_invoice" => [module: Billing.Steps.LoadInvoice, dry_run: true],
+  "billing.send_receipt" => [module: Billing.Steps.SendReceipt]
+}
+
+{:ok, preview} =
+  Squidie.preview_spec(editor_map, %{invoice_id: "inv_123"},
+    action_registry: registry
+  )
+
+Enum.map(preview.nodes, &Map.take(&1, [:id, :status, :output, :error]))
+```
+
+Registry entries without `dry_run: true` or an explicit `dry_run: {Module,
+:function}` callback are reported with `status: :unsupported`; Squidie never
+falls back to the durable action `run/2` callback during preview.
+
 The editor map uses string keys and JSON-safe values. Editors own declarative
 workflow fields: `workflow`, `definition_version`, `triggers`, `payload`,
 `steps`, `transitions`, `retries`, `entry_steps`, `initial_step`, and
