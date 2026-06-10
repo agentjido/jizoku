@@ -24,6 +24,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Step
+  alias Squidie.Workflow.ActionRegistry
   alias Squidie.Workflow.Definition
 
   @dispatch_append_retries 25
@@ -42,6 +43,7 @@ defmodule Squidie.Runtime.Journal.Executor do
            | {:claim_id, term()}
            | {:claim_token, term()}
            | {:heartbeat_interval_ms, term()}
+           | {:action_registry, term()}
            | {:test_after_claim, term()}
            | {:test_before_completion, term()}
            | {:test_after_transaction_step, term()}
@@ -338,7 +340,7 @@ defmodule Squidie.Runtime.Journal.Executor do
        when is_list(opts) do
     case executable_step(storage, workflow_agent, attempt) do
       {:ok, workflow, definition, step_name, step} ->
-        context = step_context(workflow_agent, attempt, workflow, step_name, step, claim_id)
+        context = step_context(workflow_agent, attempt, workflow, step_name, step, claim_id, opts)
         finished_at = lifecycle_time(opts, claim_now)
         runtime = %{storage: storage, queue: queue, now: finished_at}
 
@@ -2518,7 +2520,12 @@ defmodule Squidie.Runtime.Journal.Executor do
          {:ok, runnable} <- dynamic_planned_runnable(workflow_agent, attempt),
          {:ok, module} <- dynamic_runnable_module(runnable) do
       {:ok, workflow, definition, step_name,
-       %{module: module, opts: dynamic_runnable_opts(runnable), dynamic?: true}}
+       %{
+         module: module,
+         opts: dynamic_runnable_opts(runnable),
+         dynamic?: true,
+         metadata: %{action: dynamic_runnable_action(runnable)}
+       }}
     else
       {:error, _reason} = error -> error
     end
@@ -2561,6 +2568,12 @@ defmodule Squidie.Runtime.Journal.Executor do
     end
   end
 
+  defp dynamic_runnable_action(runnable) when is_map(runnable) do
+    runnable
+    |> map_value(:dynamic_work, %{})
+    |> map_value(:action)
+  end
+
   defp map_value(map, key, default \\ nil)
 
   defp map_value(map, key, default) when is_map(map) and is_atom(key) do
@@ -2581,13 +2594,14 @@ defmodule Squidie.Runtime.Journal.Executor do
          workflow,
          step_name,
          step,
-         claim_id
+         claim_id,
+         opts
        ) do
     %{
       run_id: attempt.run_id,
       workflow: workflow,
       step: step_name,
-      step_opts: Map.get(step, :opts, []),
+      step_opts: execution_step_opts(step, opts),
       attempt: attempt.attempt_number,
       runnable_key: attempt.runnable_key,
       idempotency_key: attempt.idempotency_key,
@@ -2598,6 +2612,42 @@ defmodule Squidie.Runtime.Journal.Executor do
         |> Map.merge(attempt.input)
         |> Map.merge(run_context(workflow_agent))
     }
+  end
+
+  defp execution_step_opts(step, opts) when is_map(step) and is_list(opts) do
+    step_opts = Map.get(step, :opts, [])
+
+    case execution_action_opts(step, opts) do
+      {:ok, action_opts} when is_list(step_opts) ->
+        Keyword.put(step_opts, :action_opts, action_opts)
+
+      _missing_or_invalid ->
+        step_opts
+    end
+  end
+
+  defp execution_action_opts(step, opts) when is_map(step) and is_list(opts) do
+    with {:ok, registry} <- Keyword.fetch(opts, :action_registry),
+         {:ok, action} <- step_action_key(step),
+         {:ok, action_opts} <- ActionRegistry.resolve_action_opts(action, registry) do
+      {:ok, action_opts}
+    else
+      _missing_or_invalid -> :error
+    end
+  end
+
+  defp step_action_key(step) when is_map(step) do
+    action =
+      case Map.get(step, :metadata) do
+        %{action: action} -> action
+        %{"action" => action} -> action
+        _missing -> nil
+      end
+
+    case action do
+      nil -> :error
+      action -> {:ok, action}
+    end
   end
 
   defp recovered_execution_opts(%{module: :wait, opts: opts}) when is_list(opts) do
@@ -3013,6 +3063,7 @@ defmodule Squidie.Runtime.Journal.Executor do
       :claim_token,
       :lease_for,
       :heartbeat_interval_ms,
+      :action_registry,
       :now,
       :finished_at,
       :test_after_claim,

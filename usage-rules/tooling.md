@@ -50,6 +50,13 @@
   credentials as host-owned references instead of request values. Keep URL
   query strings, userinfo, secret-bearing headers, and secret-bearing payload
   keys out of HTTP action requests.
+- Use `Squidie.Step.Elixir` for runtime-authored specs that need custom
+  host-owned Elixir logic. Expose it only through an action-registry key, keep
+  executable adapters in registry-owned `action_opts: [adapters: ...]`, pass
+  `:action_registry` at both start and execution boundaries, and override
+  `input_contract` when editor catalogs need adapter choices. Runtime inputs
+  may name an approved adapter key and params only; do not create atoms, load
+  modules, select functions, or evaluate code from editor input.
 - Use `Squidie.Workflow.validate_spec/2` with `:action_registry` before
   trusting runtime-authored specs that reference executable actions.
 - Use `Squidie.start_spec/3` or `Squidie.start_spec/4` for runtime-authored
