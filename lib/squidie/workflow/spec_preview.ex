@@ -330,7 +330,17 @@ defmodule Squidie.Workflow.SpecPreview do
       {:error, error} -> {:error, error}
     end
   rescue
-    exception ->
+    exception in [
+      ArgumentError,
+      BadMapError,
+      CaseClauseError,
+      ErlangError,
+      FunctionClauseError,
+      KeyError,
+      MatchError,
+      RuntimeError,
+      UndefinedFunctionError
+    ] ->
       {:error,
        preview_error(:dry_run_failed, "step #{inspect(runnable.step)} dry-run preview failed", %{
          exception: inspect(exception.__struct__)
@@ -385,14 +395,5 @@ defmodule Squidie.Workflow.SpecPreview do
     Map.reject(map, fn {_key, value} -> is_nil(value) end)
   end
 
-  defp value(map, key, default \\ nil)
-
-  defp value(map, key, default) when is_map(map) and is_atom(key) do
-    case Map.fetch(map, key) do
-      {:ok, value} -> value
-      :error -> Map.get(map, Atom.to_string(key), default)
-    end
-  end
-
-  defp value(_map, _key, default), do: default
+  defp value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 end

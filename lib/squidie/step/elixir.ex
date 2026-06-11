@@ -82,11 +82,21 @@ defmodule Squidie.Step.Elixir do
       try do
         {:ok, do_invoke_adapter(adapter, params, context)}
       rescue
-        exception ->
+        exception in [
+          ArgumentError,
+          BadMapError,
+          CaseClauseError,
+          ErlangError,
+          FunctionClauseError,
+          KeyError,
+          MatchError,
+          RuntimeError,
+          UndefinedFunctionError
+        ] ->
           {:error, exception_error(adapter_key, exception)}
       catch
-        kind, _reason ->
-          {:error, caught_error(adapter_key, kind)}
+        kind, reason ->
+          {:error, caught_error(adapter_key, kind, reason)}
       end
 
     case result do
@@ -270,10 +280,10 @@ defmodule Squidie.Step.Elixir do
        when is_atom(module) and is_atom(function) do
     cond do
       Code.ensure_loaded?(module) and function_exported?(module, function, 2) ->
-        {:ok, %{module: module, function: function, arity: 2}}
+        {:ok, adapter_descriptor(module, function, 2)}
 
       Code.ensure_loaded?(module) and function_exported?(module, function, 1) ->
-        {:ok, %{module: module, function: function, arity: 1}}
+        {:ok, adapter_descriptor(module, function, 1)}
 
       true ->
         {:error, validation_error(%{adapter: "adapter definition is invalid"})}
@@ -309,6 +319,10 @@ defmodule Squidie.Step.Elixir do
 
   defp normalize_enabled_adapter(_entry, _adapter_key) do
     {:error, validation_error(%{adapter: "adapter definition is invalid"})}
+  end
+
+  defp adapter_descriptor(module, function, arity) do
+    Map.new(module: module, function: function, arity: arity)
   end
 
   defp adapter_enabled([module, function]) when is_atom(module) and is_atom(function) do
@@ -358,7 +372,11 @@ defmodule Squidie.Step.Elixir do
     }
   end
 
-  defp caught_error(adapter_key, kind) do
+  defp caught_error(adapter_key, :error, exception) when is_exception(exception) do
+    exception_error(adapter_key, exception)
+  end
+
+  defp caught_error(adapter_key, kind, _reason) do
     %{
       message: "Elixir action execution failed",
       kind: :elixir_action,
@@ -369,11 +387,7 @@ defmodule Squidie.Step.Elixir do
   end
 
   defp validation_error(errors) do
-    %{
-      message: "Elixir action validation failed",
-      validation_errors: errors,
-      retryable?: false
-    }
+    Squidie.Step.ErrorPayload.validation_failed("Elixir action validation failed", errors)
   end
 
   defp action_opts(%Context{step_opts: step_opts}) when is_list(step_opts) do
@@ -392,17 +406,5 @@ defmodule Squidie.Step.Elixir do
     end
   end
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 end

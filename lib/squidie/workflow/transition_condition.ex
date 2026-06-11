@@ -146,10 +146,7 @@ defmodule Squidie.Workflow.TransitionCondition do
   end
 
   defp condition_list_keys_unique?(condition) do
-    case Enum.reduce_while(condition, MapSet.new(), &track_condition_key/2) do
-      %MapSet{} -> true
-      _invalid -> false
-    end
+    match?(%MapSet{}, Enum.reduce_while(condition, MapSet.new(), &track_condition_key/2))
   end
 
   defp track_condition_key({key, _value}, seen) do
@@ -170,19 +167,7 @@ defmodule Squidie.Workflow.TransitionCondition do
 
   defp condition_path(condition), do: map_value(condition, :path)
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   defp condition_keys_valid?(condition) do
     path_key_count(condition) == 1 and Enum.all?(Map.keys(condition), &condition_key?/1)

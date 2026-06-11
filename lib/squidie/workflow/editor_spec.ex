@@ -255,7 +255,7 @@ defmodule Squidie.Workflow.EditorSpec do
 
   defp validate_editor_metadata_value(errors, values, path) when is_list(values) do
     values
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {value, index}, acc ->
       validate_editor_metadata_value(acc, value, [index | path])
     end)
@@ -299,7 +299,7 @@ defmodule Squidie.Workflow.EditorSpec do
   defp validate_steps(errors, map) do
     map
     |> list_field("steps")
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {step, index}, acc ->
       name = field(step, "name")
 
@@ -323,7 +323,7 @@ defmodule Squidie.Workflow.EditorSpec do
     {_seen, duplicate_errors} =
       map
       |> list_field("steps")
-      |> Enum.with_index()
+      |> Stream.with_index()
       |> Enum.reduce({MapSet.new(), []}, fn {step, index}, {seen, acc} ->
         name = field(step, "name")
 
@@ -360,7 +360,7 @@ defmodule Squidie.Workflow.EditorSpec do
 
         map
         |> list_field("steps")
-        |> Enum.with_index()
+        |> Stream.with_index()
         |> Enum.reduce(errors, fn {step, index}, acc ->
           validate_step_action(acc, step, index, registry)
         end)
@@ -451,7 +451,7 @@ defmodule Squidie.Workflow.EditorSpec do
 
     map
     |> list_field("transitions")
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {transition, index}, acc ->
       acc
       |> validate_transition_endpoint(transition, index, "from", step_names)
@@ -549,7 +549,7 @@ defmodule Squidie.Workflow.EditorSpec do
   defp validate_entry_steps(errors, map, step_names) do
     map
     |> list_field("entry_steps")
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {entry_step, index}, acc ->
       if entry_step in step_names do
         acc
@@ -619,7 +619,7 @@ defmodule Squidie.Workflow.EditorSpec do
       dependency_edges(map)
     else
       transitions
-      |> Enum.with_index()
+      |> Stream.with_index()
       |> Enum.map(fn {transition, index} -> transition_edge(transition, index) end)
     end
   end
@@ -695,7 +695,7 @@ defmodule Squidie.Workflow.EditorSpec do
       dependency_edge_id_sources(map)
     else
       transitions
-      |> Enum.with_index()
+      |> Stream.with_index()
       |> Enum.map(fn {transition, index} ->
         {transition_edge(transition, index)["id"], [:transitions, index]}
       end)
@@ -705,7 +705,7 @@ defmodule Squidie.Workflow.EditorSpec do
   defp dependency_edge_id_sources(map) do
     map
     |> list_field("steps")
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.flat_map(fn {step, step_index} ->
       dependency_edge_id_sources_for_step(step, step_index)
     end)
@@ -715,7 +715,7 @@ defmodule Squidie.Workflow.EditorSpec do
     case nested_field(step, ["opts", "after"]) do
       dependencies when is_list(dependencies) ->
         dependencies
-        |> Enum.with_index()
+        |> Stream.with_index()
         |> Enum.map(fn {dependency, dependency_index} ->
           {dependency_edge(dependency, step)["id"],
            [:steps, step_index, :opts, :after, dependency_index]}
@@ -922,6 +922,6 @@ defmodule Squidie.Workflow.EditorSpec do
   end
 
   defp error(path, code, message, details) do
-    %{path: path, code: code, message: message, details: details}
+    Map.new(path: path, code: code, message: message, details: details)
   end
 end

@@ -38,9 +38,9 @@ defmodule Squidie.Runtime.Journal.Cancellation do
 
   def cancel(run_id, opts) when is_binary(run_id) and is_list(opts) do
     with {:ok, run_id} <- run_id(run_id),
-         {:ok, storage} <- journal_storage(opts),
-         {:ok, queue} <- queue(opts),
-         {:ok, now} <- now(opts),
+         {:ok, storage} <- Options.storage_from_opts(opts),
+         {:ok, queue} <- Options.queue_from_opts(opts),
+         {:ok, now} <- Options.now_from_opts(opts),
          {:ok, _workflow_agent} <- cancel_or_repair(storage, run_id, now, @run_append_retries) do
       Inspection.snapshot(storage, run_id, queue: queue, now: now)
     end
@@ -60,8 +60,8 @@ defmodule Squidie.Runtime.Journal.Cancellation do
         opts
       )
       when is_binary(run_id) and is_list(opts) do
-    with {:ok, storage} <- journal_storage(opts),
-         {:ok, queue} <- queue(opts),
+    with {:ok, storage} <- Options.storage_from_opts(opts),
+         {:ok, queue} <- Options.queue_from_opts(opts),
          {:ok, _workflow_agent} <-
            cancel_or_repair(storage, signal_command(run_id, now, signal), @run_append_retries) do
       Inspection.snapshot(storage, run_id, queue: queue, now: now)
@@ -201,19 +201,7 @@ defmodule Squidie.Runtime.Journal.Cancellation do
 
   defp child_run_id(_child_run), do: nil
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   defp rebuild_workflow_agent(storage, run_id) do
     case WorkflowAgent.rebuild(storage, run_id) do
@@ -255,28 +243,6 @@ defmodule Squidie.Runtime.Journal.Cancellation do
   end
 
   defp run_id(run_id) do
-    case Ecto.UUID.cast(run_id) do
-      {:ok, uuid} -> {:ok, uuid}
-      :error -> {:error, :invalid_run_id}
-    end
-  end
-
-  defp journal_storage(opts) do
-    opts
-    |> Keyword.get(:journal_storage)
-    |> Options.storage()
-  end
-
-  defp queue(opts) do
-    opts
-    |> Keyword.get(:queue, "default")
-    |> Options.queue()
-  end
-
-  defp now(opts) do
-    case Keyword.get(opts, :now, DateTime.utc_now()) do
-      %DateTime{} = now -> {:ok, now}
-      _invalid -> {:error, {:invalid_option, {:now, :invalid}}}
-    end
+    Options.uuid_run_id(run_id)
   end
 end

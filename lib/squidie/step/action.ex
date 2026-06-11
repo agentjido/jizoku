@@ -37,7 +37,17 @@ defmodule Squidie.Step.Action do
   defp run_native_step(step, input, context) do
     {:ok, step.run(input, context)}
   rescue
-    exception ->
+    exception in [
+      ArgumentError,
+      BadMapError,
+      CaseClauseError,
+      ErlangError,
+      FunctionClauseError,
+      KeyError,
+      MatchError,
+      RuntimeError,
+      UndefinedFunctionError
+    ] ->
       {:error,
        %{
          message: Exception.message(exception),

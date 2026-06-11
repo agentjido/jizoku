@@ -61,6 +61,8 @@ Use these as stable contracts when implementing host integrations or tooling.
   backed by the minimal host app.
 - [Tool adapters](tool_adapters.md) - normalized result and error shape for
   external tool wrappers.
+- [Quality gates](quality_gates.md) - structural quality checks, baseline
+  rollout policy, and local commands.
 - [Supported baseline](compatibility.md) - supported Elixir, OTP, Jido, Ecto,
   Postgres, and adapter expectations.
 - [Production readiness](production_readiness.md) - current readiness bar and

@@ -29,6 +29,17 @@ defmodule Squidie.Runtime.Journal.Options do
   def storage(storage), do: Squidie.Runtime.Journal.Storage.normalize(storage)
 
   @doc """
+  Fetches and validates `:journal_storage` from a runtime option list.
+  """
+  @spec storage_from_opts(keyword()) ::
+          {:ok, Squidie.Runtime.Journal.Storage.t()} | {:error, {:invalid_option, term()}}
+  def storage_from_opts(opts) when is_list(opts) do
+    opts
+    |> Keyword.get(:journal_storage)
+    |> storage()
+  end
+
+  @doc """
   Normalizes and validates a dispatch queue name for use in journal thread ids.
 
   Atoms are converted to strings. Queue names must be non-empty and use the
@@ -42,6 +53,29 @@ defmodule Squidie.Runtime.Journal.Options do
 
   def queue(queue) when is_binary(queue), do: validate_thread_part(queue, :queue)
   def queue(_queue), do: invalid_option(:queue)
+
+  @doc """
+  Fetches and validates `:queue` from a runtime option list.
+  """
+  @spec queue_from_opts(keyword()) ::
+          {:ok, String.t()} | {:error, {:invalid_option, {:queue, :invalid}}}
+  def queue_from_opts(opts) when is_list(opts) do
+    opts
+    |> Keyword.get(:queue, "default")
+    |> queue()
+  end
+
+  @doc """
+  Fetches a runtime clock from options, defaulting to `DateTime.utc_now/0`.
+  """
+  @spec now_from_opts(keyword()) ::
+          {:ok, DateTime.t()} | {:error, {:invalid_option, {:now, :invalid}}}
+  def now_from_opts(opts) when is_list(opts) do
+    case Keyword.get(opts, :now, DateTime.utc_now()) do
+      %DateTime{} = now -> {:ok, now}
+      _invalid -> {:error, {:invalid_option, {:now, :invalid}}}
+    end
+  end
 
   @doc """
   Validates a caller-provided journal thread-id component.
@@ -73,6 +107,38 @@ defmodule Squidie.Runtime.Journal.Options do
   end
 
   def uuid(_value), do: invalid_option(:run_id)
+
+  @doc """
+  Validates a run id as a UUID for internal journal lookups.
+  """
+  @spec uuid_run_id(term()) :: {:ok, String.t()} | {:error, :invalid_run_id}
+  def uuid_run_id(value) do
+    case Ecto.UUID.cast(value) do
+      {:ok, uuid} -> {:ok, uuid}
+      :error -> {:error, :invalid_run_id}
+    end
+  end
+
+  @doc """
+  Returns true when a value can be safely persisted in journal metadata.
+  """
+  @spec storage_safe_value?(term()) :: boolean()
+  def storage_safe_value?(value) when is_binary(value) or is_number(value) or is_boolean(value),
+    do: true
+
+  def storage_safe_value?(nil), do: true
+
+  def storage_safe_value?(values) when is_list(values),
+    do: Enum.all?(values, &storage_safe_value?/1)
+
+  def storage_safe_value?(%{} = map) when not is_struct(map) do
+    Enum.all?(map, fn
+      {key, value} when is_binary(key) or is_atom(key) -> storage_safe_value?(value)
+      {_key, _value} -> false
+    end)
+  end
+
+  def storage_safe_value?(_value), do: false
 
   defp validate_thread_part("", field) do
     invalid_option(field)

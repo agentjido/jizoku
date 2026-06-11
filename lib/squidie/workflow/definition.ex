@@ -448,19 +448,7 @@ defmodule Squidie.Workflow.Definition do
 
   def deserialize_transition_decision(_definition, _transition), do: nil
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   @doc """
   Returns the explicit failure recovery route for a step when one was declared.
@@ -545,10 +533,8 @@ defmodule Squidie.Workflow.Definition do
       _steps ->
         phases = dependency_phases(definition)
 
-        current_phase =
-          remaining_steps
-          |> Enum.map(&Map.fetch!(phases, &1))
-          |> Enum.min()
+        current_step = Enum.min_by(remaining_steps, &Map.fetch!(phases, &1))
+        current_phase = Map.fetch!(phases, current_step)
 
         phase_steps =
           definition
@@ -927,22 +913,21 @@ defmodule Squidie.Workflow.Definition do
     compensatable? = Keyword.get(opts, :compensatable, not irreversible?)
 
     if irreversible? or not compensatable? do
-      %{
-        irreversible?: irreversible?,
-        compensatable?: false,
-        replay: :manual_review_required,
-        recovery: :manual_intervention
-      }
+      recovery_policy_attrs(irreversible?, false, :manual_review_required, :manual_intervention)
     else
-      default_policy = %{
-        irreversible?: false,
-        compensatable?: true,
-        replay: :allowed,
-        recovery: :automatic
-      }
+      default_policy = recovery_policy_attrs(false, true, :allowed, :automatic)
 
       maybe_put_compensation(default_policy, compensation_policy(Keyword.get(opts, :compensate)))
     end
+  end
+
+  defp recovery_policy_attrs(irreversible?, compensatable?, replay, recovery) do
+    %{
+      irreversible?: irreversible?,
+      compensatable?: compensatable?,
+      replay: replay,
+      recovery: recovery
+    }
   end
 
   defp compensation_policy(nil), do: nil
@@ -1189,14 +1174,7 @@ defmodule Squidie.Workflow.Definition do
   defp maybe_put(map, _key, %{} = value) when map_size(value) == 0, do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp input_matches_type?(value, :string), do: is_binary(value)
-  defp input_matches_type?(value, :integer), do: is_integer(value)
-  defp input_matches_type?(value, :float), do: is_float(value)
-  defp input_matches_type?(value, :boolean), do: is_boolean(value)
-  defp input_matches_type?(value, :map), do: is_map(value)
-  defp input_matches_type?(value, :list), do: is_list(value)
-  defp input_matches_type?(value, :atom), do: is_atom(value)
-  defp input_matches_type?(_value, _unknown_type), do: true
+  defp input_matches_type?(value, type), do: Squidie.Workflow.ValueType.matches?(value, type)
 
   defp serialize_dependency_status(status) when is_atom(status), do: Atom.to_string(status)
   defp serialize_dependency_status(status) when is_binary(status), do: status

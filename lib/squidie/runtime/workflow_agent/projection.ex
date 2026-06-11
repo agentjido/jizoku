@@ -9,6 +9,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   """
 
   alias Squidie.Runtime.DispatchProtocol.Entry
+  alias Squidie.Runtime.DynamicEdge
 
   @type anomaly :: %{
           required(:reason) => atom(),
@@ -569,13 +570,13 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Enum.map(&Map.get(&1, :id))
     |> Enum.reject(&is_nil/1)
     |> Enum.map(fn node_id ->
-      %{
-        id: Enum.join([origin_step, "dynamic", node_id], ":"),
-        from: origin_step,
-        to: node_id,
-        type: :dynamic,
-        status: :pending
-      }
+      DynamicEdge.attrs(
+        Enum.join([origin_step, "dynamic", node_id], ":"),
+        origin_step,
+        node_id,
+        :dynamic,
+        :pending
+      )
     end)
   end
 
@@ -585,13 +586,15 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     with id when is_binary(id) <- Map.get(edge, :id),
          from when is_binary(from) <- Map.get(edge, :from),
          to when is_binary(to) <- Map.get(edge, :to) do
-      compact(%{
-        id: id,
-        from: from,
-        to: to,
-        type: Map.get(edge, :type, :dynamic),
-        status: Map.get(edge, :status, :pending)
-      })
+      compact(
+        DynamicEdge.attrs(
+          id,
+          from,
+          to,
+          Map.get(edge, :type, :dynamic),
+          Map.get(edge, :status, :pending)
+        )
+      )
     else
       _missing_required_field -> nil
     end
@@ -761,19 +764,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
 
   defp runnable_key(_runnable), do: nil
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   defp normalize_runnable(runnable) when is_map(runnable), do: Map.new(runnable)
 

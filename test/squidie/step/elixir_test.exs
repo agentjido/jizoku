@@ -36,6 +36,11 @@ defmodule Squidie.Step.ElixirTest do
 
     @spec raise_error(map(), Squidie.Step.Context.t()) :: no_return()
     def raise_error(_params, _context), do: raise(ArgumentError, "boom secret")
+
+    @spec file_error(map(), Squidie.Step.Context.t()) :: no_return()
+    def file_error(_params, _context) do
+      raise File.Error, reason: :enoent, action: "read file", path: "/tmp/secret-token"
+    end
   end
 
   defmodule ModuleAdapter do
@@ -330,6 +335,24 @@ defmodule Squidie.Step.ElixirTest do
              }
 
       refute inspect(error) =~ "boom secret"
+    end
+
+    test "preserves exception details for non-rescued adapter exceptions" do
+      assert {:error, error} =
+               Squidie.Step.Elixir.run(
+                 %{adapter: "billing.file", params: %{}},
+                 context(adapters: %{"billing.file" => {HostAdapters, :file_error}})
+               )
+
+      assert error == %{
+               message: "Elixir action execution failed",
+               kind: :elixir_action,
+               adapter: "billing.file",
+               exception: "Elixir.File.Error",
+               retryable?: false
+             }
+
+      refute inspect(error) =~ "secret-token"
     end
   end
 

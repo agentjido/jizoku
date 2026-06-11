@@ -30,3 +30,6 @@ squidie-*.tar
 
 # Editor tooling.
 /.elixir_ls/
+
+# ExDNA incremental compiler cache.
+/.ex_dna_cache/

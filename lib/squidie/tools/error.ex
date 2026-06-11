@@ -28,7 +28,7 @@ defmodule Squidie.Tools.Error do
   @spec new(keyword()) :: t()
   def new(attrs) when is_list(attrs) do
     attrs
-    |> Enum.into(%{})
+    |> Map.new()
     |> then(&struct!(__MODULE__, &1))
   end
 

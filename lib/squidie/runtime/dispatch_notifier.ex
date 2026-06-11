@@ -46,7 +46,18 @@ defmodule Squidie.Runtime.DispatchNotifier do
   defp safe_notify_attempt_scheduled(notifier, attempt, opts) do
     notifier.notify_attempt_scheduled(attempt, opts)
   rescue
-    exception -> {:error, {:notifier_exception, notifier, exception}}
+    exception in [
+      ArgumentError,
+      BadMapError,
+      CaseClauseError,
+      ErlangError,
+      FunctionClauseError,
+      KeyError,
+      MatchError,
+      RuntimeError,
+      UndefinedFunctionError
+    ] ->
+      {:error, {:notifier_exception, notifier, exception}}
   catch
     kind, reason -> {:error, {:notifier_throw, notifier, {kind, reason}}}
   end

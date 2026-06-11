@@ -17,6 +17,9 @@ defmodule Squidie.Runtime.Journal.Executor do
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Compensation
+  alias Squidie.Runtime.Journal.EntryBuilder
+  alias Squidie.Runtime.Journal.Executor.ClaimContext
+  alias Squidie.Runtime.Journal.Executor.RuntimeContext
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.Journal.WorkflowDefinitionLoader
   alias Squidie.Runtime.RetryPolicy
@@ -275,7 +278,18 @@ defmodule Squidie.Runtime.Journal.Executor do
     |> do_heartbeat_claim()
     |> maybe_retry_conflicted_heartbeat()
   rescue
-    _error -> {:lost, :heartbeat_failed}
+    _error in [
+      ArgumentError,
+      BadMapError,
+      CaseClauseError,
+      ErlangError,
+      FunctionClauseError,
+      KeyError,
+      MatchError,
+      RuntimeError,
+      UndefinedFunctionError
+    ] ->
+      {:lost, :heartbeat_failed}
   catch
     _kind, _reason -> {:lost, :heartbeat_failed}
   end
@@ -329,7 +343,7 @@ defmodule Squidie.Runtime.Journal.Executor do
          queue,
          %DateTime{} = claim_now,
          opts,
-         %{
+         %ClaimContext{
            dispatch_agent: dispatch_agent,
            workflow_agent: workflow_agent,
            attempt: %ActionAttempt{} = attempt,
@@ -342,7 +356,7 @@ defmodule Squidie.Runtime.Journal.Executor do
       {:ok, workflow, definition, step_name, step} ->
         context = step_context(workflow_agent, attempt, workflow, step_name, step, claim_id, opts)
         finished_at = lifecycle_time(opts, claim_now)
-        runtime = %{storage: storage, queue: queue, now: finished_at}
+        runtime = runtime_context(storage, queue, finished_at)
 
         execute_step_and_record(%{
           storage: storage,
@@ -373,18 +387,30 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp claim_context(dispatch_agent, workflow_agent, attempt, claim_id, claim_token) do
-    %{
-      dispatch_agent: dispatch_agent,
-      workflow_agent: workflow_agent,
-      attempt: attempt,
-      claim_id: claim_id,
-      claim_token: claim_token
-    }
+    ClaimContext.new(dispatch_agent, workflow_agent, attempt, claim_id, claim_token)
+  end
+
+  defp runtime_context(storage, queue, %DateTime{} = now) do
+    RuntimeContext.new(storage, queue, now)
+  end
+
+  defp progression_context(
+         execution_opts,
+         queue,
+         %DateTime{} = schedule_base_at,
+         %DateTime{} = now
+       ) do
+    Map.new(
+      execution_opts: execution_opts,
+      queue: queue,
+      schedule_base_at: schedule_base_at,
+      now: now
+    )
   end
 
   defp complete_attempt(
-         %{storage: storage, queue: queue, now: now},
-         %{
+         %RuntimeContext{storage: storage, queue: queue, now: now},
+         %ClaimContext{
            dispatch_agent: dispatch_agent,
            workflow_agent: workflow_agent,
            attempt: %ActionAttempt{} = attempt,
@@ -396,15 +422,9 @@ defmodule Squidie.Runtime.Journal.Executor do
          output,
          execution_opts
        ) do
-    runtime = %{storage: storage, queue: queue, now: now}
+    runtime = runtime_context(storage, queue, now)
 
-    claim = %{
-      dispatch_agent: dispatch_agent,
-      workflow_agent: workflow_agent,
-      attempt: attempt,
-      claim_id: claim_id,
-      claim_token: claim_token
-    }
+    claim = claim_context(dispatch_agent, workflow_agent, attempt, claim_id, claim_token)
 
     with {:ok, result} <- apply_step_output_mapping(definition, step_name, output),
          {:ok, %{agent: dispatch_agent}} <-
@@ -433,8 +453,8 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp append_completed_attempt_progression(
-         %{storage: storage, queue: queue, now: now} = runtime,
-         %{
+         %RuntimeContext{storage: storage, queue: queue, now: now} = runtime,
+         %ClaimContext{
            dispatch_agent: dispatch_agent,
            workflow_agent: workflow_agent,
            attempt: %ActionAttempt{} = attempt
@@ -474,8 +494,8 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp fail_success_progression(
-         %{storage: storage, queue: queue, now: now},
-         %{
+         %RuntimeContext{storage: storage, queue: queue, now: now},
+         %ClaimContext{
            dispatch_agent: dispatch_agent,
            workflow_agent: workflow_agent,
            attempt: %ActionAttempt{} = attempt
@@ -501,8 +521,8 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp fail_attempt(
-         %{storage: storage, queue: queue, now: now} = runtime,
-         %{
+         %RuntimeContext{storage: storage, queue: queue, now: now} = runtime,
+         %ClaimContext{
            dispatch_agent: dispatch_agent,
            workflow_agent: workflow_agent,
            attempt: %ActionAttempt{} = attempt,
@@ -626,12 +646,7 @@ defmodule Squidie.Runtime.Journal.Executor do
        ) do
     schedule_base_at = Map.get(success, :schedule_base_at, now)
 
-    progression = %{
-      execution_opts: execution_opts,
-      queue: queue,
-      schedule_base_at: schedule_base_at,
-      now: now
-    }
+    progression = progression_context(execution_opts, queue, schedule_base_at, now)
 
     with {:ok, transition, progression_entries} <-
            success_progression_entries(
@@ -994,7 +1009,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp append_failure_progression(
-         %{storage: storage, queue: queue, now: now},
+         %RuntimeContext{storage: storage, queue: queue, now: now},
          workflow_agent,
          %ActionAttempt{} = attempt,
          definition,
@@ -1049,7 +1064,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp append_failure_progression(
-         %{storage: storage, queue: queue, now: now},
+         %RuntimeContext{storage: storage, queue: queue, now: now},
          workflow_agent,
          %ActionAttempt{} = attempt,
          definition,
@@ -1082,7 +1097,7 @@ defmodule Squidie.Runtime.Journal.Executor do
 
       {:ok, %{to: next_step} = transition} when is_atom(next_step) ->
         append_failure_successor_progression(
-          %{storage: storage, queue: queue, now: now},
+          %RuntimeContext{storage: storage, queue: queue, now: now},
           workflow_agent,
           attempt,
           definition,
@@ -1092,7 +1107,7 @@ defmodule Squidie.Runtime.Journal.Executor do
 
       {:error, {:unknown_transition, _from_step, :error}} ->
         append_terminal_failure_or_compensation(
-          %{storage: storage, queue: queue, now: now},
+          %RuntimeContext{storage: storage, queue: queue, now: now},
           workflow_agent,
           attempt,
           definition,
@@ -1101,7 +1116,7 @@ defmodule Squidie.Runtime.Journal.Executor do
 
       {:error, {:no_matching_transition, _from_step, :error}} ->
         append_terminal_failure_or_compensation(
-          %{storage: storage, queue: queue, now: now},
+          %RuntimeContext{storage: storage, queue: queue, now: now},
           workflow_agent,
           attempt,
           definition,
@@ -1153,7 +1168,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp append_recomputed_terminal_failure_or_compensation(
-         %{storage: storage, queue: queue, now: now} = runtime,
+         %RuntimeContext{storage: storage, queue: queue, now: now} = runtime,
          workflow_agent,
          %ActionAttempt{} = attempt,
          definition,
@@ -1226,28 +1241,21 @@ defmodule Squidie.Runtime.Journal.Executor do
         {:ok, retry_runnable}
 
       :error ->
-        with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
-          deadline = Keyword.get(retry_opts, :retry_deadline)
-
-          runnable = %{
-            run_id: attempt.run_id,
-            runnable_key: retry_runnable_key,
-            idempotency_key: retry_runnable_key,
-            attempt_number: attempt_number,
-            queue: queue,
-            step: Definition.serialize_step(step_name),
-            input: attempt.input || %{},
-            recovery: recovery,
-            visible_at: retry_visible_at
-          }
-
-          {:ok, maybe_put(runnable, :deadline, deadline)}
-        end
+        EntryBuilder.retry_runnable(
+          definition,
+          step_name,
+          attempt,
+          retry_runnable_key,
+          attempt_number,
+          queue,
+          retry_visible_at,
+          Keyword.get(retry_opts, :retry_deadline)
+        )
     end
   end
 
   defp append_failure_successor_progression(
-         %{storage: storage, queue: queue, now: now},
+         %RuntimeContext{storage: storage, queue: queue, now: now},
          workflow_agent,
          %ActionAttempt{} = attempt,
          definition,
@@ -1401,8 +1409,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp latest_planned_runnable_keys(runnables) when is_list(runnables) do
     runnables
     |> Enum.reduce(%{}, &put_latest_planned_runnable/2)
-    |> Map.values()
-    |> Enum.map(& &1.runnable_key)
+    |> Enum.map(fn {_step, runnable} -> runnable.runnable_key end)
   end
 
   defp put_latest_planned_runnable(runnable, latest_by_step) do
@@ -1636,8 +1643,8 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp applied_result_context(workflow_agent) do
     workflow_agent.state.projection
     |> Map.get(:applied_results, %{})
-    |> Map.values()
-    |> Enum.filter(&is_map/1)
+    |> Enum.filter(fn {_key, value} -> is_map(value) end)
+    |> Enum.map(fn {_key, value} -> value end)
     |> Enum.reduce(%{}, &Map.merge(&2, &1))
   end
 
@@ -1679,23 +1686,24 @@ defmodule Squidie.Runtime.Journal.Executor do
     with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
       runnable_key = "#{attempt.runnable_key}:deferred"
 
-      runnable = %{
-        run_id: attempt.run_id,
-        runnable_key: runnable_key,
-        idempotency_key: runnable_key,
-        attempt_number: attempt.attempt_number,
-        queue: queue,
-        step: Definition.serialize_step(step_name),
-        input: attempt.input || %{},
-        recovery: recovery,
-        visible_at: successor_visible_at(schedule_base_at, execution_opts),
-        deferred:
-          deferred_continuation_metadata(
-            attempt,
-            Keyword.fetch!(execution_opts, :defer),
-            schedule_base_at
-          )
-      }
+      runnable =
+        Map.new(
+          run_id: attempt.run_id,
+          runnable_key: runnable_key,
+          idempotency_key: runnable_key,
+          attempt_number: attempt.attempt_number,
+          queue: queue,
+          step: Definition.serialize_step(step_name),
+          input: attempt.input || %{},
+          recovery: recovery,
+          visible_at: successor_visible_at(schedule_base_at, execution_opts),
+          deferred:
+            deferred_continuation_metadata(
+              attempt,
+              Keyword.fetch!(execution_opts, :defer),
+              schedule_base_at
+            )
+        )
 
       {:ok, maybe_put(runnable, :deadline, attempt.deadline)}
     end
@@ -1759,33 +1767,15 @@ defmodule Squidie.Runtime.Journal.Executor do
     {:ok, %{agent: dispatch_agent, runnables: []}}
   end
 
-  defp schedule_pending_dispatches(storage, workflow_agent, dispatch_agent, now, retries_left)
-       when retries_left > 0 do
-    case WorkflowAgent.schedule_pending_dispatches(storage, workflow_agent, dispatch_agent,
-           now: now
-         ) do
-      {:ok, _schedule_update} = ok ->
-        ok
-
-      {:error, :conflict} ->
-        with {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, workflow_agent.state.run_id),
-             {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, dispatch_agent.state.queue) do
-          schedule_pending_dispatches(
-            storage,
-            workflow_agent,
-            dispatch_agent,
-            now,
-            retries_left - 1
-          )
-        end
-
-      {:error, _reason} = error ->
-        error
-    end
+  defp schedule_pending_dispatches(storage, workflow_agent, dispatch_agent, now, retries_left) do
+    Squidie.Runtime.Journal.DispatchScheduler.schedule_pending_dispatches(
+      storage,
+      workflow_agent,
+      dispatch_agent,
+      now,
+      retries_left
+    )
   end
-
-  defp schedule_pending_dispatches(_storage, _workflow_agent, _dispatch_agent, _now, 0),
-    do: {:error, :conflict}
 
   defp complete_current_claim(
          storage,
@@ -2072,28 +2062,15 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp runnables_planned_entry!(run_id, runnables, %DateTime{} = now) do
-    entry!(:runnables_planned, %{
-      run_id: run_id,
-      runnables: runnables,
-      occurred_at: now
-    })
+    Squidie.Runtime.Journal.EntryBuilder.runnables_planned!(run_id, runnables, now)
   end
 
   defp run_terminal_entry!(run_id, status, %DateTime{} = now) do
-    entry!(:run_terminal, %{
-      run_id: run_id,
-      status: status,
-      occurred_at: now
-    })
+    Squidie.Runtime.Journal.EntryBuilder.run_terminal!(run_id, status, now)
   end
 
   defp run_terminal_entry!(run_id, status, %DateTime{} = now, error) when is_map(error) do
-    entry!(:run_terminal, %{
-      run_id: run_id,
-      status: status,
-      error: error,
-      occurred_at: now
-    })
+    Squidie.Runtime.Journal.EntryBuilder.run_terminal!(run_id, status, now, error)
   end
 
   defp entry!(type, attrs) do
@@ -2110,25 +2087,15 @@ defmodule Squidie.Runtime.Journal.Executor do
          attempt_number,
          %DateTime{} = now
        ) do
-    step = Definition.serialize_step(step_name)
-    runnable_key = runnable_key(run_id, step_name, attempt_number)
-
-    with {:ok, recovery} <- replay_recovery_policy(definition, step_name),
-         {:ok, deadline} <- Deadline.from_definition(definition, step_name, now) do
-      runnable = %{
-        run_id: run_id,
-        runnable_key: runnable_key,
-        idempotency_key: runnable_key,
-        attempt_number: attempt_number,
-        queue: queue,
-        step: step,
-        input: input,
-        recovery: recovery,
-        visible_at: now
-      }
-
-      {:ok, maybe_put(runnable, :deadline, deadline)}
-    end
+    EntryBuilder.runnable(
+      definition,
+      run_id,
+      queue,
+      step_name,
+      input,
+      attempt_number,
+      now
+    )
   end
 
   defp runnable_key(run_id, step_name, attempt_number) do
@@ -2258,7 +2225,7 @@ defmodule Squidie.Runtime.Journal.Executor do
     case executable_step(storage, workflow_agent, attempt) do
       {:ok, _workflow, definition, step_name, step} ->
         append_recovered_success(
-          %{storage: storage, queue: queue, now: now},
+          %RuntimeContext{storage: storage, queue: queue, now: now},
           dispatch_agent,
           workflow_agent,
           attempt,
@@ -2273,7 +2240,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp append_recovered_success(
-         %{storage: storage, queue: queue, now: now} = runtime,
+         %RuntimeContext{storage: storage, queue: queue, now: now} = runtime,
          dispatch_agent,
          workflow_agent,
          attempt,
@@ -2380,7 +2347,7 @@ defmodule Squidie.Runtime.Journal.Executor do
          now
        ) do
     retry_opts = durable_retry_options(dispatch_agent, workflow_agent, attempt)
-    runtime = %{storage: storage, queue: queue, now: now}
+    runtime = runtime_context(storage, queue, now)
 
     with {:ok, workflow_agent} <-
            append_failure_progression(
@@ -2461,15 +2428,14 @@ defmodule Squidie.Runtime.Journal.Executor do
 
   defp durable_retry_options(dispatch_agent, workflow_agent, %ActionAttempt{} = failed_attempt) do
     dispatch_agent.state.projection.attempts
-    |> Map.values()
-    |> Enum.find(fn %ActionAttempt{} = attempt ->
+    |> Enum.find(fn {_key, %ActionAttempt{} = attempt} ->
       attempt.run_id == failed_attempt.run_id and
         attempt.step == failed_attempt.step and
         attempt.attempt_number == failed_attempt.attempt_number + 1 and
         attempt.status in [:available, :retry_scheduled, :claimed, :completed, :failed]
     end)
     |> case do
-      %ActionAttempt{} = retry_attempt ->
+      {_key, %ActionAttempt{} = retry_attempt} ->
         retry_opts = [
           retry_runnable_key: retry_attempt.runnable_key,
           retry_visible_at: retry_attempt.visible_at
@@ -2574,19 +2540,7 @@ defmodule Squidie.Runtime.Journal.Executor do
     |> map_value(:action)
   end
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   defp step_context(
          workflow_agent,

@@ -184,12 +184,7 @@ defmodule Squidie.ReadModel.Listing do
 
   defp summary(
          storage,
-         %{
-           run_id: run_id,
-           workflow: workflow,
-           queue: queue,
-           indexed_at: indexed_at
-         },
+         %{run_id: run_id, workflow: workflow, queue: queue, indexed_at: indexed_at},
          %DateTime{} = now
        ) do
     with {:ok, %Agent{state: %{projection: %Projection{} = projection, thread_rev: thread_rev}}} <-
@@ -277,39 +272,28 @@ defmodule Squidie.ReadModel.Listing do
     end
   end
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   defp validate_catalog_summary(%Projection{} = projection, run_id, workflow, queue) do
     cond do
       projection.run_id != run_id ->
-        {:error,
-         {:catalog_run_mismatch, %{expected: run_id, actual: projection.run_id, run_id: run_id}}}
+        {:error, {:catalog_run_mismatch, catalog_mismatch(run_id, projection.run_id, run_id)}}
 
       projection.workflow != workflow ->
         {:error,
-         {:catalog_workflow_mismatch,
-          %{expected: workflow, actual: projection.workflow, run_id: run_id}}}
+         {:catalog_workflow_mismatch, catalog_mismatch(workflow, projection.workflow, run_id)}}
 
       not catalog_queue_matches?(projection, queue) ->
         {:error,
-         {:catalog_queue_mismatch,
-          %{expected: queue, actual: projection_queues(projection), run_id: run_id}}}
+         {:catalog_queue_mismatch, catalog_mismatch(queue, projection_queues(projection), run_id)}}
 
       true ->
         :ok
     end
+  end
+
+  defp catalog_mismatch(expected, actual, run_id) do
+    Map.new(expected: expected, actual: actual, run_id: run_id)
   end
 
   defp catalog_queue_matches?(%Projection{} = projection, queue) do

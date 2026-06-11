@@ -106,8 +106,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @spec run_ids(t()) :: MapSet.t(String.t())
   def run_ids(%__MODULE__{attempts: attempts, queued_run_ids: queued_run_ids}) do
     attempts
-    |> Map.values()
-    |> Enum.map(& &1.run_id)
+    |> Enum.map(fn {_key, attempt} -> attempt.run_id end)
     |> MapSet.new()
     |> MapSet.union(queued_run_ids)
   end

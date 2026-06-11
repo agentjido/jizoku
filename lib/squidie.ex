@@ -19,6 +19,7 @@ defmodule Squidie do
   alias Squidie.Runtime.Journal.Cancellation
   alias Squidie.Runtime.Journal.ChildStarter
   alias Squidie.Runtime.Journal.DynamicWork
+  alias Squidie.Runtime.Journal.EntryBuilder
   alias Squidie.Runtime.Journal.Executor
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.Journal.Replay
@@ -1023,8 +1024,8 @@ defmodule Squidie do
 
   defp schedule_idempotency_key(context) when is_map(context) do
     context
-    |> schedule_context()
-    |> schedule_value(:idempotency_key)
+    |> Squidie.Runtime.ScheduleContext.get()
+    |> Squidie.Runtime.ScheduleContext.value(:idempotency_key)
     |> validate_schedule_idempotency_key()
   end
 
@@ -1035,22 +1036,6 @@ defmodule Squidie do
   defp validate_schedule_idempotency_key(_key) do
     {:error, {:invalid_option, {:schedule_idempotency_key, :invalid}}}
   end
-
-  defp schedule_context(context) do
-    case Map.fetch(context, :schedule) do
-      {:ok, schedule} -> schedule
-      :error -> Map.get(context, "schedule", %{})
-    end
-  end
-
-  defp schedule_value(schedule, key) when is_map(schedule) do
-    case Map.fetch(schedule, key) do
-      {:ok, value} -> value
-      :error -> Map.get(schedule, Atom.to_string(key))
-    end
-  end
-
-  defp schedule_value(_schedule, _key), do: nil
 
   defp schedule_run_id(workflow, trigger_name, idempotency_key) do
     workflow_name = Squidie.Workflow.Definition.serialize_workflow(workflow)
@@ -1250,11 +1235,7 @@ defmodule Squidie do
   end
 
   defp dynamic_work_runnables_planned_entry(run_id, runnables, %DateTime{} = now) do
-    DispatchProtocol.new_entry(:runnables_planned, %{
-      run_id: run_id,
-      runnables: runnables,
-      occurred_at: now
-    })
+    EntryBuilder.runnables_planned(run_id, runnables, now)
   end
 
   defp dynamic_work_runnables(_run_id, :duplicate, _queue, _now, _registry), do: {:ok, []}

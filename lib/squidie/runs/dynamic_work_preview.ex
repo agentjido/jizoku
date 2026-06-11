@@ -107,14 +107,5 @@ defmodule Squidie.Runs.DynamicWorkPreview do
   defp warnings(true), do: [:duplicate_dynamic_work]
   defp warnings(false), do: []
 
-  defp value(map, field, default \\ nil)
-
-  defp value(map, field, default) when is_map(map) and is_atom(field) do
-    case Map.fetch(map, field) do
-      {:ok, value} -> value
-      :error -> Map.get(map, Atom.to_string(field), default)
-    end
-  end
-
-  defp value(_map, _field, default), do: default
+  defp value(map, field, default \\ nil), do: Squidie.MapField.get(map, field, default)
 end

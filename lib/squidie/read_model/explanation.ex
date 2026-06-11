@@ -265,9 +265,14 @@ defmodule Squidie.ReadModel.Explanation do
   defp command_details([]), do: %{}
 
   defp command_details(commands) when is_list(commands) do
+    {command_count, latest_command} =
+      Enum.reduce(commands, {0, nil}, fn command, {count, _latest} ->
+        {count + 1, command}
+      end)
+
     details = %{
-      command_count: length(commands),
-      latest_command: Enum.at(commands, -1)
+      command_count: command_count,
+      latest_command: latest_command
     }
 
     maybe_put_non_empty(details, :duplicate_commands, duplicate_commands(commands))
@@ -447,19 +452,7 @@ defmodule Squidie.ReadModel.Explanation do
     map_value(item, key)
   end
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   defp maybe_put_non_empty(map, _key, []), do: map
   defp maybe_put_non_empty(map, key, value), do: Map.put(map, key, value)

@@ -68,7 +68,7 @@ defmodule Squidie.Runtime.Signal do
          {:ok, workflow} <- workflow_name(workflow),
          {:ok, trigger} <- trigger_name(trigger),
          {:ok, envelope} <- envelope(opts) do
-      new(:start_run, %{workflow: workflow, trigger: trigger, input: input}, envelope)
+      new(:start_run, start_payload(workflow, trigger, input), envelope)
     end
   end
 
@@ -84,11 +84,17 @@ defmodule Squidie.Runtime.Signal do
          {:ok, envelope} <- envelope(opts),
          {:ok, idempotency_key} <-
            cron_idempotency_key(envelope.idempotency_key, workflow, trigger, input) do
-      new(:start_cron, %{workflow: workflow, trigger: trigger, input: input}, %{
+      new(:start_cron, start_payload(workflow, trigger, input), %{
         envelope
         | idempotency_key: idempotency_key
       })
     end
+  end
+
+  @doc false
+  @spec start_payload(String.t(), String.t() | nil, map()) :: map()
+  def start_payload(workflow, trigger, input) do
+    Map.new(workflow: workflow, trigger: trigger, input: input)
   end
 
   @doc """

@@ -373,7 +373,7 @@ defmodule Squidie.Runtime.Journal.Storage.Ecto do
       _other -> {:error, :invalid_encoded_term}
     end
   rescue
-    error -> {:error, {error.__struct__, Exception.message(error)}}
+    error in [ArgumentError] -> {:error, {error.__struct__, Exception.message(error)}}
   end
 
   defp encode_value(term) when is_atom(term), do: {:ok, {:atom, Atom.to_string(term)}}
