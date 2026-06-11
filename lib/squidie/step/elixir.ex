@@ -95,8 +95,8 @@ defmodule Squidie.Step.Elixir do
         ] ->
           {:error, exception_error(adapter_key, exception)}
       catch
-        kind, _reason ->
-          {:error, caught_error(adapter_key, kind)}
+        kind, reason ->
+          {:error, caught_error(adapter_key, kind, reason)}
       end
 
     case result do
@@ -372,7 +372,11 @@ defmodule Squidie.Step.Elixir do
     }
   end
 
-  defp caught_error(adapter_key, kind) do
+  defp caught_error(adapter_key, :error, exception) when is_exception(exception) do
+    exception_error(adapter_key, exception)
+  end
+
+  defp caught_error(adapter_key, kind, _reason) do
     %{
       message: "Elixir action execution failed",
       kind: :elixir_action,

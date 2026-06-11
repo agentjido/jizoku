@@ -209,10 +209,14 @@ jobs:
   quality-gates:
     name: Structural Quality Gates
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup Elixir
         uses: ./.github/actions/setup-elixir
