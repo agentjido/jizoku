@@ -76,6 +76,7 @@ defmodule Squidie.MixProject do
         "docs/positioning.md",
         "docs/compatibility.md",
         "docs/tool_adapters.md",
+        "docs/quality_gates.md",
         "docs/observability.md",
         "docs/actor_visibility.md",
         "docs/storage_strategy.md",
@@ -115,6 +116,7 @@ defmodule Squidie.MixProject do
           "docs/graph_inspection.md",
           "docs/reference_workflows.md",
           "docs/tool_adapters.md",
+          "docs/quality_gates.md",
           "docs/compatibility.md",
           "docs/storage_strategy.md",
           "docs/production_readiness.md"
@@ -139,8 +141,10 @@ defmodule Squidie.MixProject do
       {:req, "~> 0.5"},
       {:runic, "~> 0.1.0-alpha"},
       {:spark, "~> 2.7"},
+      {:ex_dna, "~> 1.5", only: [:dev, :test], runtime: false},
       {:ex_slop, "~> 0.4.2", only: [:dev, :test], runtime: false},
       {:postgrex, "~> 0.20", only: :test},
+      {:reach, "~> 2.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
@@ -158,11 +162,15 @@ defmodule Squidie.MixProject do
         "deps.unlock --check-unused",
         "format --check-formatted",
         "credo --strict",
+        "quality_gates",
         "doctor",
         "deps.audit --ignore-file config/deps_audit.ignore",
         "dialyzer",
         "test"
-      ]
+      ],
+      quality_gates: ["quality.ex_dna", "quality.reach"],
+      "quality.ex_dna": ["ex_dna --min-mass 40 --max-clones 0 --format console"],
+      "quality.reach": ["reach.check --smells --strict"]
     ]
   end
 end

@@ -206,6 +206,26 @@ jobs:
       - name: Run Credo
         run: mix credo --strict
 
+  quality-gates:
+    name: Structural Quality Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Elixir
+        uses: ./.github/actions/setup-elixir
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Compile
+        run: mix compile
+
+      - name: Run structural quality gates
+        run: mix quality_gates
+
   docs:
     name: Documentation Health (Doctor)
     runs-on: ubuntu-latest
