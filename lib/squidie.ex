@@ -29,6 +29,7 @@ defmodule Squidie do
   alias Squidie.Runtime.Signal
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Workflow.ActionRegistry
+  alias Squidie.Workflow.SpecPreview
 
   @read_models [:read_model]
   @runtimes [:journal]
@@ -236,6 +237,40 @@ defmodule Squidie do
   end
 
   def start_spec(_spec, trigger_name, _payload, overrides) when is_list(overrides) do
+    {:error, {:invalid_trigger, trigger_name}}
+  end
+
+  @doc """
+  Previews a runtime-authored workflow spec with a sample payload.
+
+  Preview execution resolves runtime-authored action keys through the host-owned
+  action registry and calls only actions that explicitly opt into dry-run
+  behavior. It does not create a run, append journal state, schedule dispatch
+  attempts, or call durable action `run/2` callbacks.
+  """
+  @spec preview_spec(Squidie.Workflow.Spec.t() | map(), map(), keyword()) ::
+          {:ok, Squidie.Runs.SpecPreview.t()} | {:error, term()}
+  def preview_spec(spec, payload, overrides \\ [])
+
+  def preview_spec(spec, payload, overrides) when is_map(payload) and is_list(overrides) do
+    SpecPreview.preview(spec, nil, payload, overrides)
+  end
+
+  def preview_spec(_spec, _payload, overrides) when is_list(overrides) do
+    {:error, {:invalid_payload, :expected_map}}
+  end
+
+  @doc """
+  Previews a runtime-authored workflow spec through a named trigger.
+  """
+  @spec preview_spec(Squidie.Workflow.Spec.t() | map(), atom(), map(), keyword()) ::
+          {:ok, Squidie.Runs.SpecPreview.t()} | {:error, term()}
+  def preview_spec(spec, trigger_name, payload, overrides)
+      when is_atom(trigger_name) and is_map(payload) and is_list(overrides) do
+    SpecPreview.preview(spec, trigger_name, payload, overrides)
+  end
+
+  def preview_spec(_spec, trigger_name, _payload, overrides) when is_list(overrides) do
     {:error, {:invalid_trigger, trigger_name}}
   end
 

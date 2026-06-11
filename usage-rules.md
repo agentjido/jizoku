@@ -32,6 +32,10 @@ itself.
 - Use `Squidie.preview_dynamic_work/3` when dashboards or visual editors need
   to validate candidate dynamic work and inspect the graph overlay before
   appending.
+- Use `Squidie.preview_spec/3` or `Squidie.preview_spec/4` when visual editors
+  need execution-style node output for a runtime-authored draft. Pass a
+  host-owned `:action_registry`; preview calls only registry entries that opt
+  into `dry_run` behavior and does not append durable runtime state.
 - Add idempotency keys or domain duplicate detection to side-effecting steps.
 - Treat external exactly-once behavior as out of scope for Squidie.
 
