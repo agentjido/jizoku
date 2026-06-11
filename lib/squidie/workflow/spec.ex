@@ -11,7 +11,9 @@ defmodule Squidie.Workflow.Spec do
 
   alias Squidie.Runtime.Deadline
   alias Squidie.Workflow.Definition
+  alias Squidie.Workflow.DependencyGraph
   alias Squidie.Workflow.InputMapping
+  alias Squidie.Workflow.ValueType
 
   @built_in_step_kinds [:wait, :log, :pause, :approval]
   @collection_fields [:triggers, :payload, :steps, :transitions, :retries, :entry_steps]
@@ -232,7 +234,7 @@ defmodule Squidie.Workflow.Spec do
 
   defp validate_triggers(errors, triggers) do
     triggers
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {trigger, index}, acc ->
       acc
       |> validate_trigger_shape(trigger, index)
@@ -344,7 +346,7 @@ defmodule Squidie.Workflow.Spec do
   defp validate_unique_trigger_names(errors, triggers) do
     {_seen, duplicate_errors} =
       triggers
-      |> Enum.with_index()
+      |> Stream.with_index()
       |> Enum.reduce({MapSet.new(), []}, fn {trigger, index}, {seen, acc} ->
         validate_unique_trigger_name(seen, acc, trigger, index)
       end)
@@ -456,7 +458,7 @@ defmodule Squidie.Workflow.Spec do
 
   defp validate_payload_fields(errors, payload_fields, path) do
     payload_fields
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {payload_field, index}, acc ->
       validate_payload_field(acc, payload_field, append_path(path, index))
     end)
@@ -528,7 +530,7 @@ defmodule Squidie.Workflow.Spec do
 
   defp validate_steps(errors, steps) do
     steps
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {step, index}, acc ->
       acc
       |> validate_step_name(step, index)
@@ -605,7 +607,7 @@ defmodule Squidie.Workflow.Spec do
 
   defp validate_step_mappings(errors, steps) do
     steps
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {step, index}, acc ->
       if is_map(step) and Keyword.keyword?(field(step, :opts) || []) do
         name = field(step, :name)
@@ -701,7 +703,7 @@ defmodule Squidie.Workflow.Spec do
 
   defp validate_step_retries(errors, steps) do
     steps
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {step, index}, acc ->
       if is_map(step) and Keyword.keyword?(field(step, :opts)) do
         validate_step_retry(acc, field(step, :name), field(step, :opts), index)
@@ -731,7 +733,7 @@ defmodule Squidie.Workflow.Spec do
 
   defp validate_step_recovery_markers(errors, steps) do
     steps
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {step, index}, acc ->
       if is_map(step) and Keyword.keyword?(field(step, :opts) || []) do
         name = field(step, :name)
@@ -830,7 +832,7 @@ defmodule Squidie.Workflow.Spec do
 
   defp validate_built_in_steps(errors, steps, transitions) do
     steps
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {step, index}, acc ->
       if is_map(step) and field(step, :module) in @built_in_step_kinds and
            Keyword.keyword?(field(step, :opts) || []) do
@@ -935,7 +937,7 @@ defmodule Squidie.Workflow.Spec do
   defp validate_dependency_manual_step_kinds(errors, steps) do
     if dependency_mode?(steps) do
       steps
-      |> Enum.with_index()
+      |> Stream.with_index()
       |> Enum.reduce(errors, fn {step, index}, acc ->
         validate_dependency_manual_step_kind(acc, step, index)
       end)
@@ -991,7 +993,7 @@ defmodule Squidie.Workflow.Spec do
   defp validate_unique_step_names(errors, steps) do
     {_seen, duplicate_errors} =
       steps
-      |> Enum.with_index()
+      |> Stream.with_index()
       |> Enum.reduce({MapSet.new(), []}, fn {step, index}, {seen, acc} ->
         name = field(step, :name)
 
@@ -1029,7 +1031,7 @@ defmodule Squidie.Workflow.Spec do
 
   defp validate_step_dependencies(errors, steps, step_names) do
     steps
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {step, index}, acc ->
       if is_map(step) and Keyword.keyword?(field(step, :opts) || []) do
         validate_step_dependency_list(acc, step, index, step_names)
@@ -1042,7 +1044,7 @@ defmodule Squidie.Workflow.Spec do
   defp validate_step_dependency_list(errors, step, index, step_names) do
     name = field(step, :name)
 
-    case dependency_list(field(step, :opts) || []) do
+    case DependencyGraph.dependency_list(field(step, :opts) || []) do
       {:ok, dependencies} ->
         Enum.reduce(dependencies, errors, fn dependency, acc ->
           validate_step_dependency(acc, name, dependency, index, step_names)
@@ -1114,7 +1116,7 @@ defmodule Squidie.Workflow.Spec do
     |> validate_duplicate_transitions(transitions)
     |> then(fn acc ->
       transitions
-      |> Enum.with_index()
+      |> Stream.with_index()
       |> Enum.reduce(acc, fn {transition, index}, reduce_acc ->
         reduce_acc
         |> validate_transition_source(transition, index, step_names)
@@ -1129,7 +1131,7 @@ defmodule Squidie.Workflow.Spec do
   defp validate_duplicate_transitions(errors, transitions) do
     {_seen, duplicate_errors} =
       transitions
-      |> Enum.with_index()
+      |> Stream.with_index()
       |> Enum.reduce({MapSet.new(), []}, fn {transition, index}, {seen, acc} ->
         validate_duplicate_transition(seen, acc, transition, index)
       end)
@@ -1217,7 +1219,7 @@ defmodule Squidie.Workflow.Spec do
             [:transitions, index, :recovery],
             :invalid_transition_recovery,
             "transition from #{inspect(from)} can only define recovery markers for :error outcomes",
-            %{from: from, on: on, recovery: recovery}
+            Squidie.Workflow.ErrorDetails.transition_recovery(from, on, recovery)
           )
           | errors
         ]
@@ -1231,7 +1233,7 @@ defmodule Squidie.Workflow.Spec do
             [:transitions, index, :recovery],
             :invalid_transition_recovery,
             "transition from #{inspect(from)} defines unsupported recovery marker #{inspect(recovery)}",
-            %{from: from, on: on, recovery: recovery}
+            Squidie.Workflow.ErrorDetails.transition_recovery(from, on, recovery)
           )
           | errors
         ]
@@ -1278,7 +1280,7 @@ defmodule Squidie.Workflow.Spec do
 
   defp validate_retries(errors, retries, step_names) do
     retries
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {retry, index}, acc ->
       acc
       |> validate_retry_step(retry, index, step_names)
@@ -1492,7 +1494,7 @@ defmodule Squidie.Workflow.Spec do
 
   defp validate_entry_steps(errors, entry_steps, step_names) do
     entry_steps
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {entry_step, index}, acc ->
       if entry_step in step_names do
         acc
@@ -1633,29 +1635,9 @@ defmodule Squidie.Workflow.Spec do
       is_map(step) and Keyword.keyword?(field(step, :opts) || []) and
         match?(
           {:ok, dependencies} when dependencies != [],
-          dependency_list(field(step, :opts) || [])
+          DependencyGraph.dependency_list(field(step, :opts) || [])
         )
     end)
-  end
-
-  defp dependency_list(opts) do
-    case Keyword.fetch(opts, :after) do
-      {:ok, []} ->
-        :error
-
-      {:ok, dependencies} when is_list(dependencies) ->
-        if Enum.all?(dependencies, &is_atom/1) do
-          {:ok, Enum.uniq(dependencies)}
-        else
-          :error
-        end
-
-      {:ok, _other} ->
-        :error
-
-      :error ->
-        :absent
-    end
   end
 
   defp dependency_graph_acyclic?(steps) do
@@ -1664,19 +1646,7 @@ defmodule Squidie.Workflow.Spec do
   end
 
   defp graph_acyclic?(adjacency) do
-    {result, _state} =
-      Enum.reduce_while(
-        Map.keys(adjacency),
-        {:ok, %{visiting: MapSet.new(), visited: MapSet.new()}},
-        fn step_name, {:ok, state} ->
-          case visit_dependency(step_name, adjacency, state) do
-            {:ok, next_state} -> {:cont, {:ok, next_state}}
-            {:error, :cycle} -> {:halt, {:error, :cycle}}
-          end
-        end
-      )
-
-    result == :ok
+    DependencyGraph.acyclic?(adjacency)
   end
 
   defp transition_graph_acyclic?(steps, transitions) do
@@ -1727,7 +1697,7 @@ defmodule Squidie.Workflow.Spec do
     opts = field(step, :opts) || []
 
     if Keyword.keyword?(opts) do
-      case dependency_list(opts) do
+      case DependencyGraph.dependency_list(opts) do
         {:ok, values} -> values
         _other -> []
       end
@@ -1759,44 +1729,6 @@ defmodule Squidie.Workflow.Spec do
       {:ok, retry_opts} -> [%{step: field(step, :name), opts: retry_opts}]
       :error -> []
     end
-  end
-
-  defp visit_dependency(step_name, adjacency, %{visited: visited} = state) do
-    cond do
-      MapSet.member?(visited, step_name) ->
-        {:ok, state}
-
-      MapSet.member?(state.visiting, step_name) ->
-        {:error, :cycle}
-
-      true ->
-        state = %{state | visiting: MapSet.put(state.visiting, step_name)}
-
-        adjacency
-        |> Map.get(step_name, [])
-        |> visit_dependencies(adjacency, state)
-        |> case do
-          {:ok, next_state} ->
-            {:ok,
-             %{
-               next_state
-               | visiting: MapSet.delete(next_state.visiting, step_name),
-                 visited: MapSet.put(next_state.visited, step_name)
-             }}
-
-          {:error, :cycle} ->
-            {:error, :cycle}
-        end
-    end
-  end
-
-  defp visit_dependencies(dependencies, adjacency, state) do
-    Enum.reduce_while(dependencies, {:ok, state}, fn dependency, {:ok, acc} ->
-      case visit_dependency(dependency, adjacency, acc) do
-        {:ok, next_acc} -> {:cont, {:ok, next_acc}}
-        {:error, :cycle} -> {:halt, {:error, :cycle}}
-      end
-    end)
   end
 
   defp expected_entry_steps(steps, transitions) do
@@ -1840,7 +1772,7 @@ defmodule Squidie.Workflow.Spec do
       Enum.reduce(@recognized_nested_fields, errors, fn {collection, keys}, acc ->
         spec
         |> list_field(collection)
-        |> Enum.with_index()
+        |> Stream.with_index()
         |> Enum.reduce(acc, fn {value, index}, nested_acc ->
           validate_ambiguous_keys(nested_acc, value, [collection, index], keys)
         end)
@@ -1848,7 +1780,7 @@ defmodule Squidie.Workflow.Spec do
 
     spec
     |> list_field(:triggers)
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {trigger, trigger_index}, acc ->
       acc
       |> validate_trigger_config_ambiguous_keys(trigger, trigger_index)
@@ -1873,7 +1805,7 @@ defmodule Squidie.Workflow.Spec do
       end
 
     payload
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce(errors, fn {payload_field, payload_index}, acc ->
       validate_ambiguous_keys(
         acc,
@@ -1922,18 +1854,11 @@ defmodule Squidie.Workflow.Spec do
   defp valid_payload_default?(:string, {:now, :iso8601}), do: true
   defp valid_payload_default?(type, default), do: input_matches_type?(default, type)
 
-  defp input_matches_type?(value, :string), do: is_binary(value)
-  defp input_matches_type?(value, :integer), do: is_integer(value)
-  defp input_matches_type?(value, :float), do: is_float(value)
-  defp input_matches_type?(value, :boolean), do: is_boolean(value)
-  defp input_matches_type?(value, :map), do: is_map(value)
-  defp input_matches_type?(value, :list), do: is_list(value)
-  defp input_matches_type?(value, :atom), do: is_atom(value)
-  defp input_matches_type?(_value, _unknown_type), do: true
+  defp input_matches_type?(value, type), do: ValueType.matches?(value, type)
 
   defp atom_name?(value), do: is_atom(value) and not is_nil(value)
 
   defp error(path, code, message, details) do
-    %{path: path, code: code, message: message, details: details}
+    Map.new(path: path, code: code, message: message, details: details)
   end
 end

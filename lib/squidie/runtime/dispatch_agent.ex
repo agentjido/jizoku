@@ -13,6 +13,7 @@ defmodule Squidie.Runtime.DispatchAgent do
     default_plugins: false
 
   alias Jido.Agent
+  alias Squidie.Runtime.DispatchAgent.State
   alias Squidie.Runtime.DispatchNotifier
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
@@ -57,11 +58,7 @@ defmodule Squidie.Runtime.DispatchAgent do
       {:ok,
        new(
          id: agent_id(queue),
-         state: %{
-           queue: queue,
-           projection: projection,
-           thread_rev: loaded_thread.rev
-         }
+         state: dispatch_state(queue, projection, loaded_thread.rev)
        )}
     end
   end
@@ -80,7 +77,7 @@ defmodule Squidie.Runtime.DispatchAgent do
         storage,
         %Agent{
           agent_module: __MODULE__,
-          state: %{queue: queue, projection: projection, thread_rev: thread_rev}
+          state: %State{queue: queue, projection: projection, thread_rev: thread_rev}
         },
         opts \\ []
       )
@@ -95,7 +92,7 @@ defmodule Squidie.Runtime.DispatchAgent do
           Squidie.Runtime.DispatchProtocol.ActionAttempt.t()
         ]
   def visible_attempts(
-        %Agent{agent_module: __MODULE__, state: %{projection: projection}},
+        %Agent{agent_module: __MODULE__, state: %State{projection: projection}},
         %DateTime{} = at
       ) do
     Projection.visible_attempts(projection, at)
@@ -108,7 +105,7 @@ defmodule Squidie.Runtime.DispatchAgent do
           Squidie.Runtime.DispatchProtocol.ActionAttempt.t()
         ]
   def expired_claims(
-        %Agent{agent_module: __MODULE__, state: %{projection: projection}},
+        %Agent{agent_module: __MODULE__, state: %State{projection: projection}},
         %DateTime{} = at
       ) do
     Projection.expired_claims(projection, at)
@@ -118,7 +115,7 @@ defmodule Squidie.Runtime.DispatchAgent do
   Lists completed dispatch attempts waiting for workflow application.
   """
   @spec completed_results(Agent.t()) :: [Squidie.Runtime.DispatchProtocol.ActionAttempt.t()]
-  def completed_results(%Agent{agent_module: __MODULE__, state: %{projection: projection}}) do
+  def completed_results(%Agent{agent_module: __MODULE__, state: %State{projection: projection}}) do
     Projection.completed_results(projection)
   end
 
@@ -126,7 +123,7 @@ defmodule Squidie.Runtime.DispatchAgent do
   Returns every runnable key already known by the dispatch projection.
   """
   @spec runnable_keys(Agent.t()) :: MapSet.t(String.t())
-  def runnable_keys(%Agent{agent_module: __MODULE__, state: %{projection: projection}}) do
+  def runnable_keys(%Agent{agent_module: __MODULE__, state: %State{projection: projection}}) do
     Projection.attempt_runnable_keys(projection)
   end
 
@@ -134,7 +131,7 @@ defmodule Squidie.Runtime.DispatchAgent do
   Returns every run id known by the dispatch projection.
   """
   @spec run_ids(Agent.t()) :: MapSet.t(String.t())
-  def run_ids(%Agent{agent_module: __MODULE__, state: %{projection: projection}}) do
+  def run_ids(%Agent{agent_module: __MODULE__, state: %State{projection: projection}}) do
     Projection.run_ids(projection)
   end
 
@@ -154,7 +151,11 @@ defmodule Squidie.Runtime.DispatchAgent do
         storage,
         %Agent{
           agent_module: __MODULE__,
-          state: %{queue: queue, projection: %Projection{} = projection, thread_rev: thread_rev}
+          state: %State{
+            queue: queue,
+            projection: %Projection{} = projection,
+            thread_rev: thread_rev
+          }
         } = agent,
         run_id,
         opts
@@ -195,7 +196,11 @@ defmodule Squidie.Runtime.DispatchAgent do
         storage,
         %Agent{
           agent_module: __MODULE__,
-          state: %{queue: queue, projection: %Projection{} = projection, thread_rev: thread_rev}
+          state: %State{
+            queue: queue,
+            projection: %Projection{} = projection,
+            thread_rev: thread_rev
+          }
         } = agent,
         run_id,
         runnables,
@@ -239,7 +244,11 @@ defmodule Squidie.Runtime.DispatchAgent do
         storage,
         %Agent{
           agent_module: __MODULE__,
-          state: %{queue: queue, projection: %Projection{} = projection, thread_rev: thread_rev}
+          state: %State{
+            queue: queue,
+            projection: %Projection{} = projection,
+            thread_rev: thread_rev
+          }
         } = agent,
         owner_id,
         opts \\ []
@@ -265,7 +274,11 @@ defmodule Squidie.Runtime.DispatchAgent do
         storage,
         %Agent{
           agent_module: __MODULE__,
-          state: %{queue: queue, projection: %Projection{} = projection, thread_rev: thread_rev}
+          state: %State{
+            queue: queue,
+            projection: %Projection{} = projection,
+            thread_rev: thread_rev
+          }
         } = agent,
         runnable_key,
         claim_id,
@@ -293,11 +306,11 @@ defmodule Squidie.Runtime.DispatchAgent do
          {:ok, heartbeat_agent} <-
            persist_dispatch_entry(storage, agent, projection, thread_rev, heartbeat_entry) do
       {:ok,
-       %{
-         agent: heartbeat_agent,
-         attempt: claimed_attempt!(heartbeat_agent, runnable_key),
-         lease_until: lease_until
-       }}
+       lifecycle_update(
+         heartbeat_agent,
+         claimed_attempt!(heartbeat_agent, runnable_key),
+         lease_until
+       )}
     end
   end
 
@@ -320,7 +333,11 @@ defmodule Squidie.Runtime.DispatchAgent do
         storage,
         %Agent{
           agent_module: __MODULE__,
-          state: %{queue: queue, projection: %Projection{} = projection, thread_rev: thread_rev}
+          state: %State{
+            queue: queue,
+            projection: %Projection{} = projection,
+            thread_rev: thread_rev
+          }
         } = agent,
         runnable_key,
         claim_id,
@@ -371,7 +388,11 @@ defmodule Squidie.Runtime.DispatchAgent do
         storage,
         %Agent{
           agent_module: __MODULE__,
-          state: %{queue: queue, projection: %Projection{} = projection, thread_rev: thread_rev}
+          state: %State{
+            queue: queue,
+            projection: %Projection{} = projection,
+            thread_rev: thread_rev
+          }
         } = agent,
         runnable_key,
         claim_id,
@@ -404,7 +425,7 @@ defmodule Squidie.Runtime.DispatchAgent do
            ),
          {:ok, failed_agent} <-
            persist_dispatch_entry(storage, agent, projection, thread_rev, failed_entry) do
-      {:ok, %{agent: failed_agent, attempt: claimed_attempt!(failed_agent, runnable_key)}}
+      {:ok, lifecycle_update(failed_agent, claimed_attempt!(failed_agent, runnable_key))}
     end
   end
 
@@ -457,7 +478,7 @@ defmodule Squidie.Runtime.DispatchAgent do
   end
 
   defp complete_target({:completed, %ActionAttempt{} = attempt}, %{agent: agent}) do
-    {:ok, %{agent: agent, attempt: attempt}}
+    {:ok, lifecycle_update(agent, attempt)}
   end
 
   defp complete_target(
@@ -490,7 +511,7 @@ defmodule Squidie.Runtime.DispatchAgent do
          {:ok, completed_agent} <-
            persist_dispatch_entry(storage, agent, projection, thread_rev, completed_entry) do
       {:ok,
-       %{agent: completed_agent, attempt: claimed_attempt!(completed_agent, attempt.runnable_key)}}
+       lifecycle_update(completed_agent, claimed_attempt!(completed_agent, attempt.runnable_key))}
     end
   end
 
@@ -637,7 +658,7 @@ defmodule Squidie.Runtime.DispatchAgent do
          [],
          _wakeup
        ) do
-    {:ok, %{agent: agent, runnables: []}}
+    {:ok, schedule_update(agent, [])}
   end
 
   defp persist_dispatch_entries(
@@ -702,7 +723,7 @@ defmodule Squidie.Runtime.DispatchAgent do
 
     case result do
       {:ok, notified_agent, _notified_runnables} ->
-        {:ok, %{agent: notified_agent, runnables: scheduled_runnables}}
+        {:ok, schedule_update(notified_agent, scheduled_runnables)}
     end
   end
 
@@ -715,7 +736,7 @@ defmodule Squidie.Runtime.DispatchAgent do
          _notifier_opts,
          %DateTime{}
        ) do
-    {:ok, %{agent: agent, runnables: scheduled_runnables}}
+    {:ok, schedule_update(agent, scheduled_runnables)}
   end
 
   defp notify_scheduled_attempt(
@@ -801,14 +822,7 @@ defmodule Squidie.Runtime.DispatchAgent do
            persist_dispatch_entry(storage, agent, projection, thread_rev, claim_entry) do
       claimed_attempt = claimed_attempt!(claimed_agent, attempt.runnable_key)
 
-      {:ok,
-       %{
-         agent: claimed_agent,
-         attempt: claimed_attempt,
-         claim_id: claim_id,
-         claim_token: claim_token,
-         lease_until: lease_until
-       }}
+      {:ok, claim_result(claimed_agent, claimed_attempt, claim_id, claim_token, lease_until)}
     end
   end
 
@@ -831,12 +845,41 @@ defmodule Squidie.Runtime.DispatchAgent do
   defp apply_dispatch_entries(%Agent{} = agent, %Projection{} = projection, entries, thread_rev) do
     %Agent{
       agent
-      | state: %{
-          agent.state
-          | projection: Projection.replay(projection, entries),
-            thread_rev: thread_rev
-        }
+      | state:
+          dispatch_state(agent.state.queue, Projection.replay(projection, entries), thread_rev)
     }
+  end
+
+  defp dispatch_state(queue, %Projection{} = projection, thread_rev) do
+    State.new(queue, projection, thread_rev)
+  end
+
+  defp lifecycle_update(%Agent{} = agent, %ActionAttempt{} = attempt) do
+    Map.new(agent: agent, attempt: attempt)
+  end
+
+  defp lifecycle_update(%Agent{} = agent, %ActionAttempt{} = attempt, %DateTime{} = lease_until) do
+    Map.new(agent: agent, attempt: attempt, lease_until: lease_until)
+  end
+
+  defp schedule_update(%Agent{} = agent, runnables) when is_list(runnables) do
+    Map.new(agent: agent, runnables: runnables)
+  end
+
+  defp claim_result(
+         %Agent{} = agent,
+         %ActionAttempt{} = attempt,
+         claim_id,
+         claim_token,
+         %DateTime{} = lease_until
+       ) do
+    Map.new(
+      agent: agent,
+      attempt: attempt,
+      claim_id: claim_id,
+      claim_token: claim_token,
+      lease_until: lease_until
+    )
   end
 
   defp runnable_key(runnable) when is_map(runnable) do
@@ -849,7 +892,10 @@ defmodule Squidie.Runtime.DispatchAgent do
     Map.get(runnable, key) || Map.get(runnable, Atom.to_string(key))
   end
 
-  defp claimed_attempt!(%Agent{state: %{projection: %Projection{} = projection}}, runnable_key) do
+  defp claimed_attempt!(
+         %Agent{state: %State{projection: %Projection{} = projection}},
+         runnable_key
+       ) do
     Map.fetch!(projection.attempts, runnable_key)
   end
 

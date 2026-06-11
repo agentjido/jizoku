@@ -33,9 +33,9 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
       )
       when is_atom(child_workflow) and is_atom(child_trigger) and is_map(payload) and
              is_list(opts) do
-    with {:ok, storage} <- journal_storage(opts),
-         {:ok, queue} <- queue(opts),
-         {:ok, now} <- now(opts),
+    with {:ok, storage} <- Options.storage_from_opts(opts),
+         {:ok, queue} <- Options.queue_from_opts(opts),
+         {:ok, now} <- Options.now_from_opts(opts),
          {:ok, child_key} <- child_key(opts),
          {:ok, metadata} <- metadata(opts),
          {:ok, origin} <- origin(parent_context),
@@ -86,25 +86,6 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
     {:error, {:invalid_parent_context, :expected_step_context}}
   end
 
-  defp journal_storage(opts) do
-    opts
-    |> Keyword.get(:journal_storage)
-    |> Options.storage()
-  end
-
-  defp queue(opts) do
-    opts
-    |> Keyword.get(:queue, "default")
-    |> Options.queue()
-  end
-
-  defp now(opts) do
-    case Keyword.get(opts, :now, DateTime.utc_now()) do
-      %DateTime{} = now -> {:ok, now}
-      _invalid -> {:error, {:invalid_option, {:now, :invalid}}}
-    end
-  end
-
   defp child_key(opts) do
     case Keyword.fetch(opts, :child_key) do
       {:ok, child_key} when is_binary(child_key) ->
@@ -129,29 +110,12 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
   end
 
   defp validate_metadata(metadata) do
-    if storage_safe_value?(metadata) do
+    if Options.storage_safe_value?(metadata) do
       {:ok, metadata}
     else
       {:error, {:invalid_option, {:metadata, :invalid}}}
     end
   end
-
-  defp storage_safe_value?(value) when is_binary(value) or is_number(value) or is_boolean(value),
-    do: true
-
-  defp storage_safe_value?(nil), do: true
-
-  defp storage_safe_value?(values) when is_list(values),
-    do: Enum.all?(values, &storage_safe_value?/1)
-
-  defp storage_safe_value?(%{} = map) when not is_struct(map) do
-    Enum.all?(map, fn
-      {key, value} when is_binary(key) or is_atom(key) -> storage_safe_value?(value)
-      {_key, _value} -> false
-    end)
-  end
-
-  defp storage_safe_value?(_value), do: false
 
   defp parent_run_id(%Context{run_id: run_id}) when is_binary(run_id) do
     Options.thread_part(run_id, :parent_run_id)
@@ -246,14 +210,14 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
   end
 
   defp parent_context(parent_run_id, origin, child_key, metadata) do
-    %{
+    Map.new(
       run_id: parent_run_id,
       runnable_key: origin.runnable_key,
       step: origin.step,
       attempt: origin.attempt,
       child_key: child_key,
       metadata: metadata
-    }
+    )
   end
 
   defp ensure_parent_linked(storage, parent_context, parent_run_id, child, %DateTime{} = now) do
@@ -410,21 +374,28 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
   end
 
   defp child_link_state(entries, child) do
-    child_links = Enum.filter(entries, &(&1.type == :child_run_started))
+    link_state =
+      Enum.reduce_while(entries, :missing, fn
+        %{type: :child_run_started} = entry, state ->
+          cond do
+            same_child_link?(entry, child) -> {:halt, {:match, entry}}
+            same_child_key?(entry, child) -> {:cont, :conflict}
+            true -> {:cont, state}
+          end
 
-    case Enum.find(child_links, &same_child_link?(&1, child)) do
-      nil ->
-        if Enum.any?(child_links, &same_child_key?(&1, child)) do
-          :conflict
-        else
-          :missing
-        end
+        _entry, state ->
+          {:cont, state}
+      end)
 
-      entry ->
+    case link_state do
+      {:match, entry} ->
         case parent_from_child_link(entry) do
           {:ok, parent} -> {:linked, parent}
           {:error, :conflict} -> :conflict
         end
+
+      state ->
+        state
     end
   end
 
@@ -453,18 +424,21 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          attempt when is_integer(attempt) <- origin_value(origin, :attempt),
          child_key when is_binary(child_key) <- entry_value(entry, :child_key),
          metadata when is_map(metadata) <- entry_value(entry, :metadata) || %{} do
-      {:ok,
-       %{
-         run_id: run_id,
-         runnable_key: runnable_key,
-         step: step,
-         attempt: attempt,
-         child_key: child_key,
-         metadata: metadata
-       }}
+      {:ok, parent_context(run_id, runnable_key, step, attempt, child_key, metadata)}
     else
       _invalid -> {:error, :conflict}
     end
+  end
+
+  defp parent_context(parent_run_id, runnable_key, step, attempt, child_key, metadata) do
+    Map.new(
+      run_id: parent_run_id,
+      runnable_key: runnable_key,
+      step: step,
+      attempt: attempt,
+      child_key: child_key,
+      metadata: metadata
+    )
   end
 
   defp origin_value(origin, key) when is_map(origin) do

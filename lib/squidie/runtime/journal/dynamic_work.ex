@@ -4,6 +4,7 @@ defmodule Squidie.Runtime.Journal.DynamicWork do
 
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.Entry
+  alias Squidie.Runtime.DynamicEdge
   alias Squidie.Workflow.ActionRegistry
   alias Squidie.Workflow.Definition
 
@@ -203,13 +204,13 @@ defmodule Squidie.Runtime.Journal.DynamicWork do
     Enum.map(nodes, fn node ->
       node_id = Map.fetch!(node, :id)
 
-      %{
-        id: Enum.join([origin_step, "dynamic", node_id], ":"),
-        from: origin_step,
-        to: node_id,
-        type: :dynamic,
-        status: :pending
-      }
+      DynamicEdge.attrs(
+        Enum.join([origin_step, "dynamic", node_id], ":"),
+        origin_step,
+        node_id,
+        :dynamic,
+        :pending
+      )
     end)
   end
 
@@ -421,14 +422,7 @@ defmodule Squidie.Runtime.Journal.DynamicWork do
          :ok <- known_edge_to(to, nodes),
          {:ok, type} <- optional_edge_value(edge, :type, index),
          {:ok, status} <- optional_edge_value(edge, :status, index) do
-      {:ok,
-       compact(%{
-         id: id,
-         from: from,
-         to: to,
-         type: type,
-         status: status
-       })}
+      {:ok, compact(DynamicEdge.attrs(id, from, to, type, status))}
     end
   end
 

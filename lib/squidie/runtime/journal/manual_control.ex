@@ -10,7 +10,6 @@ defmodule Squidie.Runtime.Journal.ManualControl do
 
   alias Jido.Agent
   alias Squidie.ReadModel.Inspection
-  alias Squidie.Runtime.Deadline
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.Entry
@@ -749,31 +748,14 @@ defmodule Squidie.Runtime.Journal.ManualControl do
     {:ok, %{agent: dispatch_agent, runnables: []}}
   end
 
-  defp schedule_pending_dispatches(_storage, _workflow_agent, _dispatch_agent, _now, 0),
-    do: {:error, :conflict}
-
   defp schedule_pending_dispatches(storage, workflow_agent, dispatch_agent, now, retries_left) do
-    case WorkflowAgent.schedule_pending_dispatches(storage, workflow_agent, dispatch_agent,
-           now: now
-         ) do
-      {:ok, _schedule_update} = ok ->
-        ok
-
-      {:error, :conflict} ->
-        with {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, workflow_agent.state.run_id),
-             {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, dispatch_agent.state.queue) do
-          schedule_pending_dispatches(
-            storage,
-            workflow_agent,
-            dispatch_agent,
-            now,
-            retries_left - 1
-          )
-        end
-
-      {:error, _reason} = error ->
-        error
-    end
+    Squidie.Runtime.Journal.DispatchScheduler.schedule_pending_dispatches(
+      storage,
+      workflow_agent,
+      dispatch_agent,
+      now,
+      retries_left
+    )
   end
 
   defp validate_resume(attrs) do
@@ -903,8 +885,8 @@ defmodule Squidie.Runtime.Journal.ManualControl do
        }) do
     projection
     |> Projection.applied_results()
-    |> Map.values()
-    |> Enum.filter(&is_map/1)
+    |> Enum.filter(fn {_key, value} -> is_map(value) end)
+    |> Enum.map(fn {_key, value} -> value end)
     |> Enum.reduce(%{}, &Map.merge(&2, &1))
   end
 
@@ -920,19 +902,7 @@ defmodule Squidie.Runtime.Journal.ManualControl do
     end)
   end
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   defp successor_input(context, definition, next_step) do
     case Definition.step_input_mapping(definition, next_step) do
@@ -955,19 +925,11 @@ defmodule Squidie.Runtime.Journal.ManualControl do
   end
 
   defp runnables_planned_entry!(run_id, runnables, %DateTime{} = now) do
-    entry!(:runnables_planned, %{
-      run_id: run_id,
-      runnables: runnables,
-      occurred_at: now
-    })
+    Squidie.Runtime.Journal.EntryBuilder.runnables_planned!(run_id, runnables, now)
   end
 
   defp run_terminal_entry!(run_id, status, %DateTime{} = now) do
-    entry!(:run_terminal, %{
-      run_id: run_id,
-      status: status,
-      occurred_at: now
-    })
+    Squidie.Runtime.Journal.EntryBuilder.run_terminal!(run_id, status, now)
   end
 
   defp entry!(type, attrs) do
@@ -984,50 +946,27 @@ defmodule Squidie.Runtime.Journal.ManualControl do
          attempt_number,
          %DateTime{} = now
        ) do
-    step = Definition.serialize_step(step_name)
-    runnable_key = "#{run_id}:#{step}:#{attempt_number}"
-
-    with {:ok, recovery} <- replay_recovery_policy(definition, step_name),
-         {:ok, deadline} <- Deadline.from_definition(definition, step_name, now) do
-      runnable = %{
-        run_id: run_id,
-        runnable_key: runnable_key,
-        idempotency_key: runnable_key,
-        attempt_number: attempt_number,
-        queue: queue,
-        step: step,
-        input: input,
-        recovery: recovery,
-        visible_at: now
-      }
-
-      {:ok, maybe_put(runnable, :deadline, deadline)}
-    end
-  end
-
-  defp replay_recovery_policy(definition, step_name) do
-    with {:ok, recovery} <- Definition.step_recovery_policy(definition, step_name) do
-      {:ok, Definition.serialize_recovery_policy(recovery)}
-    end
+    Squidie.Runtime.Journal.EntryBuilder.runnable(
+      definition,
+      run_id,
+      queue,
+      step_name,
+      input,
+      attempt_number,
+      now
+    )
   end
 
   defp run_id(run_id) do
-    case Ecto.UUID.cast(run_id) do
-      {:ok, uuid} -> {:ok, uuid}
-      :error -> {:error, :invalid_run_id}
-    end
+    Options.uuid_run_id(run_id)
   end
 
   defp journal_storage(opts) do
-    opts
-    |> Keyword.get(:journal_storage)
-    |> Options.storage()
+    Options.storage_from_opts(opts)
   end
 
   defp queue(opts) do
-    opts
-    |> Keyword.get(:queue, "default")
-    |> Options.queue()
+    Options.queue_from_opts(opts)
   end
 
   defp now(opts) do

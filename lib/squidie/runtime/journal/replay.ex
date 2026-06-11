@@ -276,8 +276,7 @@ defmodule Squidie.Runtime.Journal.Replay do
 
   defp planned_queues(%Agent{state: %{projection: %Projection{} = projection}}) do
     projection.planned_runnables
-    |> Map.values()
-    |> Enum.map(&runnable_value(&1, :queue))
+    |> Enum.map(fn {_key, runnable} -> runnable_value(runnable, :queue) end)
     |> Enum.reduce(MapSet.new(), fn queue, queues ->
       case Options.queue(queue) do
         {:ok, queue} -> MapSet.put(queues, queue)

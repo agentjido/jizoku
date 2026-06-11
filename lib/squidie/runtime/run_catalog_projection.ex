@@ -9,6 +9,7 @@ defmodule Squidie.Runtime.RunCatalogProjection do
   """
 
   alias Squidie.Runtime.DispatchProtocol.Entry
+  alias Squidie.Runtime.RunProjection
 
   @type anomaly :: %{
           required(:reason) => atom(),
@@ -51,24 +52,18 @@ defmodule Squidie.Runtime.RunCatalogProjection do
   @doc false
   @spec runs(t()) :: [run_summary()]
   def runs(%__MODULE__{runs: runs}) do
-    runs
-    |> Map.values()
-    |> Enum.sort_by(fn %{run_id: run_id, indexed_at: indexed_at} ->
-      {DateTime.to_unix(indexed_at, :microsecond), run_id}
-    end)
+    RunProjection.sorted_runs(runs)
   end
 
   @doc false
   @spec run_ids(t()) :: [String.t()]
   def run_ids(%__MODULE__{} = projection) do
-    projection
-    |> runs()
-    |> Enum.map(& &1.run_id)
+    RunProjection.run_ids(projection.runs)
   end
 
   @doc false
   @spec anomalies(t()) :: [anomaly()]
-  def anomalies(%__MODULE__{anomalies: anomalies}), do: Enum.reverse(anomalies)
+  def anomalies(%__MODULE__{anomalies: anomalies}), do: RunProjection.anomalies(anomalies)
 
   defp apply_entry(%Entry{type: :run_cataloged, data: data} = entry, %__MODULE__{} = projection) do
     if valid_catalog_data?(data) do
@@ -88,12 +83,7 @@ defmodule Squidie.Runtime.RunCatalogProjection do
   defp valid_catalog_data?(_data), do: false
 
   defp catalog_run(%__MODULE__{runs: runs} = projection, entry, data) do
-    summary = %{
-      run_id: data.run_id,
-      workflow: data.workflow,
-      queue: data.queue,
-      indexed_at: entry.occurred_at
-    }
+    summary = RunProjection.summary(data.run_id, data.workflow, data.queue, entry.occurred_at)
 
     case Map.fetch(runs, data.run_id) do
       {:ok, ^summary} ->
@@ -108,38 +98,9 @@ defmodule Squidie.Runtime.RunCatalogProjection do
   end
 
   defp add_anomaly(%__MODULE__{} = projection, %Entry{} = entry, reason) do
-    data = entry_data(entry)
-
-    anomaly =
-      %{
-        reason: reason,
-        entry_type: entry.type
-      }
-      |> maybe_put_run_id(data)
-      |> maybe_put_workflow(data)
-      |> maybe_put_queue(data)
-
-    %__MODULE__{projection | anomalies: [anomaly | projection.anomalies]}
+    %__MODULE__{
+      projection
+      | anomalies: [RunProjection.anomaly(entry, reason) | projection.anomalies]
+    }
   end
-
-  defp entry_data(%Entry{data: data}) when is_map(data), do: data
-  defp entry_data(%Entry{}), do: %{}
-
-  defp maybe_put_run_id(anomaly, %{run_id: run_id}) when is_binary(run_id) do
-    Map.put(anomaly, :run_id, run_id)
-  end
-
-  defp maybe_put_run_id(anomaly, _data), do: anomaly
-
-  defp maybe_put_workflow(anomaly, %{workflow: workflow}) when is_binary(workflow) do
-    Map.put(anomaly, :workflow, workflow)
-  end
-
-  defp maybe_put_workflow(anomaly, _data), do: anomaly
-
-  defp maybe_put_queue(anomaly, %{queue: queue}) when is_binary(queue) do
-    Map.put(anomaly, :queue, queue)
-  end
-
-  defp maybe_put_queue(anomaly, _data), do: anomaly
 end

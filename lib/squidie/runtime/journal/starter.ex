@@ -18,11 +18,11 @@ defmodule Squidie.Runtime.Journal.Starter do
 
   alias Squidie.ReadModel.Inspection
   alias Squidie.Runtime.AgentRecovery
-  alias Squidie.Runtime.Deadline
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.CommandReceipt
+  alias Squidie.Runtime.Journal.EntryBuilder
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.RunCatalogProjection
   alias Squidie.Runtime.RunIndexProjection
@@ -35,18 +35,6 @@ defmodule Squidie.Runtime.Journal.Starter do
   alias Squidie.Workflow.Spec
 
   @dispatch_schedule_retries 25
-  @spec_fields [
-    :workflow,
-    :definition_version,
-    :triggers,
-    :payload,
-    :steps,
-    :transitions,
-    :retries,
-    :entry_steps,
-    :initial_step,
-    :entry_step
-  ]
 
   @type start_error ::
           {:invalid_payload, Definition.payload_error_details()}
@@ -69,9 +57,9 @@ defmodule Squidie.Runtime.Journal.Starter do
   def start_run(workflow, trigger_name, payload, opts)
       when is_atom(workflow) and is_map(payload) and is_list(opts) do
     with :ok <- validate_command_signal(opts),
-         {:ok, storage} <- journal_storage(opts),
-         {:ok, queue} <- queue(opts),
-         {:ok, now} <- now(opts),
+         {:ok, storage} <- Options.storage_from_opts(opts),
+         {:ok, queue} <- Options.queue_from_opts(opts),
+         {:ok, now} <- Options.now_from_opts(opts),
          {:ok, definition} <- Definition.load(workflow),
          {:ok, trigger} <- trigger(definition, trigger_name),
          {:ok, resolved_payload} <- Definition.resolve_payload(trigger, payload),
@@ -109,9 +97,9 @@ defmodule Squidie.Runtime.Journal.Starter do
   def start_spec_run(spec, trigger_name, payload, opts)
       when is_map(payload) and is_list(opts) do
     with :ok <- validate_command_signal(opts),
-         {:ok, storage} <- journal_storage(opts),
-         {:ok, queue} <- queue(opts),
-         {:ok, now} <- now(opts),
+         {:ok, storage} <- Options.storage_from_opts(opts),
+         {:ok, queue} <- Options.queue_from_opts(opts),
+         {:ok, now} <- Options.now_from_opts(opts),
          {:ok, spec} <- runtime_spec(spec, opts),
          definition <- definition_from_spec(spec),
          {:ok, trigger} <- trigger(definition, trigger_name),
@@ -248,20 +236,10 @@ defmodule Squidie.Runtime.Journal.Starter do
     struct(Spec, spec_field_values(spec))
   end
 
-  defp definition_from_spec(%Spec{} = spec), do: Map.from_struct(spec)
+  defp definition_from_spec(%Spec{} = spec), do: Squidie.Workflow.SpecData.from_struct(spec)
 
-  defp spec_field_values(spec) when is_map(spec) do
-    Map.new(@spec_fields, fn field ->
-      {field, spec_field_value(spec, field)}
-    end)
-  end
-
-  defp spec_field_value(spec, field) do
-    case Map.fetch(spec, field) do
-      {:ok, value} -> value
-      :error -> Map.get(spec, Atom.to_string(field))
-    end
-  end
+  defp spec_field_values(spec) when is_map(spec),
+    do: Squidie.Workflow.SpecData.struct_fields(spec)
 
   defp trigger(definition, nil),
     do: Definition.trigger(definition, Definition.default_trigger(definition))
@@ -331,11 +309,7 @@ defmodule Squidie.Runtime.Journal.Starter do
              now
            ),
          {:ok, runnables_planned} <-
-           DispatchProtocol.new_entry(:runnables_planned, %{
-             run_id: run_id,
-             runnables: runnables,
-             occurred_at: now
-           }),
+           EntryBuilder.runnables_planned(run_id, runnables, now),
          {:ok, _run_thread} <-
            Journal.append_entries(storage, [run_signal_received, run_started, runnables_planned],
              expected_rev: 0
@@ -351,12 +325,9 @@ defmodule Squidie.Runtime.Journal.Starter do
   end
 
   defp maybe_put_runtime_definition(attrs, :runtime_spec, %Spec{} = spec) do
-    attrs =
-      attrs
-      |> Map.put(:definition_source, :runtime_spec)
-      |> Map.put(:definition_spec, spec)
-
     attrs
+    |> Map.put(:definition_source, :runtime_spec)
+    |> Map.put(:definition_spec, spec)
   end
 
   defp maybe_put_runtime_definition(attrs, _source, _spec), do: attrs
@@ -506,36 +477,11 @@ defmodule Squidie.Runtime.Journal.Starter do
          %DateTime{} = now
        )
        when is_atom(step) do
-    attempt_number = 1
-    step_name = Definition.serialize_step(step)
-    runnable_key = "#{run_id}:#{step_name}:#{attempt_number}"
-
-    with {:ok, recovery} <- replay_recovery_policy(definition, step),
-         {:ok, deadline} <- Deadline.from_definition(definition, step, now) do
-      runnable = %{
-        run_id: run_id,
-        runnable_key: runnable_key,
-        idempotency_key: runnable_key,
-        attempt_number: attempt_number,
-        queue: queue,
-        step: step_name,
-        input: input || %{},
-        recovery: recovery,
-        visible_at: now
-      }
-
-      {:ok, maybe_put(runnable, :deadline, deadline)}
-    end
+    EntryBuilder.runnable(definition, run_id, queue, step, input || %{}, 1, now)
   end
 
   defp journal_runnable(_definition, _run_id, _queue, runnable, %DateTime{}) do
     {:error, {:invalid_runnable, runnable}}
-  end
-
-  defp replay_recovery_policy(definition, step) do
-    with {:ok, recovery} <- Definition.step_recovery_policy(definition, step) do
-      {:ok, Definition.serialize_recovery_policy(recovery)}
-    end
   end
 
   defp put_checkpoints(storage, workflow_agent, dispatch_agent, %DateTime{} = now) do
@@ -711,9 +657,6 @@ defmodule Squidie.Runtime.Journal.Starter do
         {:conflicting, summary}
     end
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp complete_started_run(
          storage,
@@ -955,21 +898,21 @@ defmodule Squidie.Runtime.Journal.Starter do
   defp canonical_start_signal_payload("start_run", payload, workflow) when is_map(payload) do
     with {:ok, trigger} <- canonical_start_run_trigger(payload_value(payload, :trigger), workflow) do
       {:ok,
-       %{
-         workflow: payload_value(payload, :workflow),
-         trigger: trigger,
-         input: payload_value(payload, :input)
-       }}
+       Signal.start_payload(
+         payload_value(payload, :workflow),
+         trigger,
+         payload_value(payload, :input)
+       )}
     end
   end
 
   defp canonical_start_signal_payload("start_cron", payload, _workflow) when is_map(payload) do
     {:ok,
-     %{
-       workflow: payload_value(payload, :workflow),
-       trigger: payload_value(payload, :trigger),
-       input: payload_value(payload, :input)
-     }}
+     Signal.start_payload(
+       payload_value(payload, :workflow),
+       payload_value(payload, :trigger),
+       payload_value(payload, :input)
+     )}
   end
 
   defp canonical_start_signal_payload(_signal_type, payload, _workflow) when is_map(payload),
@@ -1148,25 +1091,6 @@ defmodule Squidie.Runtime.Journal.Starter do
     end
   end
 
-  defp journal_storage(opts) do
-    opts
-    |> Keyword.get(:journal_storage)
-    |> Options.storage()
-  end
-
-  defp queue(opts) do
-    opts
-    |> Keyword.get(:queue, "default")
-    |> Options.queue()
-  end
-
-  defp now(opts) do
-    case Keyword.get(opts, :now, DateTime.utc_now()) do
-      %DateTime{} = now -> {:ok, now}
-      _invalid -> {:error, {:invalid_option, {:now, :invalid}}}
-    end
-  end
-
   defp run_id(opts) do
     case Keyword.get(opts, :run_id, Ecto.UUID.generate()) do
       run_id -> Options.uuid(run_id)
@@ -1228,28 +1152,11 @@ defmodule Squidie.Runtime.Journal.Starter do
   end
 
   defp storage_safe_parent_metadata?(metadata) when is_map(metadata),
-    do: storage_safe_value?(metadata)
+    do: Options.storage_safe_value?(metadata)
 
   defp storage_safe_parent_metadata?(nil), do: true
 
   defp storage_safe_parent_metadata?(_metadata), do: false
-
-  defp storage_safe_value?(value) when is_binary(value) or is_number(value) or is_boolean(value),
-    do: true
-
-  defp storage_safe_value?(nil), do: true
-
-  defp storage_safe_value?(values) when is_list(values),
-    do: Enum.all?(values, &storage_safe_value?/1)
-
-  defp storage_safe_value?(%{} = map) when not is_struct(map) do
-    Enum.all?(map, fn
-      {key, value} when is_binary(key) or is_atom(key) -> storage_safe_value?(value)
-      {_key, _value} -> false
-    end)
-  end
-
-  defp storage_safe_value?(_value), do: false
 
   defp parent_value(parent, key) when is_map(parent) do
     case Map.fetch(parent, key) do

@@ -148,28 +148,12 @@ defmodule Squidie.Runtime.Runner do
 
   defp schedule_idempotency(context) when is_map(context) do
     context
-    |> schedule_context()
-    |> schedule_value(:idempotency)
+    |> Squidie.Runtime.ScheduleContext.get()
+    |> Squidie.Runtime.ScheduleContext.value(:idempotency)
     |> case do
       "skip_duplicate" -> :skip_duplicate
       :skip_duplicate -> :skip_duplicate
       strategy -> strategy
     end
   end
-
-  defp schedule_context(context) do
-    case Map.fetch(context, :schedule) do
-      {:ok, schedule} -> schedule
-      :error -> Map.get(context, "schedule", %{})
-    end
-  end
-
-  defp schedule_value(schedule, key) when is_map(schedule) do
-    case Map.fetch(schedule, key) do
-      {:ok, value} -> value
-      :error -> Map.get(schedule, Atom.to_string(key))
-    end
-  end
-
-  defp schedule_value(_schedule, _key), do: nil
 end

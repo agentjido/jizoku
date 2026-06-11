@@ -589,19 +589,7 @@ defmodule Squidie.ReadModel.Inspection do
     Map.reject(map, fn {_key, value} -> is_nil(value) end)
   end
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   defp normalize_step(step) when is_atom(step), do: Atom.to_string(step)
   defp normalize_step(step), do: step

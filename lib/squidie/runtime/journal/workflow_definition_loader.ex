@@ -6,19 +6,6 @@ defmodule Squidie.Runtime.Journal.WorkflowDefinitionLoader do
   alias Squidie.Workflow.Definition
   alias Squidie.Workflow.Spec
 
-  @spec_fields [
-    :workflow,
-    :definition_version,
-    :triggers,
-    :payload,
-    :steps,
-    :transitions,
-    :retries,
-    :entry_steps,
-    :initial_step,
-    :entry_step
-  ]
-
   @doc false
   @spec load(Journal.storage_config(), String.t(), String.t()) ::
           {:ok, module(), Definition.t()} | {:error, term()}
@@ -108,20 +95,10 @@ defmodule Squidie.Runtime.Journal.WorkflowDefinitionLoader do
     {:error, {:invalid_runtime_definition, :missing_definition_spec}}
   end
 
-  defp definition_from_spec(%Spec{} = spec), do: Map.from_struct(spec)
+  defp definition_from_spec(%Spec{} = spec), do: Squidie.Workflow.SpecData.from_struct(spec)
 
-  defp spec_field_values(spec) when is_map(spec) do
-    Map.new(@spec_fields, fn field ->
-      {field, spec_field_value(spec, field)}
-    end)
-  end
-
-  defp spec_field_value(spec, field) do
-    case Map.fetch(spec, field) do
-      {:ok, value} -> value
-      :error -> Map.get(spec, Atom.to_string(field))
-    end
-  end
+  defp spec_field_values(spec) when is_map(spec),
+    do: Squidie.Workflow.SpecData.struct_fields(spec)
 
   defp metadata_value(data, key) when is_map(data) and is_atom(key) do
     Map.get(data, key) || Map.get(data, Atom.to_string(key))

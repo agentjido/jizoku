@@ -189,7 +189,7 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
     with {:ok, workflow} <- fetch_string(payload, :workflow),
          {:ok, trigger} <- fetch_string_or_nil(payload, :trigger),
          {:ok, input} <- fetch_map(payload, :input) do
-      {:ok, %{workflow: workflow, trigger: trigger, input: input}}
+      {:ok, Signal.start_payload(workflow, trigger, input)}
     end
   end
 
@@ -197,7 +197,7 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
     with {:ok, workflow} <- fetch_string(payload, :workflow),
          {:ok, trigger} <- fetch_string(payload, :trigger),
          {:ok, input} <- fetch_map(payload, :input) do
-      {:ok, %{workflow: workflow, trigger: trigger, input: input}}
+      {:ok, Signal.start_payload(workflow, trigger, input)}
     end
   end
 

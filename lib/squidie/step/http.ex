@@ -545,11 +545,7 @@ defmodule Squidie.Step.HTTP do
   defp redact_url(url), do: url
 
   defp validation_error(errors) do
-    %{
-      message: "HTTP action request validation failed",
-      validation_errors: errors,
-      retryable?: false
-    }
+    Squidie.Step.ErrorPayload.validation_failed("HTTP action request validation failed", errors)
   end
 
   defp field(map, key) when is_map(map) and is_atom(key) do
@@ -626,8 +622,6 @@ defmodule Squidie.Step.HTTP do
   defp non_empty_binary?(value), do: is_binary(value) and value != ""
 
   defp allowed_methods do
-    @allowed_methods
-    |> Map.keys()
-    |> Enum.join(", ")
+    Enum.map_join(@allowed_methods, ", ", fn {method, _value} -> method end)
   end
 end

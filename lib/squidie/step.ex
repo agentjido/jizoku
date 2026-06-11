@@ -151,11 +151,10 @@ defmodule Squidie.Step do
 
       errors ->
         {:error,
-         %{
-           message: "native step #{target} validation failed",
-           validation_errors: errors,
-           retryable?: false
-         }}
+         Squidie.Step.ErrorPayload.validation_failed(
+           "native step #{target} validation failed",
+           errors
+         )}
     end
   end
 

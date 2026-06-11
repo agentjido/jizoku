@@ -189,7 +189,7 @@ defmodule Squidie.Workflow.ActionRegistry do
   defp resolve_steps(steps, registry) when is_list(steps) do
     {steps, errors} =
       steps
-      |> Enum.with_index()
+      |> Stream.with_index()
       |> Enum.reduce({[], []}, fn {step, index}, {resolved_steps, errors} ->
         case resolve_step(step, index, registry) do
           {:ok, resolved_step} -> {[resolved_step | resolved_steps], errors}
@@ -479,19 +479,7 @@ defmodule Squidie.Workflow.ActionRegistry do
     end
   end
 
-  defp map_value(map, key, default \\ nil)
-
-  defp map_value(map, key, default) when is_map(map) and is_atom(key) do
-    value = Map.get(map, key)
-
-    if is_nil(value) do
-      Map.get(map, Atom.to_string(key), default)
-    else
-      value
-    end
-  end
-
-  defp map_value(_map, _key, default), do: default
+  defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   defp catalog_json_value(value, action, field) do
     case json_value(value, [field]) do
@@ -550,7 +538,7 @@ defmodule Squidie.Workflow.ActionRegistry do
 
   defp json_list(list, path) do
     list
-    |> Enum.with_index()
+    |> Stream.with_index()
     |> Enum.reduce_while({:ok, []}, fn {item, index}, {:ok, acc} ->
       case json_value(item, [index | path]) do
         {:ok, item} -> {:cont, {:ok, [item | acc]}}
@@ -679,12 +667,7 @@ defmodule Squidie.Workflow.ActionRegistry do
   defp module?(_module), do: false
 
   defp error(path, code, message, details) do
-    %{
-      path: path,
-      code: code,
-      message: message,
-      details: details
-    }
+    Map.new(path: path, code: code, message: message, details: details)
   end
 
   defp catalog_error(path, code, message, details), do: error(path, code, message, details)
