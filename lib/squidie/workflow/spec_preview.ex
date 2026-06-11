@@ -311,6 +311,8 @@ defmodule Squidie.Workflow.SpecPreview do
          %Runnable{} = runnable,
          action_opts
        ) do
+    # Dry-run previews intentionally do not expose durable run state. If previews
+    # later need state, build the callback context through Step.Context.from_map/1.
     context = %{
       preview?: true,
       workflow: spec.workflow,
