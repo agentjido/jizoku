@@ -48,7 +48,7 @@ Ecto adapter. See the
 for adapter guarantees.
 
 > **Adoption status**
-> Squidie provides a supported `0.1.x` journal runtime for embedded host-app
+> Squidie provides a supported `0.3.x` journal runtime for embedded host-app
 > workflows.
 >
 > Treat production rollout as an application-owned integration: run the host-app
@@ -99,7 +99,7 @@ Add Squidie to your dependencies:
 ```elixir
 defp deps do
   [
-    {:squidie, "~> 0.2.0"}
+    {:squidie, "~> 0.3.0"}
   ]
 end
 ```

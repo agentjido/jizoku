@@ -5,6 +5,34 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.3.0] - 2026-06-12
+
+### Added
+- Added projection-backed run timeline inspection for operator-facing run
+  history.
+- Added runtime spec preview execution for visual editors and draft workflow
+  validation.
+- Added guardrail validator registries for host-approved input, action, and
+  output guardrails on runtime-authored specs.
+- Added structural quality gates to the release and CI verification surface.
+
+### Changed
+- Runtime journal execution now persists completed guardrail decisions so
+  inspection and explanations keep showing applied guardrail outcomes.
+- Runtime journal modules were reorganized around entry builders, options,
+  dispatch scheduling, workflow definition loading, and explicit runtime
+  contexts.
+- Usage rules and workflow-authoring docs now describe guardrail registry and
+  runtime spec preview behavior.
+
+### Fixed
+- Runtime spec validation now rejects incompatible guardrail policy and
+  placement combinations before activation.
+- Guardrail config validation now rejects malformed config instead of silently
+  coercing it to an empty map.
+- Preview guardrail evaluation now uses the same step index semantics as
+  runtime execution.
+
 ## [0.2.0] - 2026-06-10
 
 ### Added

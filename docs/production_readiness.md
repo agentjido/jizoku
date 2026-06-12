@@ -1,6 +1,6 @@
 # Production Readiness
 
-Squidie provides a supported `0.1.x` journal runtime for embedded host-app
+Squidie provides a supported `0.3.x` journal runtime for embedded host-app
 workflows.
 
 Squidie is ready to adopt inside host applications that can own their worker

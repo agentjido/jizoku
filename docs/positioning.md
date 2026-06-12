@@ -58,7 +58,7 @@ Status labels describe current adoption readiness, not roadmap intent.
 - Supported: available in the journal-backed runtime, covered by repository docs
   and tests, and stable enough to treat as part of the current product surface.
 - Supported, evolving: available for real use today, but the surrounding API,
-  examples, or documentation may still tighten through the `0.1.x` release
+  examples, or documentation may still tighten through the `0.3.x` release
   line. Use these capabilities when their notes match your workflow, but expect
   integration details to be less settled than plain supported rows.
 - Out of scope: intentionally not part of Squidie's product surface, even if
@@ -187,7 +187,7 @@ Choose another layer when:
 
 Supported rows are available in the journal-backed runtime. Supported, evolving
 rows are also usable now, with API polish, examples, or documentation still
-settling through the `0.1.x` release line.
+settling through the `0.3.x` release line.
 
 The configured journal runtime provides the workflow DSL, persisted run and
 dispatch facts, journal dispatch claims, retries, approvals, pause/resume
