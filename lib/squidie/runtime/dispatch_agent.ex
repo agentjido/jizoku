@@ -361,6 +361,7 @@ defmodule Squidie.Runtime.DispatchAgent do
         claim_token: claim_token,
         result: result,
         execution_opts: Keyword.get(opts, :execution_opts, []),
+        guardrails: Keyword.get(opts, :guardrails, []),
         now: now
       })
     end
@@ -493,6 +494,7 @@ defmodule Squidie.Runtime.DispatchAgent do
            claim_token: claim_token,
            result: result,
            execution_opts: execution_opts,
+           guardrails: guardrails,
            now: now
          }
        ) do
@@ -505,6 +507,7 @@ defmodule Squidie.Runtime.DispatchAgent do
              claim_token_hash: claim_token_hash(claim_token),
              queue: queue,
              result: result,
+             guardrails: guardrails,
              execution_opts: execution_opts,
              occurred_at: now
            }),

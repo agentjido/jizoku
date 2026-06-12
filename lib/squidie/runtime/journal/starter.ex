@@ -31,6 +31,7 @@ defmodule Squidie.Runtime.Journal.Starter do
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Workflow.ActionRegistry
   alias Squidie.Workflow.Definition
+  alias Squidie.Workflow.GuardrailRegistry
   alias Squidie.Workflow.RunicPlanner
   alias Squidie.Workflow.Spec
 
@@ -106,6 +107,7 @@ defmodule Squidie.Runtime.Journal.Starter do
          {:ok, resolved_payload} <- Definition.resolve_payload(trigger, payload),
          {:ok, planner} <- RunicPlanner.new(spec),
          {:ok, _planned, runnables} <- RunicPlanner.plan(planner, resolved_payload),
+         :ok <- validate_initial_guardrails(definition, runnables, opts),
          :ok <- validate_planned_action_inputs(definition, runnables),
          persisted_spec <- persisted_runtime_spec(spec),
          persisted_definition <- definition_from_spec(persisted_spec),
@@ -140,9 +142,14 @@ defmodule Squidie.Runtime.Journal.Starter do
   defp runtime_spec(spec, opts) do
     with {:ok, resolved_spec} <- resolve_runtime_spec(spec, opts),
          resolved_spec <- to_spec_struct(resolved_spec),
-         :ok <- Spec.validate(resolved_spec) do
+         :ok <- Spec.validate(resolved_spec),
+         :ok <- validate_runtime_spec_guardrails(resolved_spec, opts) do
       {:ok, resolved_spec}
     end
+  end
+
+  defp validate_runtime_spec_guardrails(%Spec{} = spec, opts) do
+    GuardrailRegistry.validate_spec_option(spec, opts)
   end
 
   defp validate_planned_action_inputs(definition, runnables) when is_list(runnables) do
@@ -155,6 +162,44 @@ defmodule Squidie.Runtime.Journal.Starter do
       end
     end)
   end
+
+  defp validate_initial_guardrails(definition, runnables, opts) when is_list(runnables) do
+    case Keyword.fetch(opts, :guardrail_registry) do
+      {:ok, registry} ->
+        reduce_initial_guardrails(definition, runnables, registry)
+
+      :error ->
+        :ok
+    end
+  end
+
+  defp reduce_initial_guardrails(definition, runnables, registry) do
+    runnables
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {runnable, index}, :ok ->
+      case validate_initial_guardrail(definition, runnable, index, registry) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_initial_guardrail(definition, %{step: step, input: input}, index, registry)
+       when is_atom(step) and is_map(input) do
+    with {:ok, step_definition} <- Definition.step(definition, step) do
+      case GuardrailRegistry.evaluate_step(step_definition, index, :input, input, registry, %{
+             phase: :run_start
+           }) do
+        {:ok, _decisions} ->
+          :ok
+
+        {:error, error, _decisions} ->
+          {:error, {:invalid_workflow_spec, [error]}}
+      end
+    end
+  end
+
+  defp validate_initial_guardrail(_definition, _runnable, _index, _registry), do: :ok
 
   defp persisted_runtime_spec(%Spec{} = spec) do
     %Spec{spec | steps: persisted_steps(spec.steps)}

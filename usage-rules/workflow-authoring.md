@@ -13,6 +13,9 @@
 - Use `Squidie.Workflow.action_catalog/1` to expose editor palette metadata
   from a host-owned registry without exposing executable modules or credential
   values.
+- Use `Squidie.Workflow.guardrail_catalog/1` to expose editor-safe guardrail
+  metadata from a host-owned registry without exposing validator modules,
+  credentials, or private policy state.
 - Use `Squidie.Step.HTTP` for reusable host-approved HTTP actions. Validate
   request config with `Squidie.Step.HTTP.validate_request/1`, configure
   registry-owned `action_opts: [allowed_hosts: [...]]`, expose the step through
@@ -26,9 +29,18 @@
   snippets out of runtime-authored input.
 - Use `Squidie.Workflow.validate_spec/2` with `:action_registry` before
   trusting runtime-authored spec data that references executable actions.
+- Use `Squidie.Workflow.validate_spec/2` with `:guardrail_registry` before
+  publishing runtime-authored specs that declare step `opts[:guardrails]`.
+  Guardrail placements are `:input`, `:action`, and `:output`; unknown or
+  disabled keys must be rejected before activation.
 - Use `Squidie.start_spec/3` or `Squidie.start_spec/4` to activate
   runtime-authored specs only after action keys resolve through a host-owned
   registry.
+- Pass `:guardrail_registry` to `Squidie.start_spec/3`, `Squidie.start_spec/4`,
+  `Squidie.preview_spec/3`, `Squidie.preview_spec/4`, and
+  `Squidie.execute_next/1` when the spec uses guardrails. Input guardrails can
+  block run start; action and output guardrails can route runtime behavior
+  through explicit `:error` transitions.
 - Use `Squidie.Workflow.EditorSpec` for visual-editor JSON round trips and
   draft graph previews. Do not treat editor preview data as an execution
   boundary.

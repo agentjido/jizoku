@@ -44,7 +44,8 @@ defmodule Squidie do
     :queue,
     :now,
     :run_id,
-    :action_registry
+    :action_registry,
+    :guardrail_registry
   ]
   @journal_child_start_options [
     :runtime,
@@ -63,7 +64,8 @@ defmodule Squidie do
     :lease_for,
     :heartbeat_interval_ms,
     :now,
-    :action_registry
+    :action_registry,
+    :guardrail_registry
   ]
   @journal_dynamic_work_options [
     :runtime,
@@ -642,7 +644,8 @@ defmodule Squidie do
       :lease_for,
       :heartbeat_interval_ms,
       :now,
-      :action_registry
+      :action_registry,
+      :guardrail_registry
     ]
   end
 

@@ -24,6 +24,7 @@ defmodule Squidie.Runtime.DispatchProtocol.ActionAttempt do
           lease_until: DateTime.t() | nil,
           claimed_at: DateTime.t() | nil,
           result: map() | nil,
+          guardrails: [map()],
           execution_opts: keyword(),
           deadline: map() | nil,
           completed_at: DateTime.t() | nil,
@@ -64,6 +65,7 @@ defmodule Squidie.Runtime.DispatchProtocol.ActionAttempt do
     :transition,
     :error,
     execution_opts: [],
+    guardrails: [],
     wakeup_emitted?: false,
     applied?: false
   ]
