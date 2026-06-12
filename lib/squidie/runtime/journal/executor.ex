@@ -421,14 +421,15 @@ defmodule Squidie.Runtime.Journal.Executor do
          definition,
          step_name,
          output,
-         execution_opts
+         execution_opts,
+         guardrails
        ) do
     runtime = runtime_context(storage, queue, now)
 
     claim = claim_context(dispatch_agent, workflow_agent, attempt, claim_id, claim_token)
 
     with {:ok, result} <- apply_step_output_mapping(definition, step_name, output),
-         {:ok, %{agent: dispatch_agent}} <-
+         {:ok, %{agent: dispatch_agent, attempt: %ActionAttempt{} = completed_attempt}} <-
            complete_current_claim(
              storage,
              dispatch_agent,
@@ -437,11 +438,12 @@ defmodule Squidie.Runtime.Journal.Executor do
              claim_token,
              result,
              now: now,
-             execution_opts: execution_opts
+             execution_opts: execution_opts,
+             guardrails: guardrails
            ) do
       append_completed_attempt_progression(
         runtime,
-        %{claim | dispatch_agent: dispatch_agent},
+        %{claim | dispatch_agent: dispatch_agent, attempt: completed_attempt},
         definition,
         step_name,
         result,
@@ -2034,6 +2036,7 @@ defmodule Squidie.Runtime.Journal.Executor do
       run_id: attempt.run_id,
       runnable_key: attempt.runnable_key,
       result: result,
+      guardrails: attempt.guardrails,
       execution_opts: execution_opts,
       applied_at: applied_at,
       transition: transition,
@@ -2674,11 +2677,14 @@ defmodule Squidie.Runtime.Journal.Executor do
        ) do
     run_with_heartbeat(execution, fn mark_finishing ->
       result =
-        with :ok <- evaluate_runtime_guardrails(execution, :input, claim.attempt.input),
-             :ok <- evaluate_runtime_guardrails(execution, :action, claim.attempt.input),
+        with {:ok, input_guardrails} <-
+               evaluate_runtime_guardrails(execution, :input, claim.attempt.input),
+             {:ok, action_guardrails} <-
+               evaluate_runtime_guardrails(execution, :action, claim.attempt.input),
              {:ok, output, execution_opts} <- run_step(step, claim.attempt.input, context),
-             :ok <- evaluate_runtime_guardrails(execution, :output, output) do
-          {:ok, output, execution_opts}
+             {:ok, output_guardrails} <- evaluate_runtime_guardrails(execution, :output, output) do
+          {:ok, output, execution_opts,
+           input_guardrails ++ action_guardrails ++ output_guardrails}
         end
 
       record_step_result(result, execution, mark_finishing)
@@ -2686,7 +2692,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp record_step_result(
-         {:ok, output, execution_opts},
+         {:ok, output, execution_opts, guardrails},
          %{runtime: runtime, claim: claim, definition: definition, step_name: step_name} =
            execution,
          mark_finishing
@@ -2694,7 +2700,7 @@ defmodule Squidie.Runtime.Journal.Executor do
     mark_finishing.()
 
     with :ok <- run_test_before_completion_hook(execution.opts, claim.attempt) do
-      complete_attempt(runtime, claim, definition, step_name, output, execution_opts)
+      complete_attempt(runtime, claim, definition, step_name, output, execution_opts, guardrails)
     end
   end
 
@@ -2741,9 +2747,9 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp run_transactional_step_and_record(repo, execution) do
     run_with_heartbeat(execution, fn mark_finishing ->
       result =
-        with :ok <-
+        with {:ok, input_guardrails} <-
                evaluate_runtime_guardrails(execution, :input, execution.claim.attempt.input),
-             :ok <-
+             {:ok, action_guardrails} <-
                evaluate_runtime_guardrails(execution, :action, execution.claim.attempt.input),
              {:ok, output, execution_opts} <-
                run_transactional_step(
@@ -2751,8 +2757,9 @@ defmodule Squidie.Runtime.Journal.Executor do
                  execution.claim.attempt.input,
                  execution.context
                ),
-             :ok <- evaluate_runtime_guardrails(execution, :output, output) do
-          {:ok, output, execution_opts}
+             {:ok, output_guardrails} <- evaluate_runtime_guardrails(execution, :output, output) do
+          {:ok, output, execution_opts,
+           input_guardrails ++ action_guardrails ++ output_guardrails}
         end
 
       record_transactional_step_result(result, repo, execution, mark_finishing)
@@ -2760,7 +2767,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp record_transactional_step_result(
-         {:ok, output, execution_opts},
+         {:ok, output, execution_opts, guardrails},
          repo,
          execution,
          mark_finishing
@@ -2768,7 +2775,7 @@ defmodule Squidie.Runtime.Journal.Executor do
     mark_finishing.()
 
     with :ok <- run_test_before_completion_hook(execution.opts, execution.claim.attempt) do
-      complete_transactional_attempt(repo, execution, output, execution_opts)
+      complete_transactional_attempt(repo, execution, output, execution_opts, guardrails)
     end
   end
 
@@ -2777,7 +2784,7 @@ defmodule Squidie.Runtime.Journal.Executor do
     repo.rollback({:squidie_step_error, reason})
   end
 
-  defp complete_transactional_attempt(repo, execution, output, execution_opts) do
+  defp complete_transactional_attempt(repo, execution, output, execution_opts, guardrails) do
     with :ok <- run_test_after_transaction_step_hook(execution.opts, execution.claim.attempt),
          {:ok, snapshot} <-
            complete_attempt(
@@ -2786,7 +2793,8 @@ defmodule Squidie.Runtime.Journal.Executor do
              execution.definition,
              execution.step_name,
              output,
-             execution_opts
+             execution_opts,
+             guardrails
            ) do
       snapshot
     else
@@ -2861,8 +2869,8 @@ defmodule Squidie.Runtime.Journal.Executor do
              runnable_key: attempt.runnable_key,
              attempt: attempt.attempt_number
            }) do
-        {:ok, _decisions} ->
-          :ok
+        {:ok, decisions} ->
+          {:ok, Enum.map(decisions, &GuardrailRegistry.public_decision/1)}
 
         {:error, _error, decisions} ->
           {:error, GuardrailRegistry.runtime_error(step_name, failed_decision(decisions))}
@@ -2878,11 +2886,11 @@ defmodule Squidie.Runtime.Journal.Executor do
          }}
 
       {:error, _reason} ->
-        :ok
+        {:ok, []}
     end
   end
 
-  defp evaluate_runtime_guardrails(_execution, _placement, _value), do: :ok
+  defp evaluate_runtime_guardrails(_execution, _placement, _value), do: {:ok, []}
 
   defp runtime_guardrail_registry(step, opts) do
     case {GuardrailRegistry.public_step_guardrails(step),

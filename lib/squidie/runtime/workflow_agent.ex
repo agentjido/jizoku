@@ -271,6 +271,7 @@ defmodule Squidie.Runtime.WorkflowAgent do
              run_id: pending_attempt.run_id,
              runnable_key: pending_attempt.runnable_key,
              result: pending_attempt.result,
+             guardrails: pending_attempt.guardrails,
              execution_opts: pending_attempt.execution_opts,
              occurred_at: now
            }),

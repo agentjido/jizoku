@@ -28,7 +28,6 @@ defmodule Squidie.Workflow.GuardrailRegistry do
   alias Squidie.Workflow.Spec
 
   @placements [:input, :action, :output]
-  @policies [:block_publish, :block_run_start, :route_error, :audit]
 
   @type guardrail_key :: atom() | String.t()
   @type placement :: :input | :action | :output
@@ -199,7 +198,7 @@ defmodule Squidie.Workflow.GuardrailRegistry do
     step
     |> step_guardrails(placement)
     |> Enum.reduce_while({:ok, []}, fn ref, {:ok, decisions} ->
-      decision = evaluate_ref(ref, value, registry, step, context)
+      decision = evaluate_ref(ref, value, registry, step, Map.put(context, :step_index, index))
 
       if blocking_failure?(decision) do
         error = failure_error(step_name(step), index, ref, decision)
@@ -297,7 +296,7 @@ defmodule Squidie.Workflow.GuardrailRegistry do
   end
 
   defp validate_policy(step, index, ref_index, %{policy: policy} = ref) do
-    if policy in @policies do
+    if policy in allowed_policies(ref.placement) do
       []
     else
       [
@@ -314,6 +313,13 @@ defmodule Squidie.Workflow.GuardrailRegistry do
       ]
     end
   end
+
+  defp allowed_policies(:input), do: [:block_run_start, :audit]
+
+  defp allowed_policies(placement) when placement in [:action, :output],
+    do: [:route_error, :audit]
+
+  defp allowed_policies(_placement), do: []
 
   defp evaluate_ref(ref, value, registry, step, context) do
     result =
@@ -535,13 +541,19 @@ defmodule Squidie.Workflow.GuardrailRegistry do
         {:error, {:invalid_guardrail_key, :key, %{guardrail: key}}}
 
       true ->
-        {:ok,
-         %{
-           key: key,
-           placement: placement,
-           policy: map_value(ref, :policy, default_policy(placement)),
-           config: config(ref)
-         }}
+        case config(ref) do
+          {:ok, config} ->
+            {:ok,
+             %{
+               key: key,
+               placement: placement,
+               policy: map_value(ref, :policy, default_policy(placement)),
+               config: config
+             }}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
     end
   end
 
@@ -553,8 +565,11 @@ defmodule Squidie.Workflow.GuardrailRegistry do
 
   defp config(ref) do
     case map_value(ref, :config, %{}) do
-      config when is_map(config) -> config
-      _invalid -> %{}
+      config when is_map(config) ->
+        {:ok, config}
+
+      invalid ->
+        {:error, {:invalid_guardrail_config, :config, %{guardrail: ref, config: invalid}}}
     end
   end
 

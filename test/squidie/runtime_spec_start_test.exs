@@ -65,6 +65,7 @@ defmodule Squidie.RuntimeSpecStartTest do
   @invalid_elixir_action_run_id "00000000-0000-4000-8000-000000000361"
   @guardrail_blocked_run_id "00000000-0000-4000-8000-000000000362"
   @guardrail_routed_run_id "00000000-0000-4000-8000-000000000363"
+  @guardrail_passed_run_id "00000000-0000-4000-8000-000000000364"
 
   test "starts and executes a validated runtime-authored spec" do
     registry = action_registry()
@@ -260,6 +261,60 @@ defmodule Squidie.RuntimeSpecStartTest do
 
     assert completed.status == :completed
     assert completed.context.handled_guardrail_failure == "inv_123"
+  end
+
+  test "keeps passed runtime guardrail decisions durable after runnable application" do
+    assert {:ok, _snapshot} =
+             Squidie.start_spec(
+               runtime_guardrail_spec(
+                 input: ["billing.invoice_policy"],
+                 output: [[key: "billing.invoice_policy", policy: :route_error]]
+               ),
+               %{invoice_id: "inv_123"},
+               action_registry: action_registry(),
+               guardrail_registry: %{"billing.invoice_policy" => AllowGuardrail},
+               journal_storage: @storage,
+               run_id: @guardrail_passed_run_id
+             )
+
+    assert {:ok, applied} =
+             Squidie.execute_next(
+               journal_storage: @storage,
+               owner_id: "guardrail-worker",
+               guardrail_registry: %{"billing.invoice_policy" => AllowGuardrail}
+             )
+
+    assert [
+             %{
+               step: "load_invoice",
+               guardrails: [
+                 %{key: "billing.invoice_policy", placement: :input, status: :passed},
+                 %{key: "billing.invoice_policy", placement: :output, status: :passed}
+               ]
+             }
+             | _other_attempts
+           ] = applied.attempts
+
+    assert [
+             %{key: "billing.invoice_policy", placement: :input, status: :passed},
+             %{key: "billing.invoice_policy", placement: :output, status: :passed}
+           ] = applied.guardrails
+
+    assert {:ok, inspected} =
+             Squidie.inspect_run(@guardrail_passed_run_id, journal_storage: @storage)
+
+    assert [
+             %{key: "billing.invoice_policy", placement: :input, status: :passed},
+             %{key: "billing.invoice_policy", placement: :output, status: :passed}
+           ] = inspected.guardrails
+
+    assert {:ok, explanation} =
+             Squidie.explain_run(@guardrail_passed_run_id, journal_storage: @storage)
+
+    assert [
+             %{key: "billing.invoice_policy", placement: :input, status: :passed},
+             %{key: "billing.invoice_policy", placement: :output, status: :passed}
+           ] = explanation.evidence.guardrails
   end
 
   test "rejects invalid named triggers without raising" do

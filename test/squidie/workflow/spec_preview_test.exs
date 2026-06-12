@@ -73,7 +73,7 @@ defmodule Squidie.Workflow.SpecPreviewTest do
   defmodule AllowGuardrail do
     @spec validate_guardrail(map(), map()) :: {:ok, map()}
     def validate_guardrail(_value, context) do
-      {:ok, %{placement: context.placement, step: context.step}}
+      {:ok, %{placement: context.placement, step: context.step, step_index: context.step_index}}
     end
   end
 
@@ -214,6 +214,36 @@ defmodule Squidie.Workflow.SpecPreviewTest do
            ] = preview.nodes
   end
 
+  test "evaluates preview guardrails with the real step index" do
+    registry = %{
+      "billing.load_account" => [module: LoadAccount, dry_run: true],
+      "billing.send_receipt" => [module: SendReceipt, dry_run: true]
+    }
+
+    guardrail_registry = %{"billing.account_policy" => AllowGuardrail}
+
+    assert {:ok, %SpecPreview{} = preview} =
+             Squidie.preview_spec(
+               guarded_second_step_spec(output: ["billing.account_policy"]),
+               %{account_id: "acct_123"},
+               action_registry: registry,
+               guardrail_registry: guardrail_registry
+             )
+
+    assert [
+             _load_account,
+             %{
+               id: "send_receipt",
+               status: :completed,
+               debug: %{
+                 guardrails: [
+                   %{result: %{placement: :output, step: :send_receipt, step_index: 1}}
+                 ]
+               }
+             }
+           ] = preview.nodes
+  end
+
   test "marks blocking guardrail preview failures as validation errors" do
     registry = %{
       "billing.load_account" => [module: LoadAccount, dry_run: true]
@@ -309,6 +339,24 @@ defmodule Squidie.Workflow.SpecPreviewTest do
             name: :load_account,
             action: "billing.load_account",
             opts: [input: [account_id: [:account_id]], guardrails: guardrails]
+          }
+        ]
+    }
+  end
+
+  defp guarded_second_step_spec(guardrails) do
+    %{
+      spec()
+      | steps: [
+          %{
+            name: :load_account,
+            action: "billing.load_account",
+            opts: [input: [account_id: [:account_id]], output: :account]
+          },
+          %{
+            name: :send_receipt,
+            action: "billing.send_receipt",
+            opts: [input: [account: [:account]], guardrails: guardrails]
           }
         ]
     }

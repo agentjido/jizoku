@@ -426,6 +426,13 @@ defmodule Squidie.ReadModel.Inspection do
         Enum.map(runnable_guardrails, &Map.put(&1, :step, map_value(runnable, :step)))
       end)
 
+    completed =
+      Enum.flat_map(attempts, fn attempt ->
+        attempt
+        |> map_value(:guardrails, [])
+        |> Enum.map(&Map.put_new(&1, :step, map_value(attempt, :step)))
+      end)
+
     failures =
       Enum.flat_map(attempts, fn attempt ->
         attempt_error = map_value(attempt, :error, %{})
@@ -443,7 +450,24 @@ defmodule Squidie.ReadModel.Inspection do
         end
       end)
 
-    Enum.uniq(planned ++ failures)
+    durable = completed ++ failures
+    durable_keys = MapSet.new(durable, &guardrail_decision_key/1)
+
+    pending =
+      Enum.reject(planned, fn guardrail ->
+        MapSet.member?(durable_keys, guardrail_decision_key(guardrail))
+      end)
+
+    Enum.uniq(pending ++ durable)
+  end
+
+  defp guardrail_decision_key(guardrail) when is_map(guardrail) do
+    {
+      map_value(guardrail, :step),
+      map_value(guardrail, :key),
+      map_value(guardrail, :placement),
+      map_value(guardrail, :policy)
+    }
   end
 
   defp normalize_manual_state(nil, %DateTime{}), do: nil
@@ -530,6 +554,7 @@ defmodule Squidie.ReadModel.Inspection do
       completed_at: attempt.completed_at,
       transition: attempt.transition,
       error: attempt.error,
+      guardrails: guardrails(attempt.guardrails),
       recovery: Map.get(recovery_by_runnable_key, attempt.runnable_key),
       deferred: Map.get(deferred_by_runnable_key, attempt.runnable_key),
       deadline:
@@ -573,6 +598,9 @@ defmodule Squidie.ReadModel.Inspection do
   end
 
   defp normalize_deferred_reason(reason), do: reason
+
+  defp guardrails(guardrails) when is_list(guardrails) and guardrails != [], do: guardrails
+  defp guardrails(_guardrails), do: nil
 
   defp projection_anomalies(
          %WorkflowAgent.Projection{} = workflow_projection,

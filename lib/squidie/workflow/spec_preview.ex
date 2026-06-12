@@ -273,9 +273,17 @@ defmodule Squidie.Workflow.SpecPreview do
     action_opts = Keyword.get(opts, :action_opts, [])
 
     with {:ok, input_guardrails} <-
-           evaluate_preview_guardrails(step, :input, runnable.input, guardrail_registry, runnable),
+           evaluate_preview_guardrails(
+             spec,
+             step,
+             :input,
+             runnable.input,
+             guardrail_registry,
+             runnable
+           ),
          {:ok, action_guardrails} <-
            evaluate_preview_guardrails(
+             spec,
              step,
              :action,
              runnable.input,
@@ -286,7 +294,7 @@ defmodule Squidie.Workflow.SpecPreview do
          {:ok, dry_run} <- ActionRegistry.resolve_dry_run(action, registry),
          {:ok, output} <- execute_dry_run(dry_run, spec, step, runnable, action_opts),
          {:ok, output_guardrails} <-
-           evaluate_preview_guardrails(step, :output, output, guardrail_registry, runnable) do
+           evaluate_preview_guardrails(spec, step, :output, output, guardrail_registry, runnable) do
       guardrails = input_guardrails ++ action_guardrails ++ output_guardrails
       node(runnable, action, :completed, output: output, guardrails: guardrails)
     else
@@ -398,11 +406,23 @@ defmodule Squidie.Workflow.SpecPreview do
        })}
   end
 
-  defp evaluate_preview_guardrails(_step, _placement, _value, nil, %Runnable{}), do: {:ok, []}
+  defp evaluate_preview_guardrails(%Spec{}, _step, _placement, _value, nil, %Runnable{}),
+    do: {:ok, []}
 
-  defp evaluate_preview_guardrails(step, placement, value, registry, %Runnable{} = runnable)
+  defp evaluate_preview_guardrails(
+         %Spec{} = spec,
+         step,
+         placement,
+         value,
+         registry,
+         %Runnable{} = runnable
+       )
        when is_map(value) do
-    case GuardrailRegistry.evaluate_step(step, 0, placement, value, registry, %{phase: :preview}) do
+    index = step_index(spec, runnable.step)
+
+    case GuardrailRegistry.evaluate_step(step, index, placement, value, registry, %{
+           phase: :preview
+         }) do
       {:ok, decisions} ->
         {:ok, Enum.map(decisions, &GuardrailRegistry.public_decision/1)}
 
@@ -411,8 +431,18 @@ defmodule Squidie.Workflow.SpecPreview do
     end
   end
 
-  defp evaluate_preview_guardrails(_step, _placement, _value, _registry, %Runnable{}),
+  defp evaluate_preview_guardrails(%Spec{}, _step, _placement, _value, _registry, %Runnable{}),
     do: {:ok, []}
+
+  defp step_index(%Spec{} = spec, step_name) do
+    spec
+    |> value(:steps, [])
+    |> Enum.find_index(&(value(&1, :name) == step_name))
+    |> case do
+      nil -> 0
+      index -> index
+    end
+  end
 
   defp preview_guardrail_error(%Runnable{} = runnable, error) do
     preview_error(

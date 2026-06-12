@@ -144,6 +144,62 @@ defmodule Squidie.Workflow.GuardrailRegistryTest do
                details: %{step: :charge_card, guardrail: "billing.amount_limit", policy: :retry}
              } in errors
     end
+
+    test "rejects policies that cannot be honored for the placement" do
+      spec =
+        spec_with_guardrails(
+          input: [[key: "billing.amount_limit", policy: :route_error]],
+          action: [[key: "billing.amount_limit", policy: :block_run_start]]
+        )
+
+      assert {:error, {:invalid_workflow_spec, errors}} =
+               Squidie.Workflow.validate_spec(spec,
+                 guardrail_registry: %{"billing.amount_limit" => AllowAmount}
+               )
+
+      assert %{
+               path: [:steps, 0, :opts, :guardrails, :input, 0, :policy],
+               code: :invalid_guardrail_policy,
+               message: "step :charge_card defines an invalid input guardrail policy",
+               details: %{
+                 step: :charge_card,
+                 guardrail: "billing.amount_limit",
+                 policy: :route_error
+               }
+             } in errors
+
+      assert %{
+               path: [:steps, 0, :opts, :guardrails, :action, 0, :policy],
+               code: :invalid_guardrail_policy,
+               message: "step :charge_card defines an invalid action guardrail policy",
+               details: %{
+                 step: :charge_card,
+                 guardrail: "billing.amount_limit",
+                 policy: :block_run_start
+               }
+             } in errors
+    end
+
+    test "rejects malformed guardrail config" do
+      spec = spec_with_guardrails(input: [[key: "billing.amount_limit", config: "strict"]])
+
+      assert {:error, {:invalid_workflow_spec, errors}} =
+               Squidie.Workflow.validate_spec(spec,
+                 guardrail_registry: %{"billing.amount_limit" => AllowAmount}
+               )
+
+      assert %{
+               path: [:steps, 0, :opts, :guardrails, :input, 0, :config],
+               code: :invalid_guardrail_config,
+               message: "step :charge_card defines an invalid input guardrail",
+               details: %{
+                 step: :charge_card,
+                 placement: :input,
+                 guardrail: %{key: "billing.amount_limit", config: "strict"},
+                 config: "strict"
+               }
+             } in errors
+    end
   end
 
   defp spec_with_guardrails(guardrails) do

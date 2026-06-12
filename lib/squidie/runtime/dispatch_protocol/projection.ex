@@ -295,6 +295,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
         attempt
         | status: :completed,
           result: entry.data.result,
+          guardrails: guardrails(entry.data),
           execution_opts: Map.get(entry.data, :execution_opts, []),
           completed_at: entry.occurred_at,
           error: nil
@@ -332,6 +333,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
         put_attempt(projection, %ActionAttempt{
           attempt
           | applied?: true,
+            guardrails: guardrails(entry.data, attempt.guardrails),
             transition: Map.get(entry.data, :transition)
         })
 
@@ -339,6 +341,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
         put_attempt(projection, %ActionAttempt{
           attempt
           | applied?: true,
+            guardrails: guardrails(entry.data, attempt.guardrails),
             transition: Map.get(entry.data, :transition)
         })
 
@@ -373,6 +376,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
             lease_until: nil,
             claimed_at: nil,
             result: nil,
+            guardrails: [],
             completed_at: nil,
             transition: nil,
             error: nil,
@@ -419,6 +423,13 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
         lease_until: data.lease_until,
         claimed_at: data.occurred_at
     })
+  end
+
+  defp guardrails(data, default \\ []) when is_map(data) do
+    case Map.get(data, :guardrails, default) do
+      guardrails when is_list(guardrails) -> guardrails
+      _invalid -> default
+    end
   end
 
   defp matching_claim?(%ActionAttempt{} = attempt, data) do
