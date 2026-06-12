@@ -70,6 +70,25 @@ defmodule Squidie.Workflow.SpecPreviewTest do
     def dry_run(_input, _context), do: {:ok, %{}}
   end
 
+  defmodule AllowGuardrail do
+    @spec validate_guardrail(map(), map()) :: {:ok, map()}
+    def validate_guardrail(_value, context) do
+      {:ok, %{placement: context.placement, step: context.step}}
+    end
+  end
+
+  defmodule DenyGuardrail do
+    @spec validate_guardrail(map(), map()) :: {:error, map()}
+    def validate_guardrail(_value, context) do
+      {:error,
+       %{
+         message: "preview value is outside host policy",
+         placement: context.placement,
+         step: context.step
+       }}
+    end
+  end
+
   test "executes opted-in dry-run actions and returns structured node output" do
     registry = %{
       "billing.load_account" => [module: LoadAccount, dry_run: true],
@@ -157,6 +176,76 @@ defmodule Squidie.Workflow.SpecPreviewTest do
            ] = preview.nodes
   end
 
+  test "returns guardrail decisions for successful preview nodes" do
+    registry = %{
+      "billing.load_account" => [module: LoadAccount, dry_run: true]
+    }
+
+    guardrail_registry = %{"billing.account_policy" => AllowGuardrail}
+
+    assert {:ok, %SpecPreview{} = preview} =
+             Squidie.preview_spec(
+               guarded_single_step_spec(
+                 input: ["billing.account_policy"],
+                 output: ["billing.account_policy"]
+               ),
+               %{account_id: "acct_123"},
+               action_registry: registry,
+               guardrail_registry: guardrail_registry
+             )
+
+    assert preview.status == :completed
+
+    assert [
+             %{
+               id: "load_account",
+               status: :completed,
+               guardrails: [
+                 %{key: "billing.account_policy", placement: :input, status: :passed},
+                 %{key: "billing.account_policy", placement: :output, status: :passed}
+               ],
+               debug: %{
+                 guardrails: [
+                   %{result: %{placement: :input, step: :load_account}},
+                   %{result: %{placement: :output, step: :load_account}}
+                 ]
+               }
+             }
+           ] = preview.nodes
+  end
+
+  test "marks blocking guardrail preview failures as validation errors" do
+    registry = %{
+      "billing.load_account" => [module: LoadAccount, dry_run: true]
+    }
+
+    guardrail_registry = %{"billing.account_policy" => DenyGuardrail}
+
+    assert {:ok, %SpecPreview{} = preview} =
+             Squidie.preview_spec(
+               guarded_single_step_spec(input: ["billing.account_policy"]),
+               %{account_id: "acct_123"},
+               action_registry: registry,
+               guardrail_registry: guardrail_registry
+             )
+
+    assert preview.status == :invalid
+
+    assert [
+             %{
+               id: "load_account",
+               status: :validation_error,
+               error: %{
+                 code: :guardrail_failed,
+                 message: "step :load_account input guardrail \"billing.account_policy\" failed"
+               },
+               guardrails: [
+                 %{key: "billing.account_policy", placement: :input, status: :failed}
+               ]
+             }
+           ] = preview.nodes
+  end
+
   test "rejects missing action registry before previewing runtime-authored actions" do
     assert {:error, {:invalid_option, {:action_registry, :required}}} =
              Squidie.preview_spec(spec(), %{account_id: "acct_123"})
@@ -209,6 +298,19 @@ defmodule Squidie.Workflow.SpecPreviewTest do
           }
         ],
         transitions: [%{from: :load_account, on: :ok, to: :complete}]
+    }
+  end
+
+  defp guarded_single_step_spec(guardrails) do
+    %{
+      single_step_spec()
+      | steps: [
+          %{
+            name: :load_account,
+            action: "billing.load_account",
+            opts: [input: [account_id: [:account_id]], guardrails: guardrails]
+          }
+        ]
     }
   end
 end

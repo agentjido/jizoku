@@ -36,6 +36,9 @@ itself.
   need execution-style node output for a runtime-authored draft. Pass a
   host-owned `:action_registry`; preview calls only registry entries that opt
   into `dry_run` behavior and does not append durable runtime state.
+- Use `:guardrail_registry` with runtime-authored specs that declare step
+  `opts[:guardrails]`; guardrail keys are host-owned validator contracts and
+  decisions are exposed through previews, inspection, and explanations.
 - Add idempotency keys or domain duplicate detection to side-effecting steps.
 - Treat external exactly-once behavior as out of scope for Squidie.
 

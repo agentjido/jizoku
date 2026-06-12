@@ -53,6 +53,7 @@ defmodule Squidie.ReadModel.Explanation do
     {summary, details, next_actions, step} = explanation_parts(snapshot)
     command_details = command_details(snapshot.command_history)
     dynamic_work_details = dynamic_work_details(snapshot.dynamic_work)
+    guardrail_details = guardrail_details(snapshot.guardrails)
     deadline_details = deadline_details(snapshot.deadline)
 
     %Diagnostic{
@@ -68,6 +69,7 @@ defmodule Squidie.ReadModel.Explanation do
         details
         |> Map.merge(command_details)
         |> Map.merge(dynamic_work_details)
+        |> Map.merge(guardrail_details)
         |> Map.merge(deadline_details),
       next_actions: Enum.uniq(next_actions ++ deadline_next_actions(snapshot.deadline)),
       evidence: evidence(snapshot)
@@ -248,6 +250,7 @@ defmodule Squidie.ReadModel.Explanation do
       parent_run: snapshot.parent_run,
       child_runs: snapshot.child_runs,
       dynamic_work: snapshot.dynamic_work,
+      guardrails: snapshot.guardrails,
       deadline: snapshot.deadline,
       command_history: snapshot.command_history,
       command_counts: command_counts(snapshot.command_history),
@@ -290,6 +293,20 @@ defmodule Squidie.ReadModel.Explanation do
   end
 
   defp dynamic_work_details(_dynamic_work), do: %{}
+
+  defp guardrail_details([]), do: %{}
+
+  defp guardrail_details(guardrails) when is_list(guardrails) do
+    failures =
+      Enum.filter(guardrails, &(item_value(&1, :status) == :failed))
+
+    %{
+      guardrail_count: length(guardrails),
+      guardrail_failures: failures
+    }
+  end
+
+  defp guardrail_details(_guardrails), do: %{}
 
   defp deadline_details(nil), do: %{}
 

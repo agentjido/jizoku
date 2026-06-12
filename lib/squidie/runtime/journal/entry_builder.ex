@@ -4,6 +4,7 @@ defmodule Squidie.Runtime.Journal.EntryBuilder do
   alias Squidie.Runtime.Deadline
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Workflow.Definition
+  alias Squidie.Workflow.GuardrailRegistry
 
   @doc """
   Builds a `:runnables_planned` entry and raises on invalid entry data.
@@ -61,15 +62,19 @@ defmodule Squidie.Runtime.Journal.EntryBuilder do
     with {:ok, recovery} <- replay_recovery_policy(definition, step_name),
          {:ok, deadline} <- Deadline.from_definition(definition, step_name, now) do
       runnable =
-        runnable_attrs(
-          run_id,
-          runnable_key,
-          attempt_number,
-          queue,
-          step,
-          input,
-          recovery,
-          now
+        put_guardrails(
+          runnable_attrs(
+            run_id,
+            runnable_key,
+            attempt_number,
+            queue,
+            step,
+            input,
+            recovery,
+            now
+          ),
+          definition,
+          step_name
         )
 
       {:ok, maybe_put(runnable, :deadline, deadline)}
@@ -101,15 +106,19 @@ defmodule Squidie.Runtime.Journal.EntryBuilder do
       ) do
     with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
       runnable =
-        runnable_attrs(
-          attempt.run_id,
-          runnable_key,
-          attempt_number,
-          queue,
-          Definition.serialize_step(step_name),
-          attempt.input || %{},
-          recovery,
-          visible_at
+        put_guardrails(
+          runnable_attrs(
+            attempt.run_id,
+            runnable_key,
+            attempt_number,
+            queue,
+            Definition.serialize_step(step_name),
+            attempt.input || %{},
+            recovery,
+            visible_at
+          ),
+          definition,
+          step_name
         )
 
       {:ok, maybe_put(runnable, :deadline, deadline)}
@@ -164,4 +173,17 @@ defmodule Squidie.Runtime.Journal.EntryBuilder do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp put_guardrails(runnable, definition, step_name) do
+    case Definition.step(definition, step_name) do
+      {:ok, step} ->
+        case GuardrailRegistry.public_step_guardrails(step) do
+          [] -> runnable
+          guardrails -> Map.put(runnable, :guardrails, guardrails)
+        end
+
+      {:error, _reason} ->
+        runnable
+    end
+  end
 end

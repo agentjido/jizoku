@@ -10,6 +10,7 @@ defmodule Squidie.Workflow.ActionRegistry do
   """
 
   alias Squidie.Step
+  alias Squidie.Workflow.RegistryHelpers
   alias Squidie.Workflow.Spec
 
   @built_in_step_kinds [:wait, :log, :pause, :approval]
@@ -56,7 +57,7 @@ defmodule Squidie.Workflow.ActionRegistry do
   @spec catalog(term()) ::
           {:ok, [catalog_entry()]} | {:error, {:invalid_action_catalog, [catalog_error()]}}
   def catalog(registry) do
-    case registry_pairs(registry) do
+    case RegistryHelpers.registry_pairs(registry, &invalid_registry_error/1) do
       {:ok, pairs} -> catalog_entries(pairs)
       {:error, error} -> {:error, {:invalid_action_catalog, [error]}}
     end
@@ -118,7 +119,7 @@ defmodule Squidie.Workflow.ActionRegistry do
 
       true ->
         registry
-        |> fetch_registry_entry(action)
+        |> RegistryHelpers.fetch_registry_entry(action)
         |> validate_action_entry()
     end
   end
@@ -128,7 +129,7 @@ defmodule Squidie.Workflow.ActionRegistry do
           {:ok, module()} | {:error, action_validation_error()}
   def resolve_action(action, registry) do
     with :ok <- validate_action(action, registry),
-         {:ok, entry} <- fetch_registry_entry(registry, action) do
+         {:ok, entry} <- RegistryHelpers.fetch_registry_entry(registry, action) do
       {module, _enabled?} = registry_entry_module(entry)
       {:ok, module}
     end
@@ -139,7 +140,7 @@ defmodule Squidie.Workflow.ActionRegistry do
           {:ok, keyword()} | {:error, action_validation_error()}
   def resolve_action_opts(action, registry) do
     with :ok <- validate_action(action, registry),
-         {:ok, entry} <- fetch_registry_entry(registry, action) do
+         {:ok, entry} <- RegistryHelpers.fetch_registry_entry(registry, action) do
       case entry_value(entry, :action_opts, []) do
         opts when is_list(opts) -> {:ok, opts}
         _invalid -> {:ok, []}
@@ -152,7 +153,7 @@ defmodule Squidie.Workflow.ActionRegistry do
           {:ok, {module(), atom()}} | {:error, action_validation_error() | :unsupported_preview}
   def resolve_dry_run(action, registry) do
     with :ok <- validate_action(action, registry),
-         {:ok, entry} <- fetch_registry_entry(registry, action) do
+         {:ok, entry} <- RegistryHelpers.fetch_registry_entry(registry, action) do
       {module, _enabled?} = registry_entry_module(entry)
 
       case entry_value(entry, :dry_run, false) do
@@ -257,7 +258,7 @@ defmodule Squidie.Workflow.ActionRegistry do
 
       true ->
         registry
-        |> fetch_registry_entry(action)
+        |> RegistryHelpers.fetch_registry_entry(action)
         |> validate_registry_entry(step, index, action_key, action)
     end
   end
@@ -320,18 +321,6 @@ defmodule Squidie.Workflow.ActionRegistry do
       errors -> {:error, {:invalid_action_catalog, Enum.reverse(errors)}}
     end
   end
-
-  defp registry_pairs(registry) when is_map(registry), do: {:ok, Enum.to_list(registry)}
-
-  defp registry_pairs(registry) when is_list(registry) do
-    if Keyword.keyword?(registry) do
-      {:ok, registry}
-    else
-      {:error, invalid_registry_error(registry)}
-    end
-  end
-
-  defp registry_pairs(registry), do: {:error, invalid_registry_error(registry)}
 
   defp invalid_registry_error(registry) do
     catalog_error(
@@ -482,7 +471,7 @@ defmodule Squidie.Workflow.ActionRegistry do
   defp map_value(map, key, default \\ nil), do: Squidie.MapField.get(map, key, default)
 
   defp catalog_json_value(value, action, field) do
-    case json_value(value, [field]) do
+    case RegistryHelpers.json_value(value, [field]) do
       {:ok, value} ->
         {:ok, value}
 
@@ -494,60 +483,6 @@ defmodule Squidie.Workflow.ActionRegistry do
            "action catalog metadata must be JSON-safe",
            %{action: action, field: field}
          )}
-    end
-  end
-
-  defp json_value(nil, _path), do: {:ok, nil}
-  defp json_value(value, _path) when is_boolean(value), do: {:ok, value}
-  defp json_value(value, _path) when is_integer(value), do: {:ok, value}
-  defp json_value(value, _path) when is_float(value), do: {:ok, value}
-  defp json_value(value, _path) when is_binary(value), do: {:ok, value}
-  defp json_value(value, _path) when is_atom(value), do: {:ok, Atom.to_string(value)}
-
-  defp json_value(value, path) when is_tuple(value) do
-    value
-    |> Tuple.to_list()
-    |> json_value(path)
-  end
-
-  defp json_value([], _path), do: {:ok, []}
-
-  defp json_value(value, path) when is_list(value) do
-    if Keyword.keyword?(value), do: json_map(value, path), else: json_list(value, path)
-  end
-
-  defp json_value(value, path) when is_map(value), do: json_map(Map.to_list(value), path)
-
-  defp json_value(_value, path), do: {:error, path}
-
-  defp json_map(pairs, path) do
-    Enum.reduce_while(pairs, {:ok, %{}}, fn {key, item}, {:ok, acc} ->
-      with {:ok, key} <- json_key(key, path),
-           {:ok, item} <- json_value(item, [key | path]) do
-        {:cont, {:ok, Map.put(acc, key, item)}}
-      else
-        {:error, path} -> {:halt, {:error, path}}
-      end
-    end)
-  end
-
-  defp json_key(key, _path) when is_atom(key), do: {:ok, Atom.to_string(key)}
-  defp json_key(key, _path) when is_binary(key), do: {:ok, key}
-  defp json_key(key, _path) when is_integer(key), do: {:ok, Integer.to_string(key)}
-  defp json_key(_key, path), do: {:error, path}
-
-  defp json_list(list, path) do
-    list
-    |> Stream.with_index()
-    |> Enum.reduce_while({:ok, []}, fn {item, index}, {:ok, acc} ->
-      case json_value(item, [index | path]) do
-        {:ok, item} -> {:cont, {:ok, [item | acc]}}
-        {:error, path} -> {:halt, {:error, path}}
-      end
-    end)
-    |> case do
-      {:ok, items} -> {:ok, Enum.reverse(items)}
-      {:error, path} -> {:error, path}
     end
   end
 
@@ -606,21 +541,8 @@ defmodule Squidie.Workflow.ActionRegistry do
   end
 
   defp has_registry_key?(registry, action) do
-    match?({:ok, _entry}, fetch_registry_entry(registry, action))
+    match?({:ok, _entry}, RegistryHelpers.fetch_registry_entry(registry, action))
   end
-
-  defp fetch_registry_entry(registry, action) when is_map(registry),
-    do: Map.fetch(registry, action)
-
-  defp fetch_registry_entry(registry, action) when is_list(registry) do
-    if Keyword.keyword?(registry) and is_atom(action) do
-      Keyword.fetch(registry, action)
-    else
-      :error
-    end
-  end
-
-  defp fetch_registry_entry(_registry, _action), do: :error
 
   defp spec_steps(spec) do
     cond do

@@ -5,6 +5,7 @@ defmodule Squidie.Workflow.SpecPreview do
   alias Squidie.Step
   alias Squidie.Workflow.ActionRegistry
   alias Squidie.Workflow.Definition
+  alias Squidie.Workflow.GuardrailRegistry
   alias Squidie.Workflow.RunicPlanner
   alias Squidie.Workflow.RunicPlanner.Runnable
   alias Squidie.Workflow.Spec
@@ -15,13 +16,14 @@ defmodule Squidie.Workflow.SpecPreview do
   def preview(spec, trigger_name, payload, opts)
       when is_map(payload) and is_list(opts) do
     with {:ok, registry} <- action_registry(opts),
-         {:ok, spec} <- runtime_spec(spec, registry),
+         {:ok, guardrail_registry} <- guardrail_registry(spec, opts),
+         {:ok, spec} <- runtime_spec(spec, registry, guardrail_registry),
          definition <- Map.from_struct(spec),
          {:ok, trigger} <- trigger(definition, trigger_name),
          {:ok, resolved_payload} <- Definition.resolve_payload(trigger, payload),
          {:ok, planner} <- RunicPlanner.new(spec),
          {:ok, _planner, runnables} <- RunicPlanner.plan(planner, resolved_payload) do
-      {:ok, build_preview(spec, definition, trigger, registry, runnables)}
+      {:ok, build_preview(spec, definition, trigger, registry, guardrail_registry, runnables)}
     end
   end
 
@@ -36,13 +38,25 @@ defmodule Squidie.Workflow.SpecPreview do
     end
   end
 
-  defp runtime_spec(spec, registry) do
+  defp guardrail_registry(spec, opts) do
+    case {GuardrailRegistry.uses_guardrails?(spec), Keyword.fetch(opts, :guardrail_registry)} do
+      {true, {:ok, registry}} -> {:ok, registry}
+      {true, :error} -> {:error, {:invalid_option, {:guardrail_registry, :required}}}
+      {false, _registry} -> {:ok, nil}
+    end
+  end
+
+  defp runtime_spec(spec, registry, guardrail_registry) do
     with {:ok, resolved_spec} <- ActionRegistry.resolve_spec(spec, registry),
          spec <- to_spec_struct(resolved_spec),
-         :ok <- Spec.validate(spec) do
+         :ok <- Spec.validate(spec),
+         :ok <- validate_guardrails(spec, guardrail_registry) do
       {:ok, spec}
     end
   end
+
+  defp validate_guardrails(_spec, nil), do: :ok
+  defp validate_guardrails(spec, registry), do: GuardrailRegistry.validate_spec(spec, registry)
 
   defp to_spec_struct(%Spec{} = spec), do: spec
 
@@ -66,8 +80,10 @@ defmodule Squidie.Workflow.SpecPreview do
 
   defp trigger(definition, trigger_name), do: Definition.trigger(definition, trigger_name)
 
-  defp build_preview(%Spec{} = spec, definition, trigger, registry, runnables) do
-    {nodes, status} = preview_runnables(spec, definition, registry, runnables, [], :completed)
+  defp build_preview(%Spec{} = spec, definition, trigger, registry, guardrail_registry, runnables) do
+    {nodes, status} =
+      preview_runnables(spec, definition, registry, guardrail_registry, runnables, [], :completed)
+
     errors = Enum.flat_map(nodes, &node_errors/1)
 
     Squidie.Runs.SpecPreview.new(
@@ -80,23 +96,39 @@ defmodule Squidie.Workflow.SpecPreview do
     )
   end
 
-  defp preview_runnables(%Spec{}, _definition, _registry, [], nodes, status) do
+  defp preview_runnables(%Spec{}, _definition, _registry, _guardrail_registry, [], nodes, status) do
     {Enum.reverse(nodes), status}
   end
 
-  defp preview_runnables(%Spec{} = spec, definition, registry, runnables, nodes, status) do
-    case preview_batch(spec, definition, registry, runnables, nodes, status) do
+  defp preview_runnables(
+         %Spec{} = spec,
+         definition,
+         registry,
+         guardrail_registry,
+         runnables,
+         nodes,
+         status
+       ) do
+    case preview_batch(spec, definition, registry, guardrail_registry, runnables, nodes, status) do
       {:halt, nodes, status} ->
         {Enum.reverse(nodes), status}
 
       {:cont, next_runnables, nodes, status} ->
-        preview_runnables(spec, definition, registry, next_runnables, nodes, status)
+        preview_runnables(
+          spec,
+          definition,
+          registry,
+          guardrail_registry,
+          next_runnables,
+          nodes,
+          status
+        )
     end
   end
 
-  defp preview_batch(spec, definition, registry, runnables, nodes, status) do
+  defp preview_batch(spec, definition, registry, guardrail_registry, runnables, nodes, status) do
     Enum.reduce_while(runnables, {:cont, [], nodes, status}, fn runnable, acc ->
-      node = preview_runnable(spec, registry, runnable)
+      node = preview_runnable(spec, registry, guardrail_registry, runnable)
       handle_preview_node(spec, definition, runnable, node, acc)
     end)
   end
@@ -233,18 +265,37 @@ defmodule Squidie.Workflow.SpecPreview do
     end
   end
 
-  defp preview_runnable(%Spec{} = spec, registry, %Runnable{} = runnable) do
+  defp preview_runnable(%Spec{} = spec, registry, guardrail_registry, %Runnable{} = runnable) do
     step = step!(spec, runnable.step)
     action = value(step, :action)
     module = value(step, :module)
     opts = value(step, :opts, [])
     action_opts = Keyword.get(opts, :action_opts, [])
 
-    with :ok <- validate_action_input(module, runnable, action_opts),
+    with {:ok, input_guardrails} <-
+           evaluate_preview_guardrails(step, :input, runnable.input, guardrail_registry, runnable),
+         {:ok, action_guardrails} <-
+           evaluate_preview_guardrails(
+             step,
+             :action,
+             runnable.input,
+             guardrail_registry,
+             runnable
+           ),
+         :ok <- validate_action_input(module, runnable, action_opts),
          {:ok, dry_run} <- ActionRegistry.resolve_dry_run(action, registry),
-         {:ok, output} <- execute_dry_run(dry_run, spec, step, runnable, action_opts) do
-      node(runnable, action, :completed, output: output)
+         {:ok, output} <- execute_dry_run(dry_run, spec, step, runnable, action_opts),
+         {:ok, output_guardrails} <-
+           evaluate_preview_guardrails(step, :output, output, guardrail_registry, runnable) do
+      guardrails = input_guardrails ++ action_guardrails ++ output_guardrails
+      node(runnable, action, :completed, output: output, guardrails: guardrails)
     else
+      {:guardrail_error, error, decisions} ->
+        node(runnable, action, guardrail_status(error),
+          error: error,
+          guardrails: Enum.map(decisions, &GuardrailRegistry.public_decision/1)
+        )
+
       {:error, :unsupported_preview} ->
         node(runnable, action, :unsupported,
           error:
@@ -347,9 +398,37 @@ defmodule Squidie.Workflow.SpecPreview do
        })}
   end
 
+  defp evaluate_preview_guardrails(_step, _placement, _value, nil, %Runnable{}), do: {:ok, []}
+
+  defp evaluate_preview_guardrails(step, placement, value, registry, %Runnable{} = runnable)
+       when is_map(value) do
+    case GuardrailRegistry.evaluate_step(step, 0, placement, value, registry, %{phase: :preview}) do
+      {:ok, decisions} ->
+        {:ok, Enum.map(decisions, &GuardrailRegistry.public_decision/1)}
+
+      {:error, error, decisions} ->
+        {:guardrail_error, preview_guardrail_error(runnable, error), decisions}
+    end
+  end
+
+  defp evaluate_preview_guardrails(_step, _placement, _value, _registry, %Runnable{}),
+    do: {:ok, []}
+
+  defp preview_guardrail_error(%Runnable{} = runnable, error) do
+    preview_error(
+      :guardrail_failed,
+      Map.fetch!(error, :message),
+      Map.put(Map.fetch!(error, :details), :step, runnable.step)
+    )
+  end
+
+  defp guardrail_status(%{details: %{policy: :route_error}}), do: :failed
+  defp guardrail_status(_error), do: :validation_error
+
   defp node(%Runnable{} = runnable, action, status, attrs) do
     output = Keyword.get(attrs, :output)
     error = Keyword.get(attrs, :error)
+    guardrails = Keyword.get(attrs, :guardrails, [])
 
     compact(%{
       id: Atom.to_string(runnable.step),
@@ -359,7 +438,8 @@ defmodule Squidie.Workflow.SpecPreview do
       input: runnable.input,
       output: output,
       error: error,
-      debug: %{input: runnable.input, output: output, error: error}
+      guardrails: guardrails,
+      debug: %{input: runnable.input, output: output, error: error, guardrails: guardrails}
     })
   end
 

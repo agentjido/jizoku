@@ -155,6 +155,7 @@ defmodule Squidie.ReadModel.Inspection do
       parent_run: parent_run(workflow_projection),
       child_runs: WorkflowAgent.Projection.child_runs(workflow_projection),
       dynamic_work: WorkflowAgent.Projection.dynamic_work(workflow_projection),
+      guardrails: guardrail_decisions(normalized_planned_runnables, attempt_snapshots),
       replayed_from_run_id: workflow_projection.replayed_from_run_id,
       queue: queue,
       status: WorkflowAgent.status(workflow_agent),
@@ -415,6 +416,34 @@ defmodule Squidie.ReadModel.Inspection do
       nil -> normalized_runnable
       deadline -> Map.put(normalized_runnable, :deadline, deadline)
     end
+  end
+
+  defp guardrail_decisions(planned_runnables, attempts) do
+    planned =
+      Enum.flat_map(planned_runnables, fn runnable ->
+        runnable_guardrails = map_value(runnable, :guardrails, [])
+
+        Enum.map(runnable_guardrails, &Map.put(&1, :step, map_value(runnable, :step)))
+      end)
+
+    failures =
+      Enum.flat_map(attempts, fn attempt ->
+        attempt_error = map_value(attempt, :error, %{})
+
+        case map_value(attempt_error, :guardrail) do
+          guardrail when is_map(guardrail) ->
+            [
+              guardrail
+              |> Map.put_new(:step, map_value(attempt, :step))
+              |> Map.put_new(:status, :failed)
+            ]
+
+          _missing ->
+            []
+        end
+      end)
+
+    Enum.uniq(planned ++ failures)
   end
 
   defp normalize_manual_state(nil, %DateTime{}), do: nil

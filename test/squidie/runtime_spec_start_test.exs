@@ -15,6 +15,32 @@ defmodule Squidie.RuntimeSpecStartTest do
     def run(input, _context), do: {:ok, %{sent_invoice_id: input.invoice.id}}
   end
 
+  defmodule HandleGuardrailFailure do
+    use Squidie.Step, name: :handle_guardrail_failure
+
+    @impl Squidie.Step
+    def run(input, _context), do: {:ok, %{handled_guardrail_failure: input.invoice_id}}
+  end
+
+  defmodule AllowGuardrail do
+    @spec validate_guardrail(map(), map()) :: {:ok, map()}
+    def validate_guardrail(_value, context) do
+      {:ok, %{placement: context.placement, step: context.step}}
+    end
+  end
+
+  defmodule DenyGuardrail do
+    @spec validate_guardrail(map(), map()) :: {:error, map()}
+    def validate_guardrail(_value, context) do
+      {:error,
+       %{
+         message: "invoice is outside host policy",
+         placement: context.placement,
+         step: context.step
+       }}
+    end
+  end
+
   defmodule ElixirAdapters do
     @spec load_invoice(map(), Squidie.Step.Context.t()) :: {:ok, map()}
     def load_invoice(%{"invoice_id" => invoice_id}, _context) do
@@ -37,6 +63,8 @@ defmodule Squidie.RuntimeSpecStartTest do
   @invalid_http_action_run_id "00000000-0000-4000-8000-000000000359"
   @elixir_action_run_id "00000000-0000-4000-8000-000000000360"
   @invalid_elixir_action_run_id "00000000-0000-4000-8000-000000000361"
+  @guardrail_blocked_run_id "00000000-0000-4000-8000-000000000362"
+  @guardrail_routed_run_id "00000000-0000-4000-8000-000000000363"
 
   test "starts and executes a validated runtime-authored spec" do
     registry = action_registry()
@@ -115,6 +143,123 @@ defmodule Squidie.RuntimeSpecStartTest do
 
     assert {:error, :not_found} =
              Squidie.inspect_run(@missing_action_run_id, journal_storage: @storage)
+  end
+
+  test "blocks runtime-authored run start when an input guardrail fails" do
+    assert {:error, {:invalid_workflow_spec, errors}} =
+             Squidie.start_spec(
+               runtime_guardrail_spec(input: [[key: "billing.invoice_policy"]]),
+               %{invoice_id: "inv_123"},
+               action_registry: action_registry(),
+               guardrail_registry: %{"billing.invoice_policy" => DenyGuardrail},
+               journal_storage: @storage,
+               run_id: @guardrail_blocked_run_id
+             )
+
+    assert %{
+             path: [:steps, 0, :opts, :guardrails, :input, 0],
+             code: :guardrail_failed,
+             message: "step :load_invoice input guardrail \"billing.invoice_policy\" failed",
+             details: %{
+               step: :load_invoice,
+               guardrail: "billing.invoice_policy",
+               placement: :input,
+               policy: :block_run_start,
+               result: %{
+                 message: "invoice is outside host policy",
+                 placement: :input,
+                 step: :load_invoice
+               }
+             }
+           } in errors
+
+    assert {:error, :not_found} =
+             Squidie.inspect_run(@guardrail_blocked_run_id, journal_storage: @storage)
+  end
+
+  test "routes runtime-authored guardrail failures through explicit error policy" do
+    assert {:ok, snapshot} =
+             Squidie.start_spec(
+               runtime_guardrail_spec(
+                 output: [[key: "billing.invoice_policy", policy: :route_error]]
+               ),
+               %{invoice_id: "inv_123"},
+               action_registry: action_registry(),
+               guardrail_registry: %{"billing.invoice_policy" => DenyGuardrail},
+               journal_storage: @storage,
+               run_id: @guardrail_routed_run_id
+             )
+
+    assert [
+             %{
+               step: "load_invoice",
+               guardrails: [
+                 %{key: "billing.invoice_policy", placement: :output, policy: :route_error}
+               ]
+             }
+           ] = snapshot.planned_runnables
+
+    assert {:ok, routed} =
+             Squidie.execute_next(
+               journal_storage: @storage,
+               owner_id: "guardrail-worker",
+               guardrail_registry: %{"billing.invoice_policy" => DenyGuardrail}
+             )
+
+    assert "handle_guardrail_failure" in Enum.map(
+             routed.planned_runnables,
+             &Map.fetch!(&1, :step)
+           )
+
+    assert [
+             %{
+               step: "load_invoice",
+               error: %{
+                 code: "guardrail_failed",
+                 message: "step :load_invoice output guardrail \"billing.invoice_policy\" failed"
+               }
+             }
+             | _other_attempts
+           ] = routed.attempts
+
+    assert Enum.any?(
+             routed.guardrails,
+             &match?(
+               %{
+                 key: "billing.invoice_policy",
+                 placement: :output,
+                 policy: :route_error,
+                 status: :failed
+               },
+               &1
+             )
+           )
+
+    assert {:ok, explanation} =
+             Squidie.explain_run(@guardrail_routed_run_id, journal_storage: @storage)
+
+    assert Enum.any?(
+             explanation.evidence.guardrails,
+             &match?(
+               %{
+                 key: "billing.invoice_policy",
+                 placement: :output,
+                 policy: :route_error,
+                 status: :failed
+               },
+               &1
+             )
+           )
+
+    assert {:ok, completed} =
+             Squidie.execute_next(
+               journal_storage: @storage,
+               owner_id: "guardrail-worker",
+               guardrail_registry: %{"billing.invoice_policy" => DenyGuardrail}
+             )
+
+    assert completed.status == :completed
+    assert completed.context.handled_guardrail_failure == "inv_123"
   end
 
   test "rejects invalid named triggers without raising" do
@@ -262,7 +407,8 @@ defmodule Squidie.RuntimeSpecStartTest do
   defp action_registry do
     %{
       "billing.load_invoice" => LoadInvoice,
-      "billing.send_reminder" => SendReminder
+      "billing.send_reminder" => SendReminder,
+      "billing.handle_guardrail_failure" => HandleGuardrailFailure
     }
   end
 
@@ -313,6 +459,29 @@ defmodule Squidie.RuntimeSpecStartTest do
       entry_steps: [:load_invoice],
       initial_step: :load_invoice,
       entry_step: :load_invoice
+    }
+  end
+
+  defp runtime_guardrail_spec(guardrails) do
+    %{
+      runtime_invoice_spec()
+      | steps: [
+          %{
+            name: :load_invoice,
+            action: "billing.load_invoice",
+            opts: [output: :invoice, guardrails: guardrails]
+          },
+          %{
+            name: :handle_guardrail_failure,
+            action: "billing.handle_guardrail_failure",
+            opts: [input: [:invoice_id]]
+          }
+        ],
+        transitions: [
+          %{from: :load_invoice, on: :ok, to: :complete},
+          %{from: :load_invoice, on: :error, to: :handle_guardrail_failure},
+          %{from: :handle_guardrail_failure, on: :ok, to: :complete}
+        ]
     }
   end
 

@@ -35,6 +35,7 @@ defmodule Squidie.Workflow do
   }
 
   alias Squidie.Workflow.ActionRegistry
+  alias Squidie.Workflow.GuardrailRegistry
   alias Squidie.Workflow.Info
   alias Squidie.Workflow.PayloadFieldSpec
   alias Squidie.Workflow.PayloadSpec
@@ -110,16 +111,9 @@ defmodule Squidie.Workflow do
   @spec validate_spec(Spec.t() | map() | term(), keyword()) ::
           :ok | {:error, {:invalid_workflow_spec, [map()]}}
   def validate_spec(spec, opts) when is_list(opts) do
-    case Keyword.fetch(opts, :action_registry) do
-      {:ok, registry} ->
-        if spec_uses_action_keys?(spec) do
-          ActionRegistry.validate_spec(spec, registry)
-        else
-          validate_spec(spec)
-        end
-
-      :error ->
-        validate_spec(spec)
+    with {:ok, spec} <- maybe_resolve_spec_actions(spec, opts),
+         :ok <- validate_spec(spec) do
+      maybe_validate_spec_guardrails(spec, opts)
     end
   end
 
@@ -135,6 +129,14 @@ defmodule Squidie.Workflow do
           {:ok, [ActionRegistry.catalog_entry()]}
           | {:error, {:invalid_action_catalog, [ActionRegistry.catalog_error()]}}
   def action_catalog(registry), do: ActionRegistry.catalog(registry)
+
+  @doc """
+  Projects a host-owned guardrail registry into editor-safe catalog metadata.
+  """
+  @spec guardrail_catalog(term()) ::
+          {:ok, [GuardrailRegistry.catalog_entry()]}
+          | {:error, {:invalid_guardrail_catalog, [GuardrailRegistry.catalog_error()]}}
+  def guardrail_catalog(registry), do: GuardrailRegistry.catalog(registry)
 
   @doc """
   Resolves runtime-authored `:action` step keys to host-approved modules.
@@ -153,6 +155,24 @@ defmodule Squidie.Workflow do
       :error ->
         {:ok, spec}
     end
+  end
+
+  defp maybe_resolve_spec_actions(spec, opts) do
+    case Keyword.fetch(opts, :action_registry) do
+      {:ok, registry} ->
+        if spec_uses_action_keys?(spec) do
+          ActionRegistry.resolve_spec(spec, registry)
+        else
+          {:ok, spec}
+        end
+
+      :error ->
+        {:ok, spec}
+    end
+  end
+
+  defp maybe_validate_spec_guardrails(spec, opts) do
+    GuardrailRegistry.validate_spec_option(spec, opts)
   end
 
   defp spec_uses_action_keys?(%Spec{} = spec), do: spec_uses_action_keys?(Map.from_struct(spec))
