@@ -67,6 +67,14 @@ defmodule Squidie.RuntimeSpecStartTest do
   @guardrail_routed_run_id "00000000-0000-4000-8000-000000000363"
   @guardrail_passed_run_id "00000000-0000-4000-8000-000000000364"
 
+  setup do
+    cleanup_storage()
+
+    on_exit(fn ->
+      cleanup_storage()
+    end)
+  end
+
   test "starts and executes a validated runtime-authored spec" do
     registry = action_registry()
     spec = runtime_invoice_spec()
@@ -617,5 +625,24 @@ defmodule Squidie.RuntimeSpecStartTest do
            ] = step.opts
 
     refute inspect(step.opts) =~ inspect(ElixirAdapters)
+  end
+
+  defp table_name(:checkpoints), do: :squidie_runtime_spec_start_test_checkpoints
+  defp table_name(:threads), do: :squidie_runtime_spec_start_test_threads
+  defp table_name(:thread_meta), do: :squidie_runtime_spec_start_test_thread_meta
+
+  defp cleanup_storage do
+    for suffix <- [:checkpoints, :threads, :thread_meta] do
+      table = table_name(suffix)
+      delete_table_if_present(table)
+    end
+  end
+
+  defp delete_table_if_present(table) do
+    if :ets.whereis(table) != :undefined do
+      :ets.delete(table)
+    end
+  rescue
+    ArgumentError -> :ok
   end
 end
