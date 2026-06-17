@@ -1,11 +1,7 @@
 <div align="center">
   <h1>Squidie - Durable Workflow Runtime</h1>
 
-  <img
-    src="https://github.com/user-attachments/assets/8604607c-c5cf-4c54-970f-0198fe36e349"
-    alt="Squidie logo"
-    width="450"
-  />
+  <img width="450" alt="squidie-logo" src="https://github.com/user-attachments/assets/61766e4e-852e-4c8c-9454-5e29cdbbdff4" />
 
   <p>
     <a href="https://github.com/dark-trench/squidie/actions/workflows/ci.yml"><img src="https://github.com/dark-trench/squidie/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
