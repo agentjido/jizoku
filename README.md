@@ -95,7 +95,7 @@ Add Squidie to your dependencies:
 ```elixir
 defp deps do
   [
-    {:squidie, "~> 0.3.0"}
+    {:squidie, "~> 0.3.1"}
   ]
 end
 ```

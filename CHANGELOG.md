@@ -5,6 +5,14 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.3.1] - 2026-06-17
+
+### Changed
+- `1488a94` chore(deps)(deps-dev): bump reach from 2.7.2 to 2.7.5 (#374)
+- `609f6b7` Update README.md
+- `df929b8` chore(deps)(deps): bump jido from 2.3.1 to 2.3.2 (#373)
+- `2d43d8d` ci: publish releases to hex (#375)
+
 ## [0.3.0] - 2026-06-12
 
 ### Added
