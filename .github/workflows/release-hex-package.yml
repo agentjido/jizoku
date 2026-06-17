@@ -1,0 +1,139 @@
+name: Release Hex Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version without the leading v, for example 0.3.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  ELIXIR_VERSION: "1.19.5"
+  OTP_VERSION: "28.4.1"
+
+jobs:
+  release:
+    name: Release to GitHub and Hex.pm
+    runs-on: ubuntu-latest
+    environment: hex-publish
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Elixir
+        uses: ./.github/actions/setup-elixir
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Validate requested version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if ! [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version must be SemVer without a leading v"
+            exit 1
+          fi
+
+          if git rev-parse "v${RELEASE_VERSION}" >/dev/null 2>&1; then
+            echo "::error::tag v${RELEASE_VERSION} already exists"
+            exit 1
+          fi
+
+          if gh release view "v${RELEASE_VERSION}" >/dev/null 2>&1; then
+            echo "::error::GitHub release v${RELEASE_VERSION} already exists"
+            exit 1
+          fi
+
+      - name: Prepare release metadata
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          elixir scripts/squidie_release_prep.exs "$RELEASE_VERSION" --notes-file /tmp/squidie-release-notes.md
+          mix format
+
+      - name: Verify release
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          package_version="$(elixir -e 'Mix.start(); Code.require_file("mix.exs"); Mix.Project.get!(); IO.write(Mix.Project.config()[:version])')"
+
+          if [ "$package_version" != "$RELEASE_VERSION" ]; then
+            echo "::error::requested version ${RELEASE_VERSION} does not match mix.exs version ${package_version}"
+            exit 1
+          fi
+
+          mix precommit
+          mix hex.build --unpack --output /tmp/squidie-hex-package
+
+      - name: Commit release metadata
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mix.exs README.md CHANGELOG.md docs/workflow_authoring.livemd docs/host_app_integration.md
+
+          if git diff --cached --quiet; then
+            echo "::error::release metadata did not change"
+            exit 1
+          fi
+
+          git commit \
+            -m "chore: release ${RELEASE_VERSION}" \
+            -m "Update Squidie package metadata and changelog for ${RELEASE_VERSION}."
+
+      - name: Tag and push release
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          git tag -a "v${RELEASE_VERSION}" -m "Release ${RELEASE_VERSION}"
+          git push origin HEAD:main
+          git push origin "v${RELEASE_VERSION}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          gh release create "v${RELEASE_VERSION}" \
+            --title "v${RELEASE_VERSION}" \
+            --notes-file /tmp/squidie-release-notes.md
+
+      - name: Publish package
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${HEX_API_KEY:-}" ]; then
+            echo "::error::HEX_SECRET_KEY is not configured"
+            exit 1
+          fi
+
+          mix hex.publish --yes
