@@ -37,7 +37,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Check Discord notification formatting
         run: bash .github/tests/discord_notifications_test.sh
@@ -95,7 +95,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
@@ -150,7 +150,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
@@ -192,7 +192,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Elixir
         uses: ./.github/actions/setup-elixir
@@ -214,7 +214,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -236,7 +236,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Elixir
         uses: ./.github/actions/setup-elixir
@@ -256,7 +256,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Elixir
         uses: ./.github/actions/setup-elixir
@@ -284,7 +284,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Elixir
         uses: ./.github/actions/setup-elixir
@@ -304,7 +304,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Elixir
         uses: ./.github/actions/setup-elixir
