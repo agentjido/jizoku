@@ -1,6 +1,7 @@
 defmodule Squidie.Runs.GraphInspectionTest do
   use ExUnit.Case, async: true
 
+  alias Squidie.Inspection
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.Runs.GraphInspection
 
@@ -41,6 +42,30 @@ defmodule Squidie.Runs.GraphInspectionTest do
     origin: %{runnable_key: "run_123:fanout:1", step: "fanout", attempt: 1},
     metadata: %{subscription_id: "sub_123"}
   }
+
+  test "canonical inspection graph keeps the old Runs graph shape compatible" do
+    snapshot = %Snapshot{
+      run_id: @run_id,
+      workflow: "MissingWorkflow",
+      queue: "default",
+      status: :running,
+      reason: :run_started,
+      terminal?: false,
+      terminal_status: nil,
+      thread_revisions: %{run: 2, dispatch: 0}
+    }
+
+    inspection_graph = Inspection.GraphInspection.from_snapshot(snapshot, source: :read_model)
+    runs_graph = GraphInspection.from_inspection_graph(inspection_graph)
+
+    assert %Inspection.GraphInspection{} = inspection_graph
+    assert %GraphInspection{} = runs_graph
+
+    assert GraphInspection.to_map(runs_graph) ==
+             Inspection.GraphInspection.to_map(inspection_graph)
+
+    assert inspection_graph == GraphInspection.to_inspection_graph(runs_graph)
+  end
 
   test "exposes child runs as graph metadata instead of inline nodes" do
     snapshot = %Snapshot{

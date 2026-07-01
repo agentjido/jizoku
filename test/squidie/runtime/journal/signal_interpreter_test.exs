@@ -2,11 +2,25 @@ defmodule Squidie.Runtime.Journal.SignalInterpreterTest do
   use ExUnit.Case, async: true
 
   alias Squidie.Runtime.Journal.Cancellation
+  alias Squidie.Runtime.Journal.Commands
   alias Squidie.Runtime.Journal.ManualControl
   alias Squidie.Runtime.Journal.SignalInterpreter
   alias Squidie.Runtime.Signal
 
   @run_id "3c82d86d-31a6-4d57-9e41-4f5c95125be6"
+
+  test "old journal command modules delegate to the canonical commands namespace" do
+    assert {:ok, %Signal{} = cancel_signal} = Signal.cancel_run(@run_id)
+
+    assert SignalInterpreter.apply(cancel_signal, :bad_opts) ==
+             Commands.SignalInterpreter.apply(cancel_signal, :bad_opts)
+
+    assert Cancellation.apply_signal(%{}, []) ==
+             Commands.Cancellation.apply_signal(%{}, [])
+
+    assert ManualControl.apply_signal(%{}, []) ==
+             Commands.ManualControl.apply_signal(%{}, [])
+  end
 
   test "validates malformed supported runtime command signals" do
     for type <- [:start_run, :start_cron, :replay_run] do

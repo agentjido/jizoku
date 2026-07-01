@@ -1,13 +1,13 @@
-# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runs.DynamicWorkPreview do
   @moduledoc """
-  Validated, read-only preview of one dynamic work record.
+  Compatibility dynamic-work preview struct.
 
-  Preview values are intended for dashboards, CLIs, and visual editors that need
-  to inspect the graph impact of a dynamic work payload before appending a
-  durable journal fact.
+  `Squidie.Inspection.DynamicWorkPreview` is the canonical inspection
+  namespace. This module preserves the original `Squidie.Runs.*` return shape
+  for callers that pattern match or serialize the existing struct.
   """
 
+  alias Squidie.Inspection
   alias Squidie.Runs.GraphInspection
 
   @type t :: %__MODULE__{
@@ -29,83 +29,59 @@ defmodule Squidie.Runs.DynamicWorkPreview do
     :origin_node_id,
     added_node_ids: [],
     added_edge_ids: [],
-    warnings: [],
     duplicate?: false,
-    recordable?: true
+    recordable?: false,
+    warnings: []
   ]
 
-  @doc false
+  @doc """
+  Builds a compatibility preview from dynamic-work validation output.
+  """
   @spec new(String.t(), map(), boolean(), GraphInspection.t()) :: t()
   def new(run_id, dynamic_work, duplicate?, %GraphInspection{} = graph)
       when is_binary(run_id) and is_map(dynamic_work) and is_boolean(duplicate?) do
-    overlay = overlay(dynamic_work, duplicate?)
-
-    %__MODULE__{
-      run_id: run_id,
-      dynamic_work: dynamic_work,
-      duplicate?: duplicate?,
-      recordable?: overlay.recordable?,
-      origin_node_id: overlay.origin_node_id,
-      added_node_ids: overlay.added_node_ids,
-      added_edge_ids: overlay.added_edge_ids,
-      warnings: overlay.warnings,
-      graph: graph
-    }
+    run_id
+    |> Inspection.DynamicWorkPreview.new(
+      dynamic_work,
+      duplicate?,
+      GraphInspection.to_inspection_graph(graph)
+    )
+    |> from_inspection_preview()
   end
 
   @doc """
-  Converts a dynamic work preview to a plain map for JSON encoding.
+  Converts a compatibility preview to a plain map for JSON encoding.
   """
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = preview) do
-    %{
-      run_id: preview.run_id,
-      duplicate?: preview.duplicate?,
-      recordable?: preview.recordable?,
-      origin_node_id: preview.origin_node_id,
-      added_node_ids: preview.added_node_ids,
-      added_edge_ids: preview.added_edge_ids,
-      warnings: preview.warnings,
-      dynamic_work: preview.dynamic_work,
-      graph: GraphInspection.to_map(preview.graph)
-    }
+    preview
+    |> to_inspection_preview()
+    |> Inspection.DynamicWorkPreview.to_map()
   end
 
-  defp overlay(dynamic_work, duplicate?) do
-    %{
-      recordable?: not duplicate?,
-      origin_node_id: origin_node_id(dynamic_work),
-      added_node_ids: added_ids(dynamic_work, :nodes, duplicate?),
-      added_edge_ids: added_ids(dynamic_work, :edges, duplicate?),
-      warnings: warnings(duplicate?)
-    }
+  @doc """
+  Converts a canonical inspection preview into the compatibility struct.
+  """
+  @spec from_inspection_preview(Inspection.DynamicWorkPreview.t()) :: t()
+  def from_inspection_preview(%Inspection.DynamicWorkPreview{} = preview) do
+    attrs =
+      preview
+      |> Map.from_struct()
+      |> Map.update!(:graph, &GraphInspection.from_inspection_graph/1)
+
+    struct!(__MODULE__, attrs)
   end
 
-  defp origin_node_id(dynamic_work) when is_map(dynamic_work) do
-    dynamic_work
-    |> value(:origin, %{})
-    |> value(:step)
+  @doc """
+  Converts a compatibility preview into the canonical inspection struct.
+  """
+  @spec to_inspection_preview(t()) :: Inspection.DynamicWorkPreview.t()
+  def to_inspection_preview(%__MODULE__{} = preview) do
+    attrs =
+      preview
+      |> Map.from_struct()
+      |> Map.update!(:graph, &GraphInspection.to_inspection_graph/1)
+
+    struct!(Inspection.DynamicWorkPreview, attrs)
   end
-
-  defp added_ids(_dynamic_work, _key, true), do: []
-
-  defp added_ids(dynamic_work, key, false) when is_map(dynamic_work) do
-    dynamic_work
-    |> value(key, [])
-    |> Enum.flat_map(&id_value/1)
-  end
-
-  defp id_value(item) when is_map(item) do
-    case value(item, :id) do
-      id when is_binary(id) -> [id]
-      _invalid -> []
-    end
-  end
-
-  defp id_value(_item), do: []
-
-  defp warnings(true), do: [:duplicate_dynamic_work]
-  defp warnings(false), do: []
-
-  defp value(map, field, default \\ nil), do: Squidie.MapField.get(map, field, default)
 end

@@ -5,8 +5,8 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
   alias Squidie.ReadModel.Inspection
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.Journal
+  alias Squidie.Runtime.Journal.Commands.Starter
   alias Squidie.Runtime.Journal.Options
-  alias Squidie.Runtime.Journal.Starter
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Step.Context

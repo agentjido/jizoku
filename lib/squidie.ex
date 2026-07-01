@@ -16,66 +16,24 @@ defmodule Squidie do
   alias Squidie.Runs.GraphInspection
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
-  alias Squidie.Runtime.Journal.Cancellation
   alias Squidie.Runtime.Journal.ChildStarter
+  alias Squidie.Runtime.Journal.Commands.Cancellation
+  alias Squidie.Runtime.Journal.Commands.Replay
+  alias Squidie.Runtime.Journal.Commands.SignalInterpreter
+  alias Squidie.Runtime.Journal.Commands.Starter
   alias Squidie.Runtime.Journal.DynamicWork
   alias Squidie.Runtime.Journal.EntryBuilder
   alias Squidie.Runtime.Journal.Executor
   alias Squidie.Runtime.Journal.Options
-  alias Squidie.Runtime.Journal.Replay
-  alias Squidie.Runtime.Journal.SignalInterpreter
-  alias Squidie.Runtime.Journal.Starter
   alias Squidie.Runtime.Journal.WorkflowDefinitionLoader
+  alias Squidie.Runtime.Routing
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.Signal
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Workflow.ActionRegistry
   alias Squidie.Workflow.SpecPreview
 
-  @read_models [:read_model]
-  @runtimes [:journal]
   @dispatch_schedule_retries 25
-  @projection_snapshot_options [:queue, :now]
-  @projection_list_options [:queue, :now]
-  @journal_start_options [:runtime, :journal_storage, :queue, :now, :run_id]
-  @journal_spec_start_options [
-    :runtime,
-    :journal_storage,
-    :queue,
-    :now,
-    :run_id,
-    :action_registry,
-    :guardrail_registry
-  ]
-  @journal_child_start_options [
-    :runtime,
-    :journal_storage,
-    :queue,
-    :now,
-    :child_key,
-    :metadata
-  ]
-  @journal_control_options [:runtime, :journal_storage, :queue, :now]
-  @journal_execute_options [
-    :runtime,
-    :journal_storage,
-    :queue,
-    :owner_id,
-    :lease_for,
-    :heartbeat_interval_ms,
-    :now,
-    :action_registry,
-    :guardrail_registry
-  ]
-  @journal_dynamic_work_options [
-    :runtime,
-    :read_model,
-    :journal_storage,
-    :queue,
-    :now,
-    :repo,
-    :action_registry
-  ]
 
   @typedoc """
   Structured validation errors returned by the public read-model APIs.
@@ -143,8 +101,8 @@ defmodule Squidie do
           | {:error, Starter.start_error()}
           | {:error, {:dispatch_failed, term()}}
   def start(workflow, payload, overrides) when is_map(payload) and is_list(overrides) do
-    with :ok <- reject_public_start_options(overrides),
-         {:ok, :journal} <- runtime(overrides) do
+    with :ok <- Routing.reject_public_start_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides) do
       start_default_run_with_runtime(:journal, workflow, payload, overrides)
     end
   end
@@ -190,8 +148,8 @@ defmodule Squidie do
           | {:error, {:dispatch_failed, term()}}
   def start(workflow, trigger_name, payload, overrides)
       when is_atom(trigger_name) and is_map(payload) and is_list(overrides) do
-    with :ok <- reject_public_start_options(overrides),
-         {:ok, :journal} <- runtime(overrides) do
+    with :ok <- Routing.reject_public_start_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides) do
       start_triggered_run_with_runtime(:journal, workflow, trigger_name, payload, overrides)
     end
   end
@@ -212,8 +170,8 @@ defmodule Squidie do
   def start_spec(spec, payload, overrides \\ [])
 
   def start_spec(spec, payload, overrides) when is_map(payload) and is_list(overrides) do
-    with :ok <- reject_public_start_options(overrides),
-         {:ok, :journal} <- runtime(overrides) do
+    with :ok <- Routing.reject_public_start_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides) do
       start_spec_run_with_runtime(:journal, spec, nil, payload, overrides)
     end
   end
@@ -233,8 +191,8 @@ defmodule Squidie do
           | {:error, {:dispatch_failed, term()}}
   def start_spec(spec, trigger_name, payload, overrides)
       when is_atom(trigger_name) and is_map(payload) and is_list(overrides) do
-    with :ok <- reject_public_start_options(overrides),
-         {:ok, :journal} <- runtime(overrides) do
+    with :ok <- Routing.reject_public_start_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides) do
       start_spec_run_with_runtime(:journal, spec, trigger_name, payload, overrides)
     end
   end
@@ -288,8 +246,8 @@ defmodule Squidie do
   def start_run_with_initial_context(workflow, trigger_name, payload, initial_context, overrides)
       when is_atom(trigger_name) and is_map(payload) and is_map(initial_context) and
              is_list(overrides) do
-    with :ok <- reject_public_start_options(overrides),
-         {:ok, :journal} <- runtime(overrides) do
+    with :ok <- Routing.reject_public_start_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides) do
       start_initial_context_run_with_runtime(
         :journal,
         workflow,
@@ -317,8 +275,8 @@ defmodule Squidie do
 
   def start_child_run(parent_context, child_workflow, payload, overrides)
       when is_map(payload) and is_list(overrides) do
-    with :ok <- public_child_start_options(overrides),
-         {:ok, :journal} <- runtime(overrides),
+    with :ok <- Routing.public_child_start_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
          {:ok, definition} <- Squidie.Workflow.Definition.load(child_workflow) do
       child_trigger = Squidie.Workflow.Definition.default_trigger(definition)
 
@@ -327,7 +285,7 @@ defmodule Squidie do
         child_workflow,
         child_trigger,
         payload,
-        journal_child_start_options(overrides)
+        Routing.journal_child_start_options(overrides)
       )
     end
   end
@@ -349,14 +307,14 @@ defmodule Squidie do
           | {:error, ChildStarter.start_error()}
   def start_child_run(parent_context, child_workflow, child_trigger, payload, overrides)
       when is_atom(child_trigger) and is_map(payload) and is_list(overrides) do
-    with :ok <- public_child_start_options(overrides),
-         {:ok, :journal} <- runtime(overrides) do
+    with :ok <- Routing.public_child_start_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides) do
       ChildStarter.start_child_run(
         parent_context,
         child_workflow,
         child_trigger,
         payload,
-        journal_child_start_options(overrides)
+        Routing.journal_child_start_options(overrides)
       )
     end
   end
@@ -390,7 +348,7 @@ defmodule Squidie do
              | Config.config_error()
              | Inspection.snapshot_error()}
   def inspect_run(run_id, overrides \\ []) do
-    with {:ok, :read_model} <- read_model(overrides) do
+    with {:ok, :read_model} <- Routing.read_model(overrides) do
       inspect_projected_run(run_id, overrides)
     end
   end
@@ -411,7 +369,7 @@ defmodule Squidie do
              | Config.config_error()
              | Inspection.snapshot_error()}
   def inspect_run_graph(run_id, overrides \\ []) do
-    with {:ok, :read_model} <- read_model(overrides),
+    with {:ok, :read_model} <- Routing.read_model(overrides),
          {:ok, inspection} <- inspect_graph_source(run_id, :read_model, overrides) do
       {:ok, graph_inspection(inspection, :read_model, overrides)}
     end
@@ -433,7 +391,7 @@ defmodule Squidie do
              | Config.config_error()
              | Inspection.snapshot_error()}
   def inspect_run_timeline(run_id, overrides \\ []) do
-    with {:ok, :read_model} <- read_model(overrides),
+    with {:ok, :read_model} <- Routing.read_model(overrides),
          {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides) do
       Inspection.timeline(snapshot)
     end
@@ -459,9 +417,9 @@ defmodule Squidie do
   def preview_dynamic_work(run_id, attrs, overrides \\ [])
 
   def preview_dynamic_work(run_id, attrs, overrides) when is_list(overrides) do
-    with :ok <- public_dynamic_work_options(overrides),
-         {:ok, :journal} <- runtime(overrides),
-         {:ok, :read_model} <- read_model(overrides),
+    with :ok <- Routing.public_dynamic_work_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, :read_model} <- Routing.read_model(overrides),
          {:ok, run_id} <- Options.thread_part(run_id, :run_id),
          {:ok, now} <- dynamic_work_time(overrides),
          {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides),
@@ -511,10 +469,10 @@ defmodule Squidie do
   def record_dynamic_work(run_id, attrs, overrides \\ [])
 
   def record_dynamic_work(run_id, attrs, overrides) when is_list(overrides) do
-    with :ok <- public_dynamic_work_options(overrides),
-         {:ok, :journal} <- runtime(overrides),
-         {:ok, :read_model} <- read_model(overrides),
-         {:ok, storage} <- journal_storage(overrides),
+    with :ok <- Routing.public_dynamic_work_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, :read_model} <- Routing.read_model(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides),
          {:ok, run_id} <- Options.thread_part(run_id, :run_id),
          {:ok, now} <- dynamic_work_time(overrides),
          {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides),
@@ -550,10 +508,10 @@ defmodule Squidie do
   def schedule_dynamic_work(run_id, attrs, overrides \\ [])
 
   def schedule_dynamic_work(run_id, attrs, overrides) when is_list(overrides) do
-    with :ok <- public_dynamic_work_options(overrides),
-         {:ok, :journal} <- runtime(overrides),
-         {:ok, :read_model} <- read_model(overrides),
-         {:ok, storage} <- journal_storage(overrides),
+    with :ok <- Routing.public_dynamic_work_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, :read_model} <- Routing.read_model(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides),
          {:ok, queue} <- dynamic_work_queue(overrides),
          {:ok, registry} <- dynamic_work_action_registry(overrides),
          {:ok, run_id} <- Options.thread_part(run_id, :run_id),
@@ -597,7 +555,7 @@ defmodule Squidie do
              | Config.config_error()
              | Squidie.ReadModel.Explanation.explanation_error()}
   def explain_run(run_id, overrides \\ []) do
-    with {:ok, :read_model} <- read_model(overrides) do
+    with {:ok, :read_model} <- Routing.read_model(overrides) do
       explain_projected_run(run_id, overrides)
     end
   end
@@ -614,66 +572,13 @@ defmodule Squidie do
   def execute_next(overrides \\ [])
 
   def execute_next(overrides) when is_list(overrides) do
-    with :ok <- public_execute_options(overrides),
-         {:ok, :journal} <- runtime(overrides) do
-      Executor.execute_next(journal_execute_options(overrides))
+    with :ok <- Routing.public_execute_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides) do
+      Executor.execute_next(Routing.journal_execute_options(overrides))
     end
   end
 
   def execute_next(overrides), do: Executor.execute_next(overrides)
-
-  defp public_execute_options(opts) do
-    cond do
-      not Keyword.keyword?(opts) ->
-        :ok
-
-      unsupported = Enum.find(Keyword.keys(opts), &(&1 not in public_execute_option_keys())) ->
-        {:error, {:invalid_option, {:option, unsupported}}}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp public_execute_option_keys do
-    [
-      :runtime,
-      :journal_storage,
-      :queue,
-      :owner_id,
-      :lease_for,
-      :heartbeat_interval_ms,
-      :now,
-      :action_registry,
-      :guardrail_registry
-    ]
-  end
-
-  defp public_child_start_options(opts) do
-    cond do
-      not Keyword.keyword?(opts) ->
-        {:error, {:invalid_option, {:opts, :invalid}}}
-
-      unsupported = Enum.find(Keyword.keys(opts), &(&1 not in @journal_child_start_options)) ->
-        {:error, {:invalid_option, {:option, unsupported}}}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp public_dynamic_work_options(opts) do
-    cond do
-      not Keyword.keyword?(opts) ->
-        {:error, {:invalid_option, {:opts, :invalid}}}
-
-      unsupported = Enum.find(Keyword.keys(opts), &(&1 not in @journal_dynamic_work_options)) ->
-        {:error, {:invalid_option, {:option, unsupported}}}
-
-      true ->
-        :ok
-    end
-  end
 
   @doc """
   Lists workflow runs with optional filters.
@@ -686,7 +591,7 @@ defmodule Squidie do
           {:ok, [Listing.Summary.t()]}
           | {:error, Config.config_error() | Listing.list_error()}
   def list_runs(filters \\ [], overrides \\ []) do
-    with {:ok, :journal} <- runtime(overrides) do
+    with {:ok, :journal} <- Routing.runtime(overrides) do
       list_runs_with_runtime(:journal, filters, overrides)
     end
   end
@@ -702,7 +607,7 @@ defmodule Squidie do
              | Config.config_error()
              | Cancellation.cancel_error()}
   def cancel(run_id, overrides \\ []) do
-    with {:ok, :journal} <- runtime(overrides) do
+    with {:ok, :journal} <- Routing.runtime(overrides) do
       cancel_run_with_runtime(:journal, run_id, overrides)
     end
   end
@@ -726,8 +631,8 @@ defmodule Squidie do
   def apply_signal(signal, overrides \\ [])
 
   def apply_signal(%Signal{} = signal, overrides) when is_list(overrides) do
-    with {:ok, :journal} <- runtime(overrides) do
-      SignalInterpreter.apply(signal, journal_control_options(overrides))
+    with {:ok, :journal} <- Routing.runtime(overrides) do
+      SignalInterpreter.apply(signal, Routing.journal_control_options(overrides))
     end
   end
 
@@ -780,9 +685,9 @@ defmodule Squidie do
              | Config.config_error()
              | term()}
   def resume(run_id, attrs, overrides) when is_map(attrs) and is_list(overrides) do
-    with {:ok, :journal} <- runtime(overrides),
+    with {:ok, :journal} <- Routing.runtime(overrides),
          {:ok, signal} <- control_signal(:resume_run, run_id, attrs, overrides) do
-      SignalInterpreter.apply(signal, journal_control_options(overrides))
+      SignalInterpreter.apply(signal, Routing.journal_control_options(overrides))
     else
       {:error, {:invalid_signal, reason}} -> {:error, public_signal_error(reason)}
       {:error, _reason} = error -> error
@@ -800,9 +705,9 @@ defmodule Squidie do
              | Config.config_error()
              | term()}
   def approve(run_id, attrs, overrides \\ []) when is_map(attrs) and is_list(overrides) do
-    with {:ok, :journal} <- runtime(overrides),
+    with {:ok, :journal} <- Routing.runtime(overrides),
          {:ok, signal} <- control_signal(:approve_run, run_id, attrs, overrides) do
-      SignalInterpreter.apply(signal, journal_control_options(overrides))
+      SignalInterpreter.apply(signal, Routing.journal_control_options(overrides))
     else
       {:error, {:invalid_signal, reason}} -> {:error, public_signal_error(reason)}
       {:error, _reason} = error -> error
@@ -820,9 +725,9 @@ defmodule Squidie do
              | Config.config_error()
              | term()}
   def reject(run_id, attrs, overrides \\ []) when is_map(attrs) and is_list(overrides) do
-    with {:ok, :journal} <- runtime(overrides),
+    with {:ok, :journal} <- Routing.runtime(overrides),
          {:ok, signal} <- control_signal(:reject_run, run_id, attrs, overrides) do
-      SignalInterpreter.apply(signal, journal_control_options(overrides))
+      SignalInterpreter.apply(signal, Routing.journal_control_options(overrides))
     else
       {:error, {:invalid_signal, reason}} -> {:error, public_signal_error(reason)}
       {:error, _reason} = error -> error
@@ -847,7 +752,7 @@ defmodule Squidie do
   def replay(run_id, overrides \\ []) do
     {replay_opts, config_overrides} = Keyword.split(overrides, [:allow_irreversible])
 
-    with {:ok, :journal} <- runtime(config_overrides),
+    with {:ok, :journal} <- Routing.runtime(config_overrides),
          {:ok, run} <- replay_run_with_runtime(:journal, run_id, replay_opts, config_overrides) do
       {:ok, run}
     else
@@ -881,19 +786,24 @@ defmodule Squidie do
   end
 
   defp replay_run_with_runtime(:journal, run_id, replay_opts, config_overrides) do
-    Replay.replay(run_id, replay_opts, journal_control_options(config_overrides))
+    Replay.replay(run_id, replay_opts, Routing.journal_control_options(config_overrides))
   end
 
   defp start_default_run_with_runtime(:journal, workflow, payload, overrides) do
-    Starter.start_run(workflow, nil, payload, journal_start_options(overrides))
+    Starter.start_run(workflow, nil, payload, Routing.journal_start_options(overrides))
   end
 
   defp start_triggered_run_with_runtime(:journal, workflow, trigger_name, payload, overrides) do
-    Starter.start_run(workflow, trigger_name, payload, journal_start_options(overrides))
+    Starter.start_run(workflow, trigger_name, payload, Routing.journal_start_options(overrides))
   end
 
   defp start_spec_run_with_runtime(:journal, spec, trigger_name, payload, overrides) do
-    Starter.start_spec_run(spec, trigger_name, payload, journal_spec_start_options(overrides))
+    Starter.start_spec_run(
+      spec,
+      trigger_name,
+      payload,
+      Routing.journal_spec_start_options(overrides)
+    )
   end
 
   defp start_initial_context_run_with_runtime(
@@ -915,20 +825,16 @@ defmodule Squidie do
     end
   end
 
-  defp journal_child_start_options(overrides) do
-    configured_journal_options(overrides, @journal_child_start_options)
-  end
-
   defp list_runs_with_runtime(:journal, filters, overrides) do
-    with {:ok, storage} <- journal_storage(overrides) do
-      Listing.list(storage, filters, journal_list_options(overrides))
+    with {:ok, storage} <- Routing.journal_storage(overrides) do
+      Listing.list(storage, filters, Routing.journal_list_options(overrides))
     end
   end
 
   defp cancel_run_with_runtime(:journal, run_id, overrides) do
     case control_signal(:cancel_run, run_id, overrides) do
       {:ok, signal} ->
-        SignalInterpreter.apply(signal, journal_control_options(overrides))
+        SignalInterpreter.apply(signal, Routing.journal_control_options(overrides))
 
       {:error, {:invalid_signal, reason}} ->
         {:error, public_signal_error(reason)}
@@ -1006,7 +912,7 @@ defmodule Squidie do
   defp journal_initial_context_start_options(workflow, trigger_name, initial_context, overrides) do
     opts =
       overrides
-      |> journal_start_options()
+      |> Routing.journal_start_options()
       |> Keyword.put(:initial_context, initial_context)
 
     with {:ok, idempotency_key} <- schedule_idempotency_key(initial_context) do
@@ -1048,19 +954,6 @@ defmodule Squidie do
     run_id
   end
 
-  defp reject_public_start_options(overrides) do
-    cond do
-      Keyword.has_key?(overrides, :context) ->
-        {:error, {:invalid_option, :context}}
-
-      Keyword.has_key?(overrides, :initial_context) ->
-        {:error, {:invalid_option, :initial_context}}
-
-      true ->
-        :ok
-    end
-  end
-
   defp dynamic_work_time(overrides) do
     case Keyword.get(overrides, :now, DateTime.utc_now()) do
       %DateTime{} = now -> {:ok, now}
@@ -1070,7 +963,7 @@ defmodule Squidie do
 
   defp dynamic_work_queue(overrides) do
     overrides
-    |> projected_snapshot_options()
+    |> Routing.projection_snapshot_options()
     |> Keyword.get(:queue, "default")
     |> Options.queue()
   end
@@ -1415,8 +1308,8 @@ defmodule Squidie do
   end
 
   defp inspect_projected_run(run_id, overrides) when is_binary(run_id) do
-    with {:ok, storage} <- journal_storage(overrides) do
-      Inspection.snapshot(storage, run_id, projected_snapshot_options(overrides))
+    with {:ok, storage} <- Routing.journal_storage(overrides) do
+      Inspection.snapshot(storage, run_id, Routing.projection_snapshot_options(overrides))
     end
   end
 
@@ -1445,7 +1338,7 @@ defmodule Squidie do
 
   defp graph_definition(%Inspection.Snapshot{run_id: run_id, workflow: workflow}, overrides)
        when is_binary(run_id) and is_binary(workflow) do
-    with {:ok, storage} <- journal_storage(overrides),
+    with {:ok, storage} <- Routing.journal_storage(overrides),
          {:ok, _workflow, definition} <- WorkflowDefinitionLoader.load(storage, run_id, workflow) do
       definition
     else
@@ -1460,7 +1353,7 @@ defmodule Squidie do
          overrides
        )
        when is_binary(run_id) and is_binary(workflow) do
-    with {:ok, storage} <- journal_storage(overrides),
+    with {:ok, storage} <- Routing.journal_storage(overrides),
          {:ok, _workflow, definition} <- WorkflowDefinitionLoader.load(storage, run_id, workflow) do
       {:ok, definition}
     else
@@ -1473,152 +1366,12 @@ defmodule Squidie do
   end
 
   defp explain_projected_run(run_id, overrides) do
-    with {:ok, storage} <- journal_storage(overrides) do
+    with {:ok, storage} <- Routing.journal_storage(overrides) do
       Squidie.ReadModel.Explanation.explain(
         storage,
         run_id,
-        projected_snapshot_options(overrides)
+        Routing.projection_snapshot_options(overrides)
       )
     end
-  end
-
-  defp read_model(overrides) when is_list(overrides) do
-    with :ok <- validate_keyword_options(overrides) do
-      configured_read_model(overrides)
-    end
-  end
-
-  defp read_model(_overrides), do: {:error, {:invalid_option, {:opts, :invalid}}}
-
-  defp runtime(overrides) when is_list(overrides) do
-    with :ok <- validate_keyword_options(overrides) do
-      configured_runtime(overrides)
-    end
-  end
-
-  defp runtime(_overrides), do: {:error, {:invalid_option, {:opts, :invalid}}}
-
-  defp validate_keyword_options(overrides) do
-    if Keyword.keyword?(overrides) do
-      :ok
-    else
-      {:error, {:invalid_option, {:opts, :invalid}}}
-    end
-  end
-
-  defp configured_read_model(overrides) do
-    case Keyword.fetch(overrides, :read_model) do
-      {:ok, read_model} when read_model in @read_models ->
-        {:ok, read_model}
-
-      {:ok, _read_model} ->
-        {:error, {:invalid_option, {:read_model, :invalid}}}
-
-      :error ->
-        load_configured_read_model(overrides)
-    end
-  end
-
-  defp load_configured_read_model(overrides) do
-    case Config.load(config_routing_overrides(overrides)) do
-      {:ok, %Config{read_model: read_model}} -> {:ok, read_model}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp configured_runtime(overrides) do
-    case Keyword.fetch(overrides, :runtime) do
-      {:ok, runtime} when runtime in @runtimes ->
-        {:ok, runtime}
-
-      {:ok, _runtime} ->
-        {:error, {:invalid_option, {:runtime, :invalid}}}
-
-      :error ->
-        load_configured_runtime(overrides)
-    end
-  end
-
-  defp load_configured_runtime(overrides) do
-    case Config.load(config_routing_overrides(overrides)) do
-      {:ok, %Config{runtime: runtime}} -> {:ok, runtime}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp journal_storage(overrides) do
-    case Keyword.fetch(overrides, :journal_storage) do
-      {:ok, storage} ->
-        Options.storage(storage)
-
-      :error ->
-        case Config.load(config_routing_overrides(overrides)) do
-          {:ok, %Config{} = config} -> Options.storage(config.journal_storage)
-          {:error, {:missing_config, [:journal_storage]}} -> Options.storage(nil)
-          {:error, _reason} = error -> error
-        end
-    end
-  end
-
-  defp projected_snapshot_options(overrides) do
-    configured_journal_options(overrides, @projection_snapshot_options)
-  end
-
-  defp journal_start_options(overrides) do
-    configured_journal_options(overrides, @journal_start_options)
-  end
-
-  defp journal_spec_start_options(overrides) do
-    configured_journal_options(overrides, @journal_spec_start_options)
-  end
-
-  defp journal_control_options(overrides) do
-    configured_journal_options(overrides, @journal_control_options)
-  end
-
-  defp journal_execute_options(overrides) do
-    configured_journal_options(overrides, @journal_execute_options)
-  end
-
-  defp journal_list_options(overrides) do
-    configured_journal_options(overrides, @projection_list_options)
-  end
-
-  defp configured_journal_options(overrides, keys) do
-    case load_config_for_journal_options(overrides) do
-      {:ok, %Config{} = config} ->
-        [
-          runtime: :journal,
-          journal_storage: config.journal_storage,
-          queue: config.queue
-        ]
-        |> Keyword.merge(Keyword.take(overrides, keys))
-        |> Keyword.take(keys)
-
-      {:error, _reason} ->
-        Keyword.take(overrides, keys)
-    end
-  end
-
-  defp load_config_for_journal_options(overrides) do
-    case Config.load(config_routing_overrides(overrides)) do
-      {:ok, %Config{} = config} ->
-        {:ok, config}
-
-      {:error, _reason} ->
-        overrides
-        |> Keyword.delete(:journal_storage)
-        |> config_routing_overrides()
-        |> Config.load()
-    end
-  end
-
-  defp config_routing_overrides(overrides) do
-    Keyword.take(overrides, [
-      :repo,
-      :runtime,
-      :read_model,
-      :journal_storage
-    ])
   end
 end

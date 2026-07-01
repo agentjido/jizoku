@@ -1,21 +1,14 @@
 defmodule Squidie.Runs.SpecPreview do
   @moduledoc """
-  Read-only execution-style preview for a runtime-authored workflow spec.
+  Compatibility preview struct for runtime-authored workflow specs.
 
-  Preview values are intended for visual editors and host tooling that need to
-  inspect sample payload behavior before publishing or starting a durable run.
+  `Squidie.Inspection.SpecPreview` is the canonical inspection namespace. This
+  module preserves the original `Squidie.Runs.*` struct for existing callers.
   """
 
-  @type preview_node :: %{
-          id: String.t(),
-          step: atom(),
-          action: atom() | String.t() | nil,
-          status: :completed | :failed | :unsupported | :validation_error,
-          input: map(),
-          output: map() | nil,
-          error: map() | nil,
-          debug: map()
-        }
+  alias Squidie.Inspection
+
+  @type preview_node :: Inspection.SpecPreview.preview_node()
 
   @type t :: %__MODULE__{
           run_id: nil,
@@ -37,26 +30,22 @@ defmodule Squidie.Runs.SpecPreview do
     errors: []
   ]
 
-  @doc false
+  @doc """
+  Builds a compatibility spec preview struct.
+  """
   @spec new(keyword()) :: t()
   def new(attrs) when is_list(attrs) do
     struct!(__MODULE__, attrs)
   end
 
   @doc """
-  Converts a spec execution preview to a plain map for JSON encoding.
+  Converts a compatibility spec preview to a plain map for JSON encoding.
   """
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = preview) do
-    %{
-      source: :workflow_spec,
-      run_id: nil,
-      workflow: preview.workflow,
-      definition_version: preview.definition_version,
-      trigger: preview.trigger,
-      status: preview.status,
-      nodes: preview.nodes,
-      errors: preview.errors
-    }
+    preview
+    |> Map.from_struct()
+    |> then(&struct!(Inspection.SpecPreview, &1))
+    |> Inspection.SpecPreview.to_map()
   end
 end

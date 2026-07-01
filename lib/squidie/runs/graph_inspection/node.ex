@@ -1,11 +1,13 @@
 defmodule Squidie.Runs.GraphInspection.Node do
   @moduledoc """
-  Public graph node for workflow run inspection.
+  Compatibility node struct for run graph inspection.
 
-  Nodes represent declared workflow steps. The graph projection keeps node
-  identifiers as strings so host UIs can use the same shape across persisted
-  inspection snapshots.
+  `Squidie.Inspection.GraphInspection.Node` is the canonical inspection
+  namespace. This module preserves the original `Squidie.Runs.*` struct for
+  existing callers and serializers.
   """
+
+  alias Squidie.Inspection
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -46,26 +48,32 @@ defmodule Squidie.Runs.GraphInspection.Node do
   ]
 
   @doc """
-  Converts a graph node into the stable host UI map shape.
+  Converts a compatibility node into the stable host UI map shape.
   """
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = node) do
-    %{
-      id: node.id,
-      action: node.action,
-      status: node.status,
-      current?: node.current?,
-      input: node.input,
-      output: node.output,
-      error: node.error,
-      deadline: node.deadline,
-      recovery: node.recovery,
-      transition: node.transition,
-      manual_state: node.manual_state,
-      dynamic?: node.dynamic?,
-      origin: node.origin,
-      metadata: node.metadata,
-      attempts: node.attempts
-    }
+    node
+    |> to_inspection_node()
+    |> Inspection.GraphInspection.Node.to_map()
+  end
+
+  @doc """
+  Converts a canonical inspection node into the compatibility struct.
+  """
+  @spec from_inspection_node(Inspection.GraphInspection.Node.t()) :: t()
+  def from_inspection_node(%Inspection.GraphInspection.Node{} = node) do
+    node
+    |> Map.from_struct()
+    |> then(&struct!(__MODULE__, &1))
+  end
+
+  @doc """
+  Converts a compatibility node into the canonical inspection struct.
+  """
+  @spec to_inspection_node(t()) :: Inspection.GraphInspection.Node.t()
+  def to_inspection_node(%__MODULE__{} = node) do
+    node
+    |> Map.from_struct()
+    |> then(&struct!(Inspection.GraphInspection.Node, &1))
   end
 end
