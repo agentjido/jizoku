@@ -5,6 +5,14 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.3.2] - 2026-07-01
+
+### Changed
+- Organized runtime command and inspection modules behind clearer public
+  boundary wrappers without changing the documented runtime API.
+- Updated Req and GitHub Actions dependencies.
+- Refreshed README install guidance for the current release line.
+
 ## [0.3.1] - 2026-06-17
 
 ### Changed
