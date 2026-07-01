@@ -1,11 +1,13 @@
 defmodule Squidie.Runs.GraphInspection.Edge do
   @moduledoc """
-  Public graph edge for workflow run inspection.
+  Compatibility edge struct for run graph inspection.
 
-  Edge statuses are derived from durable step and attempt state only. Conditional
-  route selection can add richer skipped-edge evidence later without changing
-  the node shape.
+  `Squidie.Inspection.GraphInspection.Edge` is the canonical inspection
+  namespace. This module preserves the original `Squidie.Runs.*` struct for
+  existing callers and serializers.
   """
+
+  alias Squidie.Inspection
 
   @type edge_type :: :transition | :dependency | :dynamic
   @type edge_status :: :selected | :skipped | :pending | :blocked
@@ -35,23 +37,32 @@ defmodule Squidie.Runs.GraphInspection.Edge do
   ]
 
   @doc """
-  Converts a graph edge into the stable host UI map shape.
+  Converts a compatibility edge into the stable host UI map shape.
   """
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = edge) do
-    %{
-      id: edge.id,
-      from: edge.from,
-      to: edge.to,
-      type: edge.type,
-      status: edge.status,
-      selected?: edge.status == :selected,
-      skipped?: edge.status == :skipped,
-      pending?: edge.status == :pending,
-      blocked?: edge.status == :blocked,
-      outcome: edge.outcome,
-      condition: edge.condition,
-      recovery: edge.recovery
-    }
+    edge
+    |> to_inspection_edge()
+    |> Inspection.GraphInspection.Edge.to_map()
+  end
+
+  @doc """
+  Converts a canonical inspection edge into the compatibility struct.
+  """
+  @spec from_inspection_edge(Inspection.GraphInspection.Edge.t()) :: t()
+  def from_inspection_edge(%Inspection.GraphInspection.Edge{} = edge) do
+    edge
+    |> Map.from_struct()
+    |> then(&struct!(__MODULE__, &1))
+  end
+
+  @doc """
+  Converts a compatibility edge into the canonical inspection struct.
+  """
+  @spec to_inspection_edge(t()) :: Inspection.GraphInspection.Edge.t()
+  def to_inspection_edge(%__MODULE__{} = edge) do
+    edge
+    |> Map.from_struct()
+    |> then(&struct!(Inspection.GraphInspection.Edge, &1))
   end
 end
