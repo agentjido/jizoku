@@ -57,6 +57,7 @@ jobs:
         run: until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
 
       - name: Validate requested version
+        id: release_state
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
@@ -68,17 +69,36 @@ jobs:
             exit 1
           fi
 
+          tag_exists=false
           if git rev-parse "v${RELEASE_VERSION}" >/dev/null 2>&1; then
-            echo "::error::tag v${RELEASE_VERSION} already exists"
+            tag_exists=true
+          fi
+
+          release_exists=false
+          if gh release view "v${RELEASE_VERSION}" >/dev/null 2>&1; then
+            release_exists=true
+          fi
+
+          if [ "$tag_exists" = "true" ] || [ "$release_exists" = "true" ]; then
+            if [ "$tag_exists" = "true" ] && [ "$release_exists" = "true" ]; then
+              echo "existing_release=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "::error::release state is partial: tag_exists=${tag_exists}, release_exists=${release_exists}"
             exit 1
           fi
 
-          if gh release view "v${RELEASE_VERSION}" >/dev/null 2>&1; then
-            echo "::error::GitHub release v${RELEASE_VERSION} already exists"
-            exit 1
-          fi
+          echo "existing_release=false" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout existing release tag
+        if: ${{ steps.release_state.outputs.existing_release == 'true' }}
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: git checkout "v${RELEASE_VERSION}"
 
       - name: Prepare release metadata
+        if: ${{ steps.release_state.outputs.existing_release != 'true' }}
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
@@ -90,6 +110,7 @@ jobs:
       - name: Verify release
         env:
           RELEASE_VERSION: ${{ inputs.version }}
+          EXISTING_RELEASE: ${{ steps.release_state.outputs.existing_release }}
         run: |
           set -euo pipefail
 
@@ -100,10 +121,14 @@ jobs:
             exit 1
           fi
 
-          mix precommit
+          if [ "$EXISTING_RELEASE" != "true" ]; then
+            mix precommit
+          fi
+
           mix hex.build --unpack --output /tmp/squidie-hex-package
 
       - name: Commit release metadata
+        if: ${{ steps.release_state.outputs.existing_release != 'true' }}
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
@@ -123,6 +148,7 @@ jobs:
             -m "Update Squidie package metadata and changelog for ${RELEASE_VERSION}."
 
       - name: Tag and push release
+        if: ${{ steps.release_state.outputs.existing_release != 'true' }}
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
@@ -133,6 +159,7 @@ jobs:
           git push origin "v${RELEASE_VERSION}"
 
       - name: Create GitHub release
+        if: ${{ steps.release_state.outputs.existing_release != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
