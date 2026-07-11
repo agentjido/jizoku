@@ -1,8 +1,5 @@
-<div align="center">
+<div align="left">
   <h1>Squidie - Durable Workflow Runtime</h1>
-
-  <img width="400" alt="squidie-logo" src="https://github.com/user-attachments/assets/cba513fb-20af-4703-96cb-46ac31a5b195" />
-
   <p>
     <a href="https://github.com/dark-trench/squidie/actions/workflows/ci.yml"><img src="https://github.com/dark-trench/squidie/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <a href="https://codecov.io/gh/dark-trench/squidie"><img src="https://codecov.io/gh/dark-trench/squidie/branch/main/graph/badge.svg" alt="Codecov" /></a>
