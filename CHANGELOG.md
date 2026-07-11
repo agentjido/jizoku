@@ -5,6 +5,17 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.3.3] - 2026-07-11
+
+### Changed
+- `f6862f3` fix: start postgres during hex release
+- `79a0e17` Merge pull request #382 from dark-trench/fix/release-hex-postgres
+- `aa24f78` fix: resume existing hex releases
+- `42a361e` Merge pull request #383 from dark-trench/fix/release-hex-existing-publish
+- `6e208e7` chore(ci)(deps): bump trufflesecurity/trufflehog from 3.95.6 to 3.95.8
+- `6dc2148` Merge pull request #386 from dark-trench/dependabot/github_actions/main/trufflesecurity/trufflehog-3.95.8
+- `26b4b24` Update README.md
+
 ## [0.3.2] - 2026-07-01
 
 ### Changed
