@@ -2991,6 +2991,7 @@ defmodule Squidie.Runtime.Journal.Executor do
     %{}
     |> maybe_put_safe(:code, safe_error_code(Map.get(error, :code)))
     |> maybe_put_safe(:exception, safe_exception_name(Map.get(error, :exception)))
+    |> maybe_put_safe_map(:origin, safe_exception_origin(Map.get(error, :origin)))
     |> maybe_put_safe(:retryable?, Map.get(error, :retryable?))
     |> maybe_put_safe(:retry_after, Map.get(error, :retry_after))
     |> maybe_put_safe_map(:guardrail, Map.get(error, :guardrail))
@@ -3054,6 +3055,38 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp safe_exception_name(_exception), do: nil
+
+  defp safe_exception_origin(origin) when is_map(origin) do
+    module = Map.get(origin, :module)
+    function = Map.get(origin, :function)
+    arity = Map.get(origin, :arity)
+
+    with true <-
+           is_binary(module) and is_binary(function) and is_integer(arity) and arity >= 0 and
+             arity <= 255,
+         true <-
+           Regex.match?(
+             ~r/^(?:(?:Elixir\.)?[A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*|:[a-z][a-z0-9_]*)$/,
+             module
+           ),
+         true <- Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_?!]*$/, function) do
+      maybe_put_safe_origin_line(
+        Map.take(origin, [:module, :function, :arity]),
+        Map.get(origin, :line)
+      )
+    else
+      _invalid -> nil
+    end
+  end
+
+  defp safe_exception_origin(_origin), do: nil
+
+  defp maybe_put_safe_origin_line(origin, line)
+       when is_integer(line) and line > 0 and line <= 10_000_000 do
+    Map.put(origin, :line, line)
+  end
+
+  defp maybe_put_safe_origin_line(origin, _line), do: origin
 
   defp safe_error_message(message)
        when message in [

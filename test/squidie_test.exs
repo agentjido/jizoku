@@ -14574,13 +14574,20 @@ defmodule SquidieTest do
 
       assert [%{status: :failed, error: error}] = inspected_snapshot.attempts
 
-      assert error == %{
+      assert %{
                code: "step_exception",
                exception: "Jason.DecodeError",
                message: "step execution failed",
+               origin: %{
+                 module: "Jason",
+                 function: "decode!",
+                 arity: 2,
+                 line: line
+               },
                retryable?: false
-             }
+             } = error
 
+      assert is_integer(line) and line > 0
       refute inspect(inspected_snapshot) =~ "secret-token"
     end
 

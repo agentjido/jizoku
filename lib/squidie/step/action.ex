@@ -43,9 +43,28 @@ defmodule Squidie.Step.Action do
          code: "step_exception",
          message: "step execution failed",
          exception: inspect(exception.__struct__),
+         origin: exception_origin(__STACKTRACE__),
          retryable?: false
        }}
   end
+
+  defp exception_origin([{module, function, arity_or_args, metadata} | _stacktrace]) do
+    maybe_put_origin_line(
+      Map.new()
+      |> Map.put(:module, inspect(module))
+      |> Map.put(:function, Atom.to_string(function))
+      |> Map.put(:arity, stacktrace_arity(arity_or_args)),
+      Keyword.get(metadata, :line)
+    )
+  end
+
+  defp exception_origin(_stacktrace), do: nil
+
+  defp stacktrace_arity(arity) when is_integer(arity), do: arity
+  defp stacktrace_arity(args) when is_list(args), do: length(args)
+
+  defp maybe_put_origin_line(origin, line) when is_integer(line), do: Map.put(origin, :line, line)
+  defp maybe_put_origin_line(origin, _line), do: origin
 
   defp maybe_validate_output(step, output, opts) when is_list(opts) do
     if Keyword.has_key?(opts, :defer) do
