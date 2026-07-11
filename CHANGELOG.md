@@ -5,6 +5,13 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.3.5] - 2026-07-11
+
+### Changed
+- `74ad407` feat(operations): add CLI diagnostics
+- `c0ece32` fix(operations): harden diagnostic coverage
+- `2d3f041` Merge pull request #389 from dark-trench/feat/385-operational-cli-diagnostics
+
 ## [0.3.4] - 2026-07-11
 
 ### Changed
