@@ -17,11 +17,10 @@ defmodule Mix.Tasks.Squidie.Install do
 
   @shortdoc "Installs Squidie migrations into the host application"
   @schema_migration_name "create_squidie_schema.exs"
-  @required_schema_markers [
-    "create table(:squidie_journal_threads",
-    "create table(:squidie_journal_entries",
-    "create table(:squidie_journal_checkpoints"
-  ]
+  @required_schema_markers Enum.map(
+                             Squidie.Persistence.Schema.table_names(),
+                             &"create table(:#{&1}"
+                           )
 
   use Mix.Task
 

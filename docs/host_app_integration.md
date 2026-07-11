@@ -47,11 +47,14 @@ Then install Squidie's library-owned migrations into the host app:
 ```sh
 mix squidie.install
 mix ecto.migrate
+mix squidie.doctor --json --fail-on-drift
 ```
 
 `mix squidie.install` creates one current-schema Squidie migration in the
 host application's `priv/repo/migrations` directory. It does not install or run
-migrations for the host application's job backend.
+migrations for the host application's job backend. The doctor command performs
+a read-only structural check and gives CI a nonzero gate when the migrated host
+database is behind or incompatible with Squidie's required baseline.
 
 ## Configuration
 

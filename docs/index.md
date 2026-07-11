@@ -40,8 +40,9 @@ Use these when building or embedding Squidie in an application.
 - [Workflow authoring](workflow_authoring.md) - DSL syntax, payloads, triggers,
   steps, transitions, retries, waits, dependencies, mapping, compensation, and
   current boundaries.
-- [Operations](operations.md) - retries, idempotency, replay, local
-  transactions, leases, waits, cron activation, and production concerns.
+- [Operations](operations.md) - operational CLI diagnostics, retries,
+  idempotency, replay, local transactions, leases, waits, cron activation, and
+  production concerns.
 - [Observability](observability.md) - durable read-model surfaces,
   field-selection and redaction guidance, operator explanations, graph output,
   host-owned telemetry, and logs.
