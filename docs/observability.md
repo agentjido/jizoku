@@ -29,6 +29,11 @@ without attempt inputs, outputs, errors, claim metadata, or idempotency keys.
 Use `inspect_run/2` only after selecting a specific run and applying the host
 app's authorization rules.
 
+For read-only fleet and queue summaries outside a dashboard, use
+`mix squidie.status`; use `mix squidie.doctor` for configuration, claim,
+pending-fact, manual-action, anomaly, and schema diagnostics. See
+[Operational CLI Diagnostics](operations.md#operational-cli-diagnostics).
+
 ## Redaction And Field Selection
 
 Treat Squidie observability data as three tiers:

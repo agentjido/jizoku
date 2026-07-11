@@ -125,6 +125,9 @@ jobs:
       - name: Run smoke path
         run: MIX_ENV=test mix example.smoke
 
+      - name: Verify operational commands
+        run: MIX_ENV=test mix example.operations
+
   bedrock-example-host-app:
     name: Bedrock Example Host App
     runs-on: ubuntu-latest

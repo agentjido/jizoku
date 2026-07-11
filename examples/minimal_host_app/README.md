@@ -60,6 +60,18 @@ Run the development-like path after `mix setup`:
 mix example.smoke
 ```
 
+Verify the operational CLI against the migrated host database in a fresh Mix
+process:
+
+```sh
+MIX_ENV=test mix example.operations
+```
+
+This runs `mix squidie.status --json` and
+`mix squidie.doctor --json --fail-on-drift`, decodes both reports, verifies the
+database matches Squidie's required schema, and proves the commands do not
+start `MinimalHostApp`'s supervision tree.
+
 The smoke task:
 
 - validates a runtime-authored workflow spec through host-owned safe action keys

@@ -27,6 +27,7 @@ defmodule MinimalHostApp.MixProject do
     [
       {:bypass, "~> 2.1", only: :test},
       {:ecto_sql, "~> 3.13"},
+      {:jason, "~> 1.4"},
       {:oban, "~> 2.22"},
       {:postgrex, ">= 0.0.0"},
       {:squidie, path: "../.."}

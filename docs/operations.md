@@ -209,6 +209,53 @@ Recommended practice:
 - review cron registrations alongside the host app's scheduler setup
 - keep payload defaults complete so cron runs do not rely on manual input
 
+## Operational CLI Diagnostics
+
+Squidie includes two read-only Mix tasks for host-worker rollout checks and
+incident triage:
+
+```sh
+mix squidie.status
+mix squidie.doctor
+```
+
+`mix squidie.status` summarizes run counts by workflow, queue, and status, plus
+visible, scheduled, and claimed attempt depth; the next scheduled visibility
+time; pending dispatches and results; and manual-intervention counts.
+
+`mix squidie.doctor` checks configuration, expired claims, overdue attempts,
+terminal runs with pending facts, manual-action queues, projection anomalies,
+and the installed Squidie database schema. Every finding includes a direct next
+action. Neither task schedules work, applies results, reclaims claims, runs
+migrations, or rewrites journal history.
+
+Both tasks support machine-readable output:
+
+```sh
+mix squidie.status --json
+mix squidie.doctor --json
+```
+
+The JSON contract is versioned with `schema_version` and excludes workflow
+payloads, attempt inputs and results, claim tokens, owner metadata, and command
+history. Use an explicit schema gate in CI after host migrations:
+
+```sh
+mix squidie.doctor --json --fail-on-drift
+```
+
+The gate exits nonzero only when required schema objects are missing or
+incompatible. Custom non-Ecto journal storage reports the SQL schema check as
+not applicable. Catalog permission or connection failures are reported as
+unavailable rather than mislabeled as drift.
+
+These commands provide fleet and queue summaries. Use `Squidie.list_runs/2`
+for host-owned run indexes and `Squidie.inspect_run/2` or
+`Squidie.explain_run/2` for one run's authorized detail. Web dashboards remain
+host-owned. Effective heartbeat settings also remain part of host worker calls
+to `Squidie.execute_next/1`; doctor cannot infer arbitrary worker options from
+static application configuration.
+
 ## Observability
 
 At minimum, production deployments should capture:
