@@ -1260,6 +1260,10 @@ defmodule SquidieTest do
       description: "Raises a third-party exception"
 
     @impl Squidie.Step
+    def run(%{account_id: "beam_error"} = params, _context) do
+      div(1, Map.get(params, :divisor, 0))
+    end
+
     def run(_params, _context) do
       Jason.decode!("[secret-token")
     end
@@ -14589,6 +14593,47 @@ defmodule SquidieTest do
 
       assert is_integer(line) and line > 0
       refute inspect(inspected_snapshot) =~ "secret-token"
+    end
+
+    test "execute_next/1 durably fails native steps that trigger raw BEAM errors" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               Squidie.start(
+                 JournalExceptionWorkflow,
+                 %{account_id: "beam_error"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, %Snapshot{status: :failed, terminal?: true}} =
+               Squidie.execute_next(
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "beam-error-worker",
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %Snapshot{status: :failed, terminal?: true} = inspected_snapshot} =
+               Squidie.inspect_run(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert [%{status: :failed, error: error}] = inspected_snapshot.attempts
+
+      assert %{
+               code: "step_exception",
+               exception: "ArithmeticError",
+               message: "step execution failed",
+               origin: origin,
+               retryable?: false
+             } = error
+
+      assert origin == %{module: ":erlang", function: "div", arity: 2}
+      refute inspect(inspected_snapshot) =~ "bad argument in arithmetic expression"
     end
 
     test "execute_next/1 rejects malformed option lists without leaking claim tokens" do

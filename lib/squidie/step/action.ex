@@ -37,7 +37,9 @@ defmodule Squidie.Step.Action do
   defp run_native_step(step, input, context) do
     {:ok, step.run(input, context)}
   catch
-    :error, exception when is_exception(exception) ->
+    :error, reason ->
+      exception = Exception.normalize(:error, reason, __STACKTRACE__)
+
       {:error,
        %{
          code: "step_exception",
