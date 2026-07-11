@@ -24,7 +24,7 @@ Preferred Hex dependency:
 ```elixir
 defp deps do
   [
-    {:squidie, "~> 0.3.3"}
+    {:squidie, "~> 0.3.4"}
   ]
 end
 ```
@@ -37,7 +37,7 @@ dependency:
 defp deps do
   [
     {:jido, "~> 2.0"},
-    {:squidie, "~> 0.3.3"}
+    {:squidie, "~> 0.3.4"}
   ]
 end
 ```
@@ -462,7 +462,7 @@ defp deps do
   [
     {:ecto_sql, "~> 3.13"},
     {:postgrex, "~> 0.20"},
-    {:squidie, "~> 0.3.3"}
+    {:squidie, "~> 0.3.4"}
   ]
 end
 ```

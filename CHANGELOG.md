@@ -5,6 +5,14 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.3.4] - 2026-07-11
+
+### Changed
+- `f6f7731` fix(runtime): catch arbitrary native step exceptions
+- `53ac690` fix(runtime): persist safe exception origin
+- `96b3b62` fix(runtime): normalize raw BEAM step errors
+- `884c9a8` Merge pull request #388 from dark-trench/fix/387-native-step-exceptions
+
 ## [0.3.3] - 2026-07-11
 
 ### Changed
