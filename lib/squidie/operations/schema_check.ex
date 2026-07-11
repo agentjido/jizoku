@@ -92,7 +92,7 @@ defmodule Squidie.Operations.SchemaCheck do
            query_rows(repo, @foreign_keys_sql, [prefix, Schema.table_names()]) do
       from_catalog(prefix, columns, indexes, foreign_keys)
     else
-      {:error, _reason} -> unavailable()
+      {:error, reason} -> unavailable(reason)
     end
   end
 
@@ -102,7 +102,7 @@ defmodule Squidie.Operations.SchemaCheck do
     ])
   end
 
-  def check(_invalid), do: unavailable()
+  def check(_invalid), do: unavailable(:invalid_storage)
 
   @doc "Builds a schema result from normalized PostgreSQL catalog rows."
   @spec from_catalog(String.t(), list(), list(), list()) :: result()
@@ -128,11 +128,17 @@ defmodule Squidie.Operations.SchemaCheck do
   defp query_rows(repo, sql, params) do
     case SQL.query(repo, sql, params) do
       {:ok, %{rows: rows}} -> {:ok, rows}
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, query_failure_reason(reason)}
     end
   rescue
-    _exception in [ArgumentError, DBConnection.ConnectionError, Ecto.QueryError, Postgrex.Error] ->
-      {:error, :query_failed}
+    exception in [
+      ArgumentError,
+      RuntimeError,
+      DBConnection.ConnectionError,
+      Ecto.QueryError,
+      Postgrex.Error
+    ] ->
+      {:error, query_failure_reason(exception)}
   end
 
   defp compare(prefix, column_rows, index_rows, foreign_key_rows) do
@@ -240,20 +246,22 @@ defmodule Squidie.Operations.SchemaCheck do
         {[object_finding(requirement.kind, table, requirement.columns) | missing], mismatched}
 
       {:primary_key, matches} ->
-        if Enum.any?(matches, &(&1.primary? and not &1.partial?)) do
-          {missing, mismatched}
-        else
-          {missing, [object_finding(:primary_key, table, requirement.columns) | mismatched]}
-        end
+        matches
+        |> Enum.any?(&(&1.primary? and not &1.partial?))
+        |> compare_index_match(:primary_key, table, requirement.columns, missing, mismatched)
 
       {:unique_index, matches} ->
-        if Enum.any?(matches, &(&1.unique? and not &1.partial?)) do
-          {missing, mismatched}
-        else
-          {missing, [object_finding(:unique_index, table, requirement.columns) | mismatched]}
-        end
+        matches
+        |> Enum.any?(&(&1.unique? and not &1.partial?))
+        |> compare_index_match(:unique_index, table, requirement.columns, missing, mismatched)
     end
   end
+
+  defp compare_index_match(true, _kind, _table, _columns, missing, mismatched),
+    do: {missing, mismatched}
+
+  defp compare_index_match(false, kind, table, columns, missing, mismatched),
+    do: {missing, [object_finding(kind, table, columns) | mismatched]}
 
   defp compare_foreign_keys(expected, rows) do
     actual =
@@ -327,11 +335,22 @@ defmodule Squidie.Operations.SchemaCheck do
   defp next_actions(:behind), do: [:install_and_run_current_squidie_migrations]
   defp next_actions(:incompatible), do: [:inspect_schema_before_migrating]
 
-  defp unavailable do
-    base_result(:unavailable, nil, [], [], [], [
-      :verify_repo_connectivity_and_catalog_permissions
-    ])
+  defp unavailable(reason) do
+    Map.put(
+      base_result(:unavailable, nil, [], [], [], [
+        :verify_repo_connectivity_and_catalog_permissions
+      ]),
+      :reason,
+      reason
+    )
   end
+
+  defp query_failure_reason(%DBConnection.ConnectionError{}), do: :connection_failed
+
+  defp query_failure_reason(%Postgrex.Error{postgres: %{code: :insufficient_privilege}}),
+    do: :permission_denied
+
+  defp query_failure_reason(_reason), do: :query_failed
 
   defp base_result(status, prefix, missing, mismatched, unexpected, next_actions) do
     %{

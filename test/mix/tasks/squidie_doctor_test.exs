@@ -12,10 +12,12 @@ defmodule Mix.Tasks.Squidie.DoctorTest do
   setup do
     previous_storage = Application.get_env(:squidie, :journal_storage)
     previous_queue = Application.get_env(:squidie, :queue)
+    previous_heartbeat_interval = Application.get_env(:squidie, :heartbeat_interval_ms)
 
     on_exit(fn ->
       restore_env(:journal_storage, previous_storage)
       restore_env(:queue, previous_queue)
+      restore_env(:heartbeat_interval_ms, previous_heartbeat_interval)
       drop_tables(@table)
       Mix.Task.reenable(@task)
     end)
@@ -34,6 +36,20 @@ defmodule Mix.Tasks.Squidie.DoctorTest do
     assert is_boolean(report["healthy"])
     assert [%{"id" => "configuration"} | _checks] = report["checks"]
     assert Enum.any?(report["checks"], &(&1["id"] == "schema"))
+  end
+
+  test "prints operator-readable checks and next actions" do
+    Application.put_env(:squidie, :journal_storage, {Jido.Storage.ETS, table: @table})
+    Application.put_env(:squidie, :queue, "default")
+    Application.put_env(:squidie, :heartbeat_interval_ms, 1_000)
+
+    output = capture_io(fn -> Doctor.run([]) end)
+
+    assert output =~ "Squidie doctor at"
+    assert output =~ ~r/pass=\d+ warn=\d+ fail=\d+/
+    assert output =~ "[warn] configuration:"
+    assert output =~ "next: move_heartbeat_options_to_execute_next_worker_calls"
+    assert output =~ "[pass] schema:"
   end
 
   test "emits complete JSON before failing an explicit schema drift gate" do

@@ -22,7 +22,7 @@ defmodule Mix.Tasks.Squidie.Doctor do
 
   @impl Mix.Task
   def run(args) do
-    opts = parse_options!(args)
+    opts = CLI.parse_options!("squidie.doctor", args, @switches)
 
     case collect_report(opts) do
       {:ok, report} ->
@@ -35,32 +35,23 @@ defmodule Mix.Tasks.Squidie.Doctor do
   end
 
   defp collect_report(opts) do
-    with_json_log_level(opts, fn -> CLI.diagnose(&Doctor.report/0) end)
-  end
-
-  defp parse_options!(args) do
-    case OptionParser.parse(args, strict: @switches) do
-      {opts, [], []} ->
-        opts
-
-      {_opts, positional, invalid} ->
-        values = positional ++ Enum.map(invalid, fn {option, _value} -> option end)
-        Mix.raise("Invalid squidie.doctor options: #{Enum.join(values, ", ")}")
-    end
+    CLI.with_json_log_level(opts, fn -> CLI.diagnose(&Doctor.report/0) end)
   end
 
   defp render(report, opts) do
-    if Keyword.get(opts, :json, false) do
-      Mix.shell().info(Jason.encode!(report))
-    else
-      Mix.shell().info("Squidie doctor at #{report.generated_at}")
+    render_report(report, Keyword.get(opts, :json, false))
+  end
 
-      Mix.shell().info(
-        "pass=#{report.summary.pass} warn=#{report.summary.warn} fail=#{report.summary.fail}"
-      )
+  defp render_report(report, true), do: Mix.shell().info(Jason.encode!(report))
 
-      Enum.each(report.checks, &render_check/1)
-    end
+  defp render_report(report, false) do
+    Mix.shell().info("Squidie doctor at #{report.generated_at}")
+
+    Mix.shell().info(
+      "pass=#{report.summary.pass} warn=#{report.summary.warn} fail=#{report.summary.fail}"
+    )
+
+    Enum.each(report.checks, &render_check/1)
   end
 
   defp render_check(check) do
@@ -69,23 +60,9 @@ defmodule Mix.Tasks.Squidie.Doctor do
   end
 
   defp maybe_fail_on_drift!(report, opts) do
-    if Keyword.get(opts, :fail_on_drift, false) and Doctor.drift?(report) do
-      Mix.raise("Squidie schema drift detected")
-    end
+    enforce_drift_gate(Keyword.get(opts, :fail_on_drift, false), Doctor.drift?(report))
   end
 
-  defp with_json_log_level(opts, fun) do
-    if Keyword.get(opts, :json, false) do
-      previous_level = :logger.get_primary_config()[:level]
-      Logger.configure(level: :warning)
-
-      try do
-        fun.()
-      after
-        Logger.configure(level: previous_level)
-      end
-    else
-      fun.()
-    end
-  end
+  defp enforce_drift_gate(true, true), do: Mix.raise("Squidie schema drift detected")
+  defp enforce_drift_gate(_fail_on_drift, _drift), do: :ok
 end

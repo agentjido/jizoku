@@ -85,16 +85,18 @@ defmodule Squidie.Operations.Doctor do
       |> Enum.filter(&match?({:ok, _value}, Application.fetch_env(:squidie, &1)))
       |> Enum.sort()
 
-    if misplaced == [] do
-      check(:configuration, :pass, "Squidie runtime configuration is valid.", [], %{})
-    else
-      check(
-        :configuration,
-        :warn,
-        "Unsupported worker options are configured globally and will be ignored.",
-        [:move_heartbeat_options_to_execute_next_worker_calls],
-        %{unsupported_global_options: misplaced}
-      )
+    case misplaced do
+      [] ->
+        check(:configuration, :pass, "Squidie runtime configuration is valid.", [], %{})
+
+      misplaced ->
+        check(
+          :configuration,
+          :warn,
+          "Unsupported worker options are configured globally and will be ignored.",
+          [:move_heartbeat_options_to_execute_next_worker_calls],
+          %{unsupported_global_options: misplaced}
+        )
     end
   end
 
@@ -190,18 +192,20 @@ defmodule Squidie.Operations.Doctor do
         dispatches = Collector.pending_dispatches(run, queue)
         results = Collector.pending_results(run, queue)
 
-        if dispatches == [] and results == [] do
-          []
-        else
-          [
-            %{
-              run_id: run.run_id,
-              workflow: run.workflow,
-              queue: run.queue,
-              pending_dispatch_count: length(dispatches),
-              pending_result_count: length(results)
-            }
-          ]
+        case {dispatches, results} do
+          {[], []} ->
+            []
+
+          {_dispatches, _results} ->
+            [
+              %{
+                run_id: run.run_id,
+                workflow: run.workflow,
+                queue: run.queue,
+                pending_dispatch_count: length(dispatches),
+                pending_result_count: length(results)
+              }
+            ]
         end
       end)
       |> Enum.sort_by(& &1.run_id)

@@ -113,6 +113,30 @@ defmodule Squidie.Operations.StatusTest do
            } = Status.from_collector(collector)
   end
 
+  test "reports no claim age when active claims lack a claimed timestamp" do
+    claimed = attempt("claimed", :claimed, @now)
+
+    collector = %Collector{
+      config: %Config{queue: "default"},
+      now: @now,
+      catalog_anomalies: [],
+      runs: [],
+      queues: %{
+        "default" => %{
+          queue: "default",
+          projection: %Projection{
+            attempts: %{claimed.runnable_key => claimed},
+            terminal_runs: MapSet.new()
+          },
+          attempts: [claimed]
+        }
+      }
+    }
+
+    assert [%{claimed_attempt_depth: 1, oldest_claim_age_seconds: nil}] =
+             Status.from_collector(collector).queues
+  end
+
   defp attempt(key, status, visible_at, attrs \\ []) do
     struct!(
       ActionAttempt,

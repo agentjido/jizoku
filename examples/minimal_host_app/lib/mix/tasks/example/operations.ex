@@ -41,11 +41,21 @@ defmodule Mix.Tasks.Example.Operations do
   defp run_json_task!(task, args) do
     Mix.Task.reenable(task)
     Mix.Task.run(task, args)
+    receive_json!(task)
+  end
 
+  defp receive_json!(task) do
     receive do
-      {:mix_shell, :info, [output]} -> Jason.decode!(output)
+      {:mix_shell, :info, [output]} -> decode_json_output(output, task)
     after
       1_000 -> Mix.raise("#{task} did not emit a JSON report")
+    end
+  end
+
+  defp decode_json_output(output, task) do
+    case Jason.decode(output) do
+      {:ok, report} -> report
+      {:error, _reason} -> receive_json!(task)
     end
   end
 

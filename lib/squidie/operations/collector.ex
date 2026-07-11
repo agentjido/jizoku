@@ -50,6 +50,13 @@ defmodule Squidie.Operations.Collector do
   def collect(overrides \\ [])
 
   def collect(overrides) when is_list(overrides) do
+    :ok = ensure_projection_modules_loaded()
+    collect_from_storage(overrides)
+  end
+
+  def collect(_overrides), do: {:error, {:invalid_option, {:opts, :invalid}}}
+
+  defp collect_from_storage(overrides) do
     do_collect(overrides)
   rescue
     _exception in [ArgumentError, DBConnection.ConnectionError, Ecto.QueryError, Postgrex.Error] ->
@@ -58,11 +65,8 @@ defmodule Squidie.Operations.Collector do
     :exit, _reason -> {:error, :storage_unavailable}
   end
 
-  def collect(_overrides), do: {:error, {:invalid_option, {:opts, :invalid}}}
-
   defp do_collect(overrides) do
     {now, config_overrides} = Keyword.pop(overrides, :now, DateTime.utc_now())
-    :ok = ensure_projection_modules_loaded()
 
     with :ok <- validate_now(now),
          {:ok, %Config{} = config} <- Config.load(config_overrides),

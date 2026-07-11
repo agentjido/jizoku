@@ -45,6 +45,18 @@ defmodule Mix.Tasks.Squidie.StatusTest do
     assert table_contents(@table) == before
   end
 
+  test "prints operator-readable run and queue summaries" do
+    append_run!()
+
+    output = capture_io(fn -> Status.run([]) end)
+
+    assert output =~ "Squidie status at"
+    assert output =~ "Runs: 1  Queues: 1"
+    assert output =~ "run BillingWorkflow queue=default status=started count=1"
+    assert output =~ "queue default visible=0 scheduled=0 claimed=0"
+    assert output =~ "pending_dispatches=0 pending_results=0 manual=0"
+  end
+
   test "rejects unknown options" do
     assert_raise Mix.Error, ~r/Invalid squidie.status options/, fn ->
       Status.run(["--recover"])

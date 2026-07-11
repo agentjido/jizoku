@@ -56,6 +56,20 @@ defmodule Squidie.Operations.SchemaCheckTest do
     assert Enum.any?(mismatched, &(&1.kind == :column and &1.column == "rev"))
   end
 
+  test "reports a missing required column as behind" do
+    {columns, indexes, foreign_keys} = current_catalog()
+
+    columns_without_rev =
+      Enum.reject(columns, fn [table, column | _rest] ->
+        table == "squidie_journal_threads" and column == "rev"
+      end)
+
+    assert %{status: :behind, missing: missing} =
+             SchemaCheck.from_catalog("public", columns_without_rev, indexes, foreign_keys)
+
+    assert %{kind: :column, table: "squidie_journal_threads", column: "rev"} in missing
+  end
+
   test "reports a missing unique index as behind" do
     {columns, indexes, foreign_keys} = current_catalog()
 
@@ -66,6 +80,42 @@ defmodule Squidie.Operations.SchemaCheckTest do
              SchemaCheck.from_catalog("public", columns, indexes_without_unique, foreign_keys)
 
     assert Enum.any?(missing, &(&1.kind == :unique_index))
+  end
+
+  test "reports partial primary keys as incompatible" do
+    {columns, indexes, foreign_keys} = current_catalog()
+
+    partial_primary_indexes =
+      Enum.map(indexes, fn
+        ["squidie_journal_threads", true, true, false, columns] ->
+          ["squidie_journal_threads", true, true, true, columns]
+
+        index ->
+          index
+      end)
+
+    assert %{status: :incompatible, mismatched: mismatched} =
+             SchemaCheck.from_catalog("public", columns, partial_primary_indexes, foreign_keys)
+
+    assert Enum.any?(mismatched, &(&1.kind == :primary_key))
+  end
+
+  test "reports non-unique matching indexes as incompatible" do
+    {columns, indexes, foreign_keys} = current_catalog()
+
+    non_unique_indexes =
+      Enum.map(indexes, fn
+        ["squidie_journal_entries", false, true, false, columns] ->
+          ["squidie_journal_entries", false, false, false, columns]
+
+        index ->
+          index
+      end)
+
+    assert %{status: :incompatible, mismatched: mismatched} =
+             SchemaCheck.from_catalog("public", columns, non_unique_indexes, foreign_keys)
+
+    assert Enum.any?(mismatched, &(&1.kind == :unique_index))
   end
 
   test "reports an incompatible foreign-key delete rule" do
@@ -82,6 +132,48 @@ defmodule Squidie.Operations.SchemaCheckTest do
     storage = %Storage{adapter: Jido.Storage.ETS, opts: [], config: Jido.Storage.ETS}
 
     assert %{status: :not_applicable, prefix: nil} = SchemaCheck.check(storage)
+  end
+
+  test "reports unexpected columns without treating them as drift" do
+    {columns, indexes, foreign_keys} = current_catalog()
+
+    columns_with_legacy = [
+      ["squidie_journal_threads", "legacy_value", "text", "YES", nil, nil] | columns
+    ]
+
+    assert %{
+             status: :current,
+             unexpected: [
+               %{
+                 kind: :column,
+                 table: "squidie_journal_threads",
+                 column: "legacy_value"
+               }
+             ]
+           } = SchemaCheck.from_catalog("public", columns_with_legacy, indexes, foreign_keys)
+  end
+
+  test "reports invalid storage values as unavailable" do
+    assert %{
+             status: :unavailable,
+             reason: :invalid_storage,
+             next_actions: [:verify_repo_connectivity_and_catalog_permissions]
+           } =
+             SchemaCheck.check(:invalid)
+  end
+
+  test "sanitizes query failures from an unavailable repo" do
+    storage = %Storage{
+      adapter: Squidie.Runtime.Journal.Storage.Ecto,
+      opts: [repo: __MODULE__.MissingRepo, prefix: "public"],
+      config: Squidie.Runtime.Journal.Storage.Ecto
+    }
+
+    assert %{
+             status: :unavailable,
+             reason: :query_failed,
+             next_actions: [:verify_repo_connectivity_and_catalog_permissions]
+           } = SchemaCheck.check(storage)
   end
 
   defp current_catalog do

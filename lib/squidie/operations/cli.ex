@@ -9,6 +9,39 @@ defmodule Squidie.Operations.CLI do
   alias Squidie.Config
   alias Squidie.Runtime.Journal.Storage
 
+  @doc "Parses strict Mix task options and raises with the task name when arguments are invalid."
+  @spec parse_options!(String.t(), [String.t()], keyword()) :: keyword()
+  def parse_options!(task_name, args, switches)
+      when is_binary(task_name) and is_list(args) and is_list(switches) do
+    case OptionParser.parse(args, strict: switches) do
+      {opts, [], []} ->
+        opts
+
+      {_opts, positional, invalid} ->
+        values = positional ++ Enum.map(invalid, fn {option, _value} -> option end)
+        Mix.raise("Invalid #{task_name} options: #{Enum.join(values, ", ")}")
+    end
+  end
+
+  @doc "Runs a callback with warning-only logging for JSON output and restores the prior level."
+  @spec with_json_log_level(keyword(), (-> result)) :: result when result: var
+  def with_json_log_level(opts, fun) when is_list(opts) and is_function(fun, 0) do
+    run_with_json_log_level(Keyword.get(opts, :json, false), fun)
+  end
+
+  defp run_with_json_log_level(true, fun) do
+    previous_level = :logger.get_primary_config()[:level]
+    Logger.configure(level: :warning)
+
+    try do
+      fun.()
+    after
+      Logger.configure(level: previous_level)
+    end
+  end
+
+  defp run_with_json_log_level(false, fun), do: fun.()
+
   @spec run((-> {:ok, map()} | {:error, term()})) :: {:ok, map()} | {:error, term()}
   @doc "Runs a status callback after validating configuration and briefly starting its Ecto repo."
   def run(fun) when is_function(fun, 0) do
