@@ -2990,6 +2990,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp redact_error(error) when is_map(error) do
     %{}
     |> maybe_put_safe(:code, safe_error_code(Map.get(error, :code)))
+    |> maybe_put_safe(:exception, safe_exception_name(Map.get(error, :exception)))
     |> maybe_put_safe(:retryable?, Map.get(error, :retryable?))
     |> maybe_put_safe(:retry_after, Map.get(error, :retry_after))
     |> maybe_put_safe_map(:guardrail, Map.get(error, :guardrail))
@@ -3045,6 +3046,14 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp safe_error_code(_code), do: nil
+
+  defp safe_exception_name(exception) when is_binary(exception) do
+    if Regex.match?(~r/^(?:Elixir\.)?[A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*$/, exception) do
+      exception
+    end
+  end
+
+  defp safe_exception_name(_exception), do: nil
 
   defp safe_error_message(message)
        when message in [

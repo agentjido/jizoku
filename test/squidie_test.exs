@@ -631,6 +631,23 @@ defmodule SquidieTest do
     end
   end
 
+  defmodule JournalExceptionWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :manual_exception do
+        manual()
+
+        payload do
+          field :account_id, :string
+        end
+      end
+
+      step :decode_payload, JournalExceptionWorkflow.DecodePayload
+      transition :decode_payload, on: :ok, to: :complete
+    end
+  end
+
   defmodule JournalConflictWorkflow do
     use Squidie.Workflow
 
@@ -1234,6 +1251,17 @@ defmodule SquidieTest do
          retryable?: false,
          validation_errors: %{authorization: "Bearer super-secret-token"}
        }}
+    end
+  end
+
+  defmodule JournalExceptionWorkflow.DecodePayload do
+    use Squidie.Step,
+      name: :decode_payload,
+      description: "Raises a third-party exception"
+
+    @impl Squidie.Step
+    def run(_params, _context) do
+      Jason.decode!("[secret-token")
     end
   end
 
@@ -14515,6 +14543,45 @@ defmodule SquidieTest do
       refute log =~ "super-secret-token"
       refute inspect(failed_entry.data.error) =~ "super-secret-token"
       refute inspect(snapshot) =~ "super-secret-token"
+    end
+
+    test "execute_next/1 durably fails native steps that raise arbitrary exceptions" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               Squidie.start(
+                 JournalExceptionWorkflow,
+                 %{account_id: "acct_123"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, %Snapshot{status: :failed, terminal?: true}} =
+               Squidie.execute_next(
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "exception-worker",
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %Snapshot{status: :failed, terminal?: true} = inspected_snapshot} =
+               Squidie.inspect_run(started_snapshot.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert [%{status: :failed, error: error}] = inspected_snapshot.attempts
+
+      assert error == %{
+               code: "step_exception",
+               exception: "Jason.DecodeError",
+               message: "step execution failed",
+               retryable?: false
+             }
+
+      refute inspect(inspected_snapshot) =~ "secret-token"
     end
 
     test "execute_next/1 rejects malformed option lists without leaking claim tokens" do
