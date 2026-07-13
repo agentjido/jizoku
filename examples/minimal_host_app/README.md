@@ -78,6 +78,27 @@ This runs `mix squidie.status --json` and
 database matches Squidie's required schema, and proves the commands do not
 start `MinimalHostApp`'s supervision tree.
 
+## Multi-node Worker Proof
+
+Run the focused host-worker integration suite:
+
+```sh
+MIX_ENV=test mix test test/multi_node_host_worker_test.exs
+```
+
+The suite runs two independent worker identities against one queue and the
+same Postgres-backed Squidie journal. It proves that concurrent workers cannot
+apply one visible attempt twice, a current heartbeat prevents reclaim, an
+expired claim can be taken over, and stale completion or failure cannot mutate
+the run after takeover. It also checks the inspection and explanation evidence
+for current ownership, expired recovery, cancellation, failure, and completion
+fences.
+
+This is an embedded host-app pattern, not a Squidie cluster. Production hosts
+still own worker placement and supervision, and side-effecting steps still need
+idempotency because an external action may occur before a worker loses its
+claim.
+
 The smoke task:
 
 - validates a runtime-authored workflow spec through host-owned safe action keys

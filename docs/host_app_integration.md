@@ -254,6 +254,67 @@ The events remain best-effort and do not replace journal-backed inspection.
 See [Observability](observability.md#runtime-telemetry) for the full event,
 metadata, privacy, and delivery contract.
 
+## Multi-node Journal Workers
+
+Multiple host application nodes may drain the same Squidie queue. They do not
+form a Squidie cluster and do not require Distributed Erlang. Each node runs
+the same small worker loop against shared durable journal storage, and the
+journal claim is the cross-node ownership boundary.
+
+Use this deployment contract:
+
+- point every worker for a logical queue at the same production journal
+  storage and the same `queue` value
+- give each worker process a stable, unique `owner_id`; include the host
+  deployment identity and worker slot rather than reusing one value across
+  nodes
+- choose `lease_for` longer than the maximum expected gap between healthy
+  heartbeats, including scheduler and database latency
+- set `heartbeat_interval_ms` well below the claim duration so a missed
+  heartbeat does not expire healthy work; the minimum supported interval is
+  50ms
+- keep queue placement, worker count, restart policy, back-pressure, and
+  shutdown behavior in the host supervision and deployment layers
+
+Concurrent `Squidie.execute_next/1` calls may observe the same visible attempt,
+but only one claim append can win the dispatch-thread revision fence. A current
+heartbeat extends that winner's lease and prevents reclaim. After the lease
+expires, another owner may append a fresh claim and execute the attempt. The
+old claim token is then stale: later completion or failure from the old owner
+is rejected before it can mutate dispatch or workflow state.
+
+Cancellation and terminal failure or completion add a run-level fence. Once a
+run is terminal, later claims and stale worker results cannot reopen or change
+the terminal state.
+
+Operators can inspect this boundary without parsing journal entries:
+
+- `Squidie.inspect_run/2` exposes the current `owner_id`, `claim_id`, and
+  `lease_until` in claimed attempts
+- an expired lease moves the attempt into `expired_claims` and sets the
+  snapshot reason to `:expired_claim`
+- `Squidie.explain_run/2` reports `:recover_expired_claim` while takeover is
+  pending
+- after cancellation, failure, or completion, explanation reports `:terminal`
+  and `:inspect_terminal_run` instead of suggesting recovery
+
+These guarantees fence Squidie's durable workflow mutations. They do not make
+external side effects exactly once. A worker can perform an external action,
+lose its lease before recording completion, and cause a takeover worker to
+perform that action again. Side-effecting steps must therefore use stable
+idempotency keys, domain-level duplicate detection, or compensating actions.
+
+The minimal host app contains the executable shared-storage proof:
+
+```sh
+cd examples/minimal_host_app
+MIX_ENV=test mix test test/multi_node_host_worker_test.exs
+```
+
+It runs distinct `node-a` and `node-b` owners against one Postgres-backed
+journal queue and covers claim contention, heartbeat renewal, expired takeover,
+stale completion and failure, operator evidence, and terminal fencing.
+
 ## Cron Payload Contract
 
 Cron starts are the `Squidie.Executor` payload boundary. Hosts

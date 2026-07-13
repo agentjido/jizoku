@@ -15,7 +15,7 @@ as operational confidence grows.
 | Workflow DSL and normalized specs | Supported | Formatter rules, workflow authoring docs, reference workflows, and test coverage | Keep workflow modules backend-neutral and validate payload contracts |
 | Journal-backed starts and execution | Supported | `Squidie.start/3`, `Squidie.execute_next/1`, smoke coverage, and example host app | Supervise workers and size execution capacity |
 | Postgres-compatible Ecto storage | Supported baseline | Installed Squidie migration and storage strategy docs | Own database backups, migrations, pooling, and retention policy |
-| Dispatch claims and heartbeats | Supported | Journal lease fencing and heartbeat coverage | Set worker owner ids, claim durations, and heartbeat intervals for real step duration |
+| Dispatch claims and heartbeats | Supported | Journal lease fencing, heartbeat coverage, and the minimal host app multi-node proof | Set unique worker owner ids, claim durations, and heartbeat intervals for real step duration |
 | Retries and terminal failures | Supported | Workflow retry policy tests and example smoke paths | Make external side effects idempotent and alert on terminal failures |
 | Manual pause and approval controls | Supported | Resume, approve, reject, and restart-boundary coverage | Authorize operators and persist/redact approval metadata safely |
 | Cancellation | Supported | Runtime signal and cancellation coverage | Decide which workflows can be cancelled and document terminal-state handling |
@@ -56,6 +56,7 @@ The example host app provides the repeatable checks:
 ```sh
 cd examples/minimal_host_app
 MIX_ENV=test mix example.smoke
+MIX_ENV=test mix test test/multi_node_host_worker_test.exs
 MIX_ENV=test mix example.resilience
 MIX_ENV=test mix example.soak
 ```
@@ -63,6 +64,9 @@ MIX_ENV=test mix example.soak
 These checks are meant to answer different questions:
 
 - `example.smoke`: does the basic embedded workflow path work?
+- `multi_node_host_worker_test.exs`: do independent host-worker identities
+  contend, renew, take over, and fence stale or terminal results safely through
+  shared durable storage?
 - `example.resilience`: do queued, delayed, retrying, and paused-then-resumed runs survive worker and scheduler restart boundaries?
 - `example.soak`: does the runtime remain stable under a bounded mix of success, retry, replay, and cancellation traffic?
 
