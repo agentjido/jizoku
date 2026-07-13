@@ -1601,6 +1601,7 @@ defmodule SquidieTest do
       {:ok,
        %{
          captured: %{
+           partition: context.partition,
            idempotency_key: context.idempotency_key,
            claim_id: context.claim_id,
            claim_token_present?: Map.has_key?(Map.from_struct(context), :claim_token)
@@ -1771,6 +1772,55 @@ defmodule SquidieTest do
       assert config.journal_storage.adapter == Jido.Storage.ETS
       assert config.journal_storage.opts == [table: :squidie_config_test]
       assert config.queue == "configured_queue"
+    end
+
+    test "validates a logical runtime partition without exposing invalid values" do
+      journal_storage = {Jido.Storage.ETS, table: :squidie_partition_config_test}
+
+      assert {:ok, config} =
+               Squidie.config(
+                 journal_storage: journal_storage,
+                 partition: "tenant_acme"
+               )
+
+      assert config.partition == "tenant_acme"
+      assert config.journal_storage.partition == "tenant_acme"
+
+      invalid_partition = "tenant/secret-value"
+
+      assert {:error, reason} =
+               Squidie.config(
+                 journal_storage: journal_storage,
+                 partition: invalid_partition
+               )
+
+      assert reason == {:invalid_config, [partition: :invalid]}
+      refute inspect(reason) =~ invalid_partition
+    end
+
+    test "preserves an explicitly scoped storage partition over the global default" do
+      storage = {Jido.Storage.ETS, table: :squidie_scoped_storage_precedence_test}
+
+      put_squidie_config(
+        journal_storage: storage,
+        partition: "tenant_global",
+        queue: "default"
+      )
+
+      assert {:ok, scoped_storage} =
+               Squidie.Runtime.Journal.Storage.scope(storage, "tenant_explicit")
+
+      assert {:ok, resolved_storage} =
+               Squidie.Runtime.Routing.journal_storage(journal_storage: scoped_storage)
+
+      assert Squidie.Runtime.Journal.Storage.partition(resolved_storage) == "tenant_explicit"
+
+      assert {:ok, %{partition: "tenant_explicit"}} =
+               Squidie.config(journal_storage: scoped_storage)
+
+      assert Squidie.Runtime.Routing.journal_start_options(journal_storage: scoped_storage)[
+               :partition
+             ] == "tenant_explicit"
     end
 
     test "allows explicit journal storage without a configured repo" do
@@ -2045,6 +2095,64 @@ defmodule SquidieTest do
 
       assert completed.terminal_status == :completed
       assert completed.context.schedule_seen == completed.context.schedule
+    end
+
+    test "cron payloads preserve partition identity across durable delivery" do
+      storage = {Jido.Storage.ETS, table: :squidie_partitioned_cron_test}
+      queue = "partitioned-cron-test"
+      started_at = ~U[2026-05-15 00:00:00Z]
+
+      acme_payload =
+        Payload.cron(IdempotentScheduledContextWorkflow, :scheduled_capture,
+          signal_id: "shared_partitioned_cron",
+          partition: "tenant_acme"
+        )
+
+      globex_payload =
+        Payload.cron(IdempotentScheduledContextWorkflow, :scheduled_capture,
+          signal_id: "shared_partitioned_cron",
+          partition: "tenant_globex"
+        )
+
+      assert :ok =
+               Runner.perform(acme_payload,
+                 journal_storage: storage,
+                 queue: queue,
+                 now: started_at
+               )
+
+      assert :ok =
+               Runner.perform(globex_payload,
+                 journal_storage: storage,
+                 queue: queue,
+                 now: started_at
+               )
+
+      assert {:ok, [%Summary{partition: "tenant_acme", run_id: run_id}]} =
+               Squidie.list_runs([],
+                 runtime: :journal,
+                 journal_storage: storage,
+                 partition: "tenant_acme",
+                 queue: queue,
+                 now: started_at
+               )
+
+      assert {:ok, [%Summary{partition: "tenant_globex", run_id: ^run_id}]} =
+               Squidie.list_runs([],
+                 runtime: :journal,
+                 journal_storage: storage,
+                 partition: "tenant_globex",
+                 queue: queue,
+                 now: started_at
+               )
+
+      assert {:error, {:partition_mismatch, :cron_payload}} =
+               Runner.perform(acme_payload,
+                 journal_storage: storage,
+                 partition: "tenant_globex",
+                 queue: queue,
+                 now: started_at
+               )
     end
 
     test "apply_signal/2 starts cron-triggered journal runs from command signals" do
@@ -2650,6 +2758,194 @@ defmodule SquidieTest do
       assert Squidie.Runtime.RunIndexProjection.run_ids(run_index_projection) == [
                snapshot.run_id
              ]
+    end
+
+    test "partitions isolate identical run, queue, index, catalog, and execution identities" do
+      run_id = "8e82ca1e-2fc5-4cef-8831-7e37e37fcdb7"
+
+      base_opts = [
+        runtime: :journal,
+        journal_storage: @read_model_storage,
+        queue: @read_model_queue,
+        run_id: run_id,
+        now: @read_model_started_at
+      ]
+
+      assert {:ok, %Snapshot{partition: "tenant_acme"} = acme} =
+               Squidie.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_acme"},
+                 Keyword.put(base_opts, :partition, "tenant_acme")
+               )
+
+      assert {:ok, %Snapshot{partition: "tenant_globex"} = globex} =
+               Squidie.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_globex"},
+                 Keyword.put(base_opts, :partition, "tenant_globex")
+               )
+
+      acme_only_run_id = "f5a5cb76-5780-4ee4-a704-573b20249ed3"
+
+      assert {:ok, %Snapshot{run_id: ^acme_only_run_id, partition: "tenant_acme"}} =
+               Squidie.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_acme_only"},
+                 base_opts
+                 |> Keyword.put(:run_id, acme_only_run_id)
+                 |> Keyword.put(:partition, "tenant_acme")
+               )
+
+      assert acme.run_id == run_id
+      assert globex.run_id == run_id
+      assert acme.input.account_id == "acct_acme"
+      assert globex.input.account_id == "acct_globex"
+      assert [%{runnable_key: acme_runnable_key}] = acme.planned_runnables
+
+      assert {:ok,
+              [
+                %Summary{run_id: ^acme_only_run_id, partition: "tenant_acme"},
+                %Summary{run_id: ^run_id, partition: "tenant_acme"}
+              ]} =
+               Squidie.list_runs([],
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 partition: "tenant_acme",
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, [%Summary{run_id: ^run_id, partition: "tenant_globex"}]} =
+               Squidie.list_runs([],
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 partition: "tenant_globex",
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, acme_storage} =
+               Squidie.Runtime.Journal.Storage.scope(@read_model_storage, "tenant_acme")
+
+      assert {:ok, globex_storage} =
+               Squidie.Runtime.Journal.Storage.scope(@read_model_storage, "tenant_globex")
+
+      assert {:ok, acme_index} =
+               Journal.rebuild_run_index_projection(
+                 acme_storage,
+                 Atom.to_string(PaymentRecoveryWorkflow)
+               )
+
+      assert {:ok, globex_index} =
+               Journal.rebuild_run_index_projection(
+                 globex_storage,
+                 Atom.to_string(PaymentRecoveryWorkflow)
+               )
+
+      assert Squidie.Runtime.RunIndexProjection.run_ids(acme_index) == [run_id, acme_only_run_id]
+      assert Squidie.Runtime.RunIndexProjection.run_ids(globex_index) == [run_id]
+
+      assert {:error, :not_found} =
+               Squidie.inspect_run(run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 partition: "tenant_unknown",
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:error, :not_found} =
+               Squidie.cancel(run_id,
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 partition: "tenant_unknown",
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:error, :not_found} =
+               Squidie.replay(run_id,
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 partition: "tenant_unknown",
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:error, :not_found} =
+               Squidie.preview_dynamic_work(
+                 run_id,
+                 %{dynamic_key: "unknown_partition", nodes: [], edges: []},
+                 runtime: :journal,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 partition: "tenant_unknown",
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      shared_read_opts = [
+        read_model: :read_model,
+        journal_storage: @read_model_storage,
+        partition: "tenant_acme",
+        queue: @read_model_queue,
+        now: @read_model_started_at
+      ]
+
+      assert {:ok, %Squidie.Runs.GraphInspection{partition: "tenant_acme"} = graph} =
+               Squidie.inspect_run_graph(run_id, shared_read_opts)
+
+      assert Squidie.Runs.GraphInspection.to_map(graph).partition == "tenant_acme"
+
+      assert {:ok, %Squidie.Runs.DynamicWorkPreview{partition: "tenant_acme"} = dynamic_preview} =
+               Squidie.preview_dynamic_work(
+                 run_id,
+                 %{
+                   dynamic_key: "tenant_acme_preview",
+                   origin: %{
+                     runnable_key: acme_runnable_key,
+                     step: "check_gateway",
+                     attempt: 1
+                   },
+                   nodes: [
+                     %{
+                       id: "tenant_acme_recheck",
+                       action: "gateway.recheck"
+                     }
+                   ],
+                   edges: []
+                 },
+                 Keyword.put(shared_read_opts, :action_registry, %{
+                   "gateway.recheck" => PaymentRecoveryWorkflow.CheckGateway
+                 })
+               )
+
+      assert Squidie.Runs.DynamicWorkPreview.to_map(dynamic_preview).partition == "tenant_acme"
+
+      assert {:ok, %Squidie.ReadModel.Timeline{partition: "tenant_acme"}} =
+               Squidie.inspect_run_timeline(run_id, shared_read_opts)
+
+      assert {:ok, %Diagnostic{partition: "tenant_acme"}} =
+               Squidie.explain_run(run_id, shared_read_opts)
+
+      assert {:ok, %Snapshot{partition: "tenant_acme", terminal?: true}} =
+               Squidie.execute_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 partition: "tenant_acme",
+                 queue: @read_model_queue,
+                 owner_id: "worker_acme",
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, %Snapshot{partition: "tenant_globex", terminal?: false}} =
+               Squidie.inspect_run(run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 partition: "tenant_globex",
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
     end
 
     test "inspect, graph, and explanation expose durable compensation policy" do
@@ -6232,6 +6528,52 @@ defmodule SquidieTest do
              ] = inspected_parent.child_runs
     end
 
+    test "child runs inherit the parent partition" do
+      partition = "tenant_child_parent"
+
+      assert {:ok, %Snapshot{partition: ^partition} = parent} =
+               Squidie.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_partitioned_parent"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 partition: partition,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert [%{runnable_key: parent_runnable_key}] = parent.visible_attempts
+
+      parent_context =
+        step_context(parent,
+          step: :check_gateway,
+          runnable_key: parent_runnable_key,
+          state: %{account_id: "acct_partitioned_parent"}
+        )
+
+      assert {:ok, %Snapshot{partition: ^partition} = child} =
+               Squidie.start_child_run(
+                 parent_context,
+                 ChildDigestWorkflow,
+                 :deliver_digest,
+                 %{subscription_id: "sub_partitioned"},
+                 child_key: "digest_partitioned",
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+
+      assert {:error, :not_found} =
+               Squidie.inspect_run(child.run_id,
+                 read_model: :read_model,
+                 journal_storage: @read_model_storage,
+                 partition: "tenant_other",
+                 queue: @read_model_queue,
+                 now: @read_model_visible_at
+               )
+    end
+
     test "start_child_run/4 is idempotent for duplicate child keys" do
       assert {:ok, %Snapshot{} = parent} =
                Squidie.start(
@@ -6592,6 +6934,24 @@ defmodule SquidieTest do
                  :deliver_digest,
                  %{subscription_id: "sub_123"},
                  opts
+               )
+
+      assert {:error, {:partition_mismatch, :child}} =
+               Squidie.Runtime.Journal.ChildStarter.start_child_run(
+                 %Squidie.Step.Context{parent_context | partition: "tenant_acme"},
+                 ChildDigestWorkflow,
+                 :deliver_digest,
+                 %{subscription_id: "sub_123"},
+                 Keyword.put(opts, :partition, "tenant_globex")
+               )
+
+      assert {:error, {:partition_mismatch, :child}} =
+               Squidie.Runtime.Journal.ChildStarter.start_child_run(
+                 %Squidie.Step.Context{parent_context | partition: "tenant_acme"},
+                 ChildDigestWorkflow,
+                 :deliver_digest,
+                 %{subscription_id: "sub_123"},
+                 Keyword.put(opts, :partition, nil)
                )
     end
 
@@ -12010,6 +12370,7 @@ defmodule SquidieTest do
     test "execute_next/1 exposes safe attempt metadata to native step context" do
       storage = {Jido.Storage.ETS, table: :squidie_native_attempt_context_test}
       queue = "native-attempt-context-test"
+      partition = "tenant_native_context"
 
       assert {:ok, %Snapshot{} = started_snapshot} =
                Squidie.start(
@@ -12017,6 +12378,7 @@ defmodule SquidieTest do
                  %{account_id: "acct_native_context"},
                  runtime: :journal,
                  journal_storage: storage,
+                 partition: partition,
                  queue: queue,
                  now: @read_model_started_at
                )
@@ -12027,6 +12389,7 @@ defmodule SquidieTest do
                execute_journal_next(
                  runtime: :journal,
                  journal_storage: storage,
+                 partition: partition,
                  queue: queue,
                  owner_id: "worker_native_context",
                  claim_id: "claim_native_context",
@@ -12038,6 +12401,7 @@ defmodule SquidieTest do
                %{
                  result: %{
                    captured: %{
+                     partition: ^partition,
                      idempotency_key: ^runnable_key,
                      claim_id: "claim_native_context",
                      claim_token_present?: false
@@ -14902,6 +15266,7 @@ defmodule SquidieTest do
   defp step_context(%Snapshot{} = snapshot, opts) do
     %Squidie.Step.Context{
       run_id: snapshot.run_id,
+      partition: snapshot.partition,
       workflow: PaymentRecoveryWorkflow,
       step: Keyword.fetch!(opts, :step),
       attempt: Keyword.get(opts, :attempt, 1),

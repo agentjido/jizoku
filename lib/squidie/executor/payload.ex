@@ -49,10 +49,18 @@ defmodule Squidie.Executor.Payload do
       "workflow" => Squidie.Workflow.Definition.serialize_workflow(workflow),
       "trigger" => Squidie.Workflow.Definition.serialize_trigger(trigger)
     }
+    |> maybe_put_partition(opts)
     |> maybe_put("signal_id", Keyword.get(opts, :signal_id))
     |> maybe_put("intended_window", Keyword.get(opts, :intended_window))
   end
 
   defp maybe_put(payload, _key, nil), do: payload
   defp maybe_put(payload, key, value), do: Map.put(payload, key, value)
+
+  defp maybe_put_partition(payload, opts) do
+    case Keyword.fetch(opts, :partition) do
+      {:ok, partition} -> Map.put(payload, "partition", partition)
+      :error -> payload
+    end
+  end
 end

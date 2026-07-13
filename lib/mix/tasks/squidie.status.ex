@@ -43,6 +43,7 @@ defmodule Mix.Tasks.Squidie.Status do
 
   defp render_report(report, false) do
     Mix.shell().info("Squidie status at #{report.generated_at}")
+    render_partition(report.partition)
     Mix.shell().info("Runs: #{report.totals.runs}  Queues: #{report.totals.queues}")
 
     Enum.each(report.run_counts, fn row ->
@@ -59,4 +60,7 @@ defmodule Mix.Tasks.Squidie.Status do
       )
     end)
   end
+
+  defp render_partition(nil), do: :ok
+  defp render_partition(partition), do: Mix.shell().info("Partition: #{partition}")
 end

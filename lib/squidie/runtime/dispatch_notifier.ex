@@ -10,7 +10,8 @@ defmodule Squidie.Runtime.DispatchNotifier do
           required(:run_id) => String.t(),
           required(:runnable_key) => String.t(),
           required(:queue) => String.t(),
-          required(:visible_at) => DateTime.t()
+          required(:visible_at) => DateTime.t(),
+          optional(:partition) => String.t()
         }
 
   @callback notify_attempt_scheduled(attempt(), keyword()) :: :ok | {:error, term()}

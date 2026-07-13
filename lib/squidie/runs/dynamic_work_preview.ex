@@ -12,6 +12,7 @@ defmodule Squidie.Runs.DynamicWorkPreview do
 
   @type t :: %__MODULE__{
           run_id: String.t(),
+          partition: String.t() | nil,
           duplicate?: boolean(),
           recordable?: boolean(),
           origin_node_id: String.t() | nil,
@@ -24,6 +25,7 @@ defmodule Squidie.Runs.DynamicWorkPreview do
 
   defstruct [
     :run_id,
+    :partition,
     :dynamic_work,
     :graph,
     :origin_node_id,

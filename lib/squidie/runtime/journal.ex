@@ -37,10 +37,12 @@ defmodule Squidie.Runtime.Journal do
   def append_entries(storage, [%Entry{} | _entries] = entries, opts) when is_list(opts) do
     case entry_thread(entries) do
       {:ok, thread} ->
+        partition = Storage.partition(storage)
+
         Storage.append_thread(
           storage,
-          thread_id(thread),
-          Enum.map(entries, &to_jido_entry/1),
+          thread_id(thread, partition),
+          Enum.map(entries, &to_jido_entry(&1, partition)),
           opts
         )
 
@@ -61,10 +63,12 @@ defmodule Squidie.Runtime.Journal do
   @doc false
   @spec load_thread(storage_config(), Entry.thread()) :: {:ok, loaded_thread()} | {:error, term()}
   def load_thread(storage, thread) do
-    thread_id = thread_id(thread)
+    partition = Storage.partition(storage)
+    thread_id = thread_id(thread, partition)
 
     with {:ok, %Thread{} = jido_thread} <- Storage.fetch_thread(storage, thread_id),
-         {:ok, entries} <- decode_entries(jido_thread.entries, thread) do
+         :ok <- validate_loaded_thread_id(jido_thread, thread_id),
+         {:ok, entries} <- decode_entries(jido_thread.entries, thread, partition, thread_id) do
       {:ok,
        %{
          thread: thread,
@@ -119,7 +123,7 @@ defmodule Squidie.Runtime.Journal do
           :ok | {:error, term()}
   def put_checkpoint(storage, thread, projection, thread_rev, opts \\ [])
       when is_integer(thread_rev) and thread_rev >= 0 and is_list(opts) do
-    thread_id = thread_id(thread)
+    thread_id = thread_id(thread, Storage.partition(storage))
 
     checkpoint = %Checkpoint{
       thread: thread,
@@ -136,7 +140,10 @@ defmodule Squidie.Runtime.Journal do
   @spec fetch_checkpoint(storage_config(), Entry.thread()) ::
           {:ok, Checkpoint.t()} | {:error, term()}
   def fetch_checkpoint(storage, thread) do
-    Storage.fetch_checkpoint(storage, checkpoint_key(thread_id(thread)))
+    Storage.fetch_checkpoint(
+      storage,
+      checkpoint_key(thread_id(thread, Storage.partition(storage)))
+    )
   end
 
   @doc false
@@ -145,6 +152,14 @@ defmodule Squidie.Runtime.Journal do
   def thread_id({:dispatch, queue}), do: encode_thread_id("dispatch", queue)
   def thread_id({:run_index, workflow}), do: encode_thread_id("run_index", workflow)
   def thread_id({:run_catalog, catalog}), do: encode_thread_id("run_catalog", catalog)
+
+  @doc false
+  @spec thread_id(Entry.thread(), String.t() | nil) :: String.t()
+  def thread_id(thread, nil), do: thread_id(thread)
+
+  def thread_id({kind, id}, partition) when is_binary(partition) do
+    Enum.join([@namespace, "partition", partition, Atom.to_string(kind), to_string(id)], ":")
+  end
 
   defp entry_thread(entries) do
     threads =
@@ -158,7 +173,7 @@ defmodule Squidie.Runtime.Journal do
     end
   end
 
-  defp to_jido_entry(%Entry{} = entry) do
+  defp to_jido_entry(%Entry{} = entry, partition) do
     %Jido.Thread.Entry{
       id: nil,
       seq: 0,
@@ -169,16 +184,16 @@ defmodule Squidie.Runtime.Journal do
         occurred_at: entry.occurred_at
       },
       refs: %{
-        squidie_thread: entry.thread,
-        squidie_thread_id: thread_id(entry.thread)
+        squidie_thread: scoped_thread(entry.thread, partition),
+        squidie_thread_id: thread_id(entry.thread, partition)
       }
     }
   end
 
-  defp decode_entries(jido_entries, thread) do
+  defp decode_entries(jido_entries, thread, partition, thread_id) do
     result =
       Enum.reduce_while(jido_entries, {:ok, []}, fn jido_entry, {:ok, entries} ->
-        case from_jido_entry(jido_entry, thread) do
+        case from_jido_entry(jido_entry, thread, partition, thread_id) do
           {:ok, entry} -> {:cont, {:ok, [entry | entries]}}
           {:error, _reason} = error -> {:halt, error}
         end
@@ -190,9 +205,15 @@ defmodule Squidie.Runtime.Journal do
     end
   end
 
-  defp from_jido_entry(%Jido.Thread.Entry{payload: payload} = jido_entry, thread)
+  defp from_jido_entry(
+         %Jido.Thread.Entry{payload: payload} = jido_entry,
+         thread,
+         partition,
+         thread_id
+       )
        when is_map(payload) do
-    with {:ok, data} <- fetch_payload_data(jido_entry),
+    with :ok <- validate_entry_thread_refs(jido_entry, thread, partition, thread_id),
+         {:ok, data} <- fetch_payload_data(jido_entry),
          {:ok, occurred_at} <- occurred_at(jido_entry) do
       {:ok,
        %Entry{
@@ -204,9 +225,41 @@ defmodule Squidie.Runtime.Journal do
     end
   end
 
-  defp from_jido_entry(%Jido.Thread.Entry{} = jido_entry, _thread) do
+  defp from_jido_entry(%Jido.Thread.Entry{} = jido_entry, _thread, _partition, _thread_id) do
     {:error, {:invalid_journal_entry, jido_entry.seq, :invalid_payload}}
   end
+
+  defp validate_loaded_thread_id(%Thread{id: thread_id}, thread_id), do: :ok
+
+  defp validate_loaded_thread_id(%Thread{}, _thread_id),
+    do: {:error, {:invalid_journal_thread, :thread_id_mismatch}}
+
+  defp validate_entry_thread_refs(
+         %Jido.Thread.Entry{seq: seq, refs: refs},
+         thread,
+         partition,
+         thread_id
+       )
+       when is_map(refs) do
+    case validate_entry_ref(refs, :squidie_thread_id, thread_id, seq) do
+      :ok -> validate_entry_ref(refs, :squidie_thread, scoped_thread(thread, partition), seq)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_entry_thread_refs(%Jido.Thread.Entry{seq: seq}, _thread, _partition, _thread_id),
+    do: {:error, {:invalid_journal_entry, seq, :invalid_refs}}
+
+  defp validate_entry_ref(refs, key, expected, seq) do
+    case Map.fetch(refs, key) do
+      {:ok, ^expected} -> :ok
+      {:ok, _other} -> {:error, {:invalid_journal_entry, seq, :thread_mismatch}}
+      :error -> :ok
+    end
+  end
+
+  defp scoped_thread(thread, nil), do: thread
+  defp scoped_thread({kind, id}, partition), do: {kind, partition, id}
 
   defp fetch_payload_data(%Jido.Thread.Entry{payload: payload} = jido_entry) do
     case Map.fetch(payload, :data) do

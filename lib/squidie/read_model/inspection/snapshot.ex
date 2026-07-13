@@ -55,6 +55,7 @@ defmodule Squidie.ReadModel.Inspection.Snapshot do
 
   @type t :: %__MODULE__{
           run_id: String.t(),
+          partition: String.t() | nil,
           workflow: String.t() | nil,
           trigger: String.t() | nil,
           input: map() | nil,
@@ -104,6 +105,7 @@ defmodule Squidie.ReadModel.Inspection.Snapshot do
 
   defstruct [
     :run_id,
+    :partition,
     :workflow,
     :trigger,
     :input,

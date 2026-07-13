@@ -27,23 +27,26 @@ defmodule Squidie.Operations.Status do
     %{
       schema_version: @schema_version,
       generated_at: DateTime.to_iso8601(collector.now),
+      partition: collector.config.partition,
       totals: %{
         runs: length(collector.runs),
         queues: map_size(collector.queues),
         anomalies: total_anomalies(collector)
       },
-      run_counts: run_counts(collector.runs),
+      run_counts: run_counts(collector.runs, collector.config.partition),
       queues: queue_summaries(collector)
     }
   end
 
-  defp run_counts(runs) do
+  defp run_counts(runs, partition) do
     runs
-    |> Enum.frequencies_by(&{&1.workflow, &1.queue, &1.status})
-    |> Enum.map(fn {{workflow, queue, status}, count} ->
-      %{workflow: workflow, queue: queue, status: status, count: count}
+    |> Enum.frequencies_by(
+      &{Map.get(&1, :partition, partition), &1.workflow, &1.queue, &1.status}
+    )
+    |> Enum.map(fn {{partition, workflow, queue, status}, count} ->
+      %{partition: partition, workflow: workflow, queue: queue, status: status, count: count}
     end)
-    |> Enum.sort_by(&{&1.workflow, &1.queue, Atom.to_string(&1.status)})
+    |> Enum.sort_by(&{&1.partition, &1.workflow, &1.queue, Atom.to_string(&1.status)})
   end
 
   defp queue_summaries(%Collector{} = collector) do
@@ -59,6 +62,7 @@ defmodule Squidie.Operations.Status do
     queue_runs = Enum.filter(collector.runs, &(&1.queue == queue.queue))
 
     %{
+      partition: Map.get(queue, :partition, collector.config.partition),
       queue: queue.queue,
       visible_attempt_depth: length(visible),
       scheduled_attempt_depth: length(scheduled),

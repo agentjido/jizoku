@@ -9,6 +9,11 @@
 - Use `GraphInspection.to_map/1` `child_links` to render parent-to-child
   subflow overlays; do not invent client-side child link ids from raw history.
 - Use `Squidie.explain_run/2` for operator-facing diagnosis and next actions.
+- Carry `partition` with every run identity in links, selections, caches, and
+  operator actions. Run UUIDs and queue names may intentionally repeat across
+  partitions, and read APIs never search another partition.
+- Authorize partition access at the host boundary; partition-aware storage and
+  output do not replace authorization.
 - Use `Squidie.record_dynamic_work/3` to persist validated dynamic nodes and
   edges that visual editors or dashboards should show on a run graph without
   executing them.
@@ -20,7 +25,8 @@
 - Use `Squidie.preview_dynamic_work/3` to validate candidate dynamic nodes and
   render the graph overlay before committing them to the journal. Prefer its
   `origin_node_id`, `added_node_ids`, `added_edge_ids`, `recordable?`, and
-  `warnings` fields over ad hoc graph diffing in visual editor clients.
+  `warnings` fields over ad hoc graph diffing in visual editor clients. The
+  preview and its graph also expose the selected `partition`.
 - Use `dynamic_work_overlays` from `Squidie.inspect_run_graph/2` or
   `GraphInspection.to_map/1` to inspect recorded dynamic work groups; use raw
   `dynamic_work` only when the caller needs the full normalized durable record.

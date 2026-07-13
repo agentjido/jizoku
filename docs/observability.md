@@ -24,6 +24,13 @@ Use these public APIs as the stable observability boundary:
 - `Squidie.explain_run/2` - operator-facing reason, details, evidence, and
   next actions.
 
+All of these surfaces expose the selected `partition`. Treat
+`{partition, run_id}` as the minimum run identity in dashboards, links, caches,
+logs, and operator commands because the same run UUID may exist in multiple
+partitions. Fleet queries are partition-local and do not search other
+partitions. Host authorization remains mandatory; the partition is a storage
+namespace, not an access-control decision.
+
 `list_runs/2` intentionally stays narrow. It exposes lookup and status fields
 without attempt inputs, outputs, errors, claim metadata, or idempotency keys.
 Use `inspect_run/2` only after selecting a specific run and applying the host

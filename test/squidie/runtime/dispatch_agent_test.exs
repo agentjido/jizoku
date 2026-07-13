@@ -60,6 +60,44 @@ defmodule Squidie.Runtime.DispatchAgentTest do
            ] = DispatchAgent.expired_claims(agent, @expired_at)
   end
 
+  test "partitioned dispatch agents have isolated collision-safe identities" do
+    assert DispatchAgent.agent_id("default", nil) == "squidie.dispatch.default"
+
+    acme_id = DispatchAgent.agent_id("shared.queue", "tenant.acme")
+    globex_id = DispatchAgent.agent_id("shared.queue", "tenant_globex")
+
+    refute acme_id == globex_id
+    refute acme_id == DispatchAgent.agent_id("acme.shared.queue", "tenant")
+  end
+
+  test "rejects dispatch writes and checkpoints through a mismatched partition" do
+    assert {:ok, acme_storage} =
+             Squidie.Runtime.Journal.Storage.scope(@storage, "tenant_acme")
+
+    assert {:ok, globex_storage} =
+             Squidie.Runtime.Journal.Storage.scope(@storage, "tenant_globex")
+
+    assert {:ok, agent} = DispatchAgent.rebuild(acme_storage, "default")
+
+    assert {:error, {:partition_mismatch, :dispatch_agent}} =
+             DispatchAgent.put_checkpoint(globex_storage, agent, updated_at: @visible_at)
+
+    assert {:error, {:partition_mismatch, :dispatch_agent}} =
+             DispatchAgent.schedule_attempts(
+               globex_storage,
+               agent,
+               @run_id,
+               [planned_runnable()],
+               now: @visible_at
+             )
+
+    assert {:error, :not_found} =
+             Journal.load_entries(globex_storage, {:dispatch, "default"})
+
+    assert {:error, :not_found} =
+             Journal.fetch_checkpoint(globex_storage, {:dispatch, "default"})
+  end
+
   test "rebuilds an empty dispatch agent when the queue has no thread yet" do
     assert {:ok, agent} = DispatchAgent.rebuild(@storage, "default")
 
@@ -131,6 +169,33 @@ defmodule Squidie.Runtime.DispatchAgentTest do
     assert wakeup_entry.data.runnable_key == @runnable_key
     assert wakeup_entry.data.queue == "default"
     assert wakeup_entry.data.occurred_at == @visible_at
+  end
+
+  test "includes the durable partition in live wakeup hints" do
+    assert {:ok, storage} =
+             Squidie.Runtime.Journal.Storage.scope(@storage, "tenant_acme")
+
+    assert {:ok, agent} = DispatchAgent.rebuild(storage, "default")
+
+    assert {:ok, %{runnables: [%{runnable_key: @runnable_key}]}} =
+             DispatchAgent.schedule_attempts(
+               storage,
+               agent,
+               @run_id,
+               [planned_runnable()],
+               now: @visible_at,
+               notifier: TestNotifier,
+               notifier_opts: [test_pid: self()]
+             )
+
+    assert_receive {:attempt_wakeup,
+                    %{
+                      partition: "tenant_acme",
+                      run_id: @run_id,
+                      runnable_key: @runnable_key,
+                      queue: "default",
+                      visible_at: @visible_at
+                    }}
   end
 
   test "keeps scheduled attempts recoverable when live wakeup notification is lost" do

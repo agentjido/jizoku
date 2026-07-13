@@ -55,6 +55,54 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
     assert WorkflowAgent.applied_runnable_keys(agent) == MapSet.new()
   end
 
+  test "partitioned workflow agents have isolated collision-safe identities" do
+    assert WorkflowAgent.agent_id(@run_id, nil) == "squidie.workflow.run_123"
+
+    acme_id = WorkflowAgent.agent_id(@run_id, "tenant.acme")
+    globex_id = WorkflowAgent.agent_id(@run_id, "tenant_globex")
+
+    refute acme_id == globex_id
+    refute acme_id == WorkflowAgent.agent_id("acme.run_123", "tenant")
+  end
+
+  test "rejects workflow writes and checkpoints through a mismatched partition" do
+    assert {:ok, acme_storage} =
+             Squidie.Runtime.Journal.Storage.scope(@storage, "tenant_acme")
+
+    assert {:ok, globex_storage} =
+             Squidie.Runtime.Journal.Storage.scope(@storage, "tenant_globex")
+
+    assert {:ok, run_started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, runnables_planned} =
+             DispatchProtocol.new_entry(:runnables_planned, %{
+               run_id: @run_id,
+               runnables: [%{runnable_key: @runnable_key, step: "charge_card"}],
+               occurred_at: @visible_at
+             })
+
+    assert {:ok, %{rev: 2}} =
+             Journal.append_entries(acme_storage, [run_started, runnables_planned])
+
+    assert {:ok, agent} = WorkflowAgent.rebuild(acme_storage, @run_id)
+
+    assert {:error, {:partition_mismatch, :workflow_agent}} =
+             WorkflowAgent.put_checkpoint(globex_storage, agent, updated_at: @completed_at)
+
+    assert {:error, {:partition_mismatch, :workflow_agent}} =
+             WorkflowAgent.apply_result(globex_storage, agent, completed_attempt(),
+               now: @completed_at
+             )
+
+    assert {:error, :not_found} = Journal.load_entries(globex_storage, {:run, @run_id})
+    assert {:error, :not_found} = Journal.fetch_checkpoint(globex_storage, {:run, @run_id})
+  end
+
   test "projects runtime command receipts from durable run entries" do
     projection =
       Projection.rebuild([

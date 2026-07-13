@@ -15,13 +15,16 @@ defmodule Mix.Tasks.Squidie.StatusTest do
   setup do
     previous_storage = Application.get_env(:squidie, :journal_storage)
     previous_queue = Application.get_env(:squidie, :queue)
+    previous_partition = Application.get_env(:squidie, :partition)
     Application.put_env(:squidie, :journal_storage, @storage)
     Application.put_env(:squidie, :queue, "default")
+    Application.delete_env(:squidie, :partition)
     :ok = Jido.Storage.ETS.Owner.ensure_tables(table: @table)
 
     on_exit(fn ->
       restore_env(:journal_storage, previous_storage)
       restore_env(:queue, previous_queue)
+      restore_env(:partition, previous_partition)
       drop_tables(@table)
       Mix.Task.reenable(@task)
     end)
@@ -55,6 +58,14 @@ defmodule Mix.Tasks.Squidie.StatusTest do
     assert output =~ "run BillingWorkflow queue=default status=started count=1"
     assert output =~ "queue default visible=0 scheduled=0 claimed=0"
     assert output =~ "pending_dispatches=0 pending_results=0 manual=0"
+  end
+
+  test "prints the configured partition in operator-readable output" do
+    Application.put_env(:squidie, :partition, "tenant_acme")
+
+    output = capture_io(fn -> Status.run([]) end)
+
+    assert output =~ "Partition: tenant_acme"
   end
 
   test "rejects unknown options" do

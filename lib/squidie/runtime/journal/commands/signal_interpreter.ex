@@ -12,6 +12,7 @@ defmodule Squidie.Runtime.Journal.Commands.SignalInterpreter do
   alias Squidie.Runtime.Journal.Commands.ManualControl
   alias Squidie.Runtime.Journal.Commands.Replay
   alias Squidie.Runtime.Journal.Commands.Starter
+  alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.ScheduleMetadata
   alias Squidie.Runtime.Signal
@@ -24,29 +25,62 @@ defmodule Squidie.Runtime.Journal.Commands.SignalInterpreter do
   Applies a normalized runtime command signal to the journal runtime.
   """
   @spec apply(Signal.t(), keyword()) :: {:ok, term()} | {:error, term()}
-  def apply(%Signal{type: type} = signal, opts)
-      when type in @start_signal_types and is_list(opts) do
-    start_from_signal(signal, opts)
+  def apply(%Signal{} = signal, opts) when is_list(opts) do
+    with {:ok, opts} <- partition_options(signal, opts) do
+      do_apply(signal, opts)
+    end
   end
-
-  def apply(%Signal{type: :replay_run} = signal, opts) when is_list(opts) do
-    replay_from_signal(signal, opts)
-  end
-
-  def apply(%Signal{type: :cancel_run} = signal, opts) when is_list(opts) do
-    Cancellation.apply_signal(signal, opts)
-  end
-
-  def apply(%Signal{type: type} = signal, opts)
-      when type in @manual_signal_types and is_list(opts) do
-    ManualControl.apply_signal(signal, opts)
-  end
-
-  def apply(%Signal{type: type}, opts) when is_list(opts),
-    do: {:error, {:unsupported_signal, type}}
 
   def apply(%Signal{}, _opts), do: {:error, {:invalid_option, {:opts, :invalid}}}
   def apply(_signal, _opts), do: {:error, :invalid_signal}
+
+  defp do_apply(%Signal{type: type} = signal, opts)
+       when type in @start_signal_types and is_list(opts) do
+    start_from_signal(signal, opts)
+  end
+
+  defp do_apply(%Signal{type: :replay_run} = signal, opts) when is_list(opts) do
+    replay_from_signal(signal, opts)
+  end
+
+  defp do_apply(%Signal{type: :cancel_run} = signal, opts) when is_list(opts) do
+    Cancellation.apply_signal(signal, opts)
+  end
+
+  defp do_apply(%Signal{type: type} = signal, opts)
+       when type in @manual_signal_types and is_list(opts) do
+    ManualControl.apply_signal(signal, opts)
+  end
+
+  defp do_apply(%Signal{type: type}, opts) when is_list(opts),
+    do: {:error, {:unsupported_signal, type}}
+
+  defp partition_options(%Signal{partition: nil}, opts), do: {:ok, opts}
+
+  defp partition_options(%Signal{partition: partition}, opts) when is_binary(partition) do
+    with {:ok, partition} <- Options.partition(partition) do
+      reconcile_partition(opts, partition)
+    end
+  end
+
+  defp partition_options(%Signal{}, _opts),
+    do: {:error, {:invalid_signal, {:partition, :invalid}}}
+
+  defp reconcile_partition(opts, signal_partition) do
+    case Keyword.fetch(opts, :partition) do
+      :error ->
+        {:ok, Keyword.put(opts, :partition, signal_partition)}
+
+      {:ok, nil} ->
+        {:ok, Keyword.put(opts, :partition, signal_partition)}
+
+      {:ok, ^signal_partition} ->
+        {:ok, opts}
+
+      {:ok, _other_partition} ->
+        {:error, {:partition_mismatch, :signal}}
+    end
+  end
 
   defp start_from_signal(
          %Signal{

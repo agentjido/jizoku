@@ -33,7 +33,8 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
       )
       when is_atom(child_workflow) and is_atom(child_trigger) and is_map(payload) and
              is_list(opts) do
-    with {:ok, storage} <- Options.storage_from_opts(opts),
+    with {:ok, opts} <- child_partition_options(parent_context, opts),
+         {:ok, storage} <- Options.storage_from_opts(opts),
          {:ok, queue} <- Options.queue_from_opts(opts),
          {:ok, now} <- Options.now_from_opts(opts),
          {:ok, child_key} <- child_key(opts),
@@ -85,6 +86,40 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
   def start_child_run(_parent_context, _child_workflow, _child_trigger, _payload, _opts) do
     {:error, {:invalid_parent_context, :expected_step_context}}
   end
+
+  defp child_partition_options(%Context{partition: parent_partition}, opts) do
+    with {:ok, parent_partition} <- Options.partition(parent_partition),
+         {:ok, option_partition} <- child_option_partition(opts) do
+      reconcile_child_partition(opts, parent_partition, option_partition)
+    end
+  end
+
+  defp child_option_partition(opts) do
+    case Keyword.fetch(opts, :partition) do
+      {:ok, partition} -> normalize_child_option_partition(partition)
+      :error -> {:ok, :absent}
+    end
+  end
+
+  defp normalize_child_option_partition(partition) do
+    case Options.partition(partition) do
+      {:ok, partition} -> {:ok, {:present, partition}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp reconcile_child_partition(opts, nil, :absent),
+    do: {:ok, Keyword.put(opts, :partition, nil)}
+
+  defp reconcile_child_partition(opts, parent_partition, :absent)
+       when is_binary(parent_partition),
+       do: {:ok, Keyword.put(opts, :partition, parent_partition)}
+
+  defp reconcile_child_partition(opts, partition, {:present, partition}),
+    do: {:ok, Keyword.put(opts, :partition, partition)}
+
+  defp reconcile_child_partition(_opts, _parent_partition, _option_partition),
+    do: {:error, {:partition_mismatch, :child}}
 
   defp child_key(opts) do
     case Keyword.fetch(opts, :child_key) do

@@ -286,9 +286,7 @@ defmodule Squidie.Runtime.Journal.Commands.Replay do
   end
 
   defp journal_storage(opts) do
-    opts
-    |> Keyword.get(:journal_storage)
-    |> Options.storage()
+    Options.storage_from_opts(opts)
   end
 
   defp queue(opts) do

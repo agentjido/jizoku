@@ -24,6 +24,11 @@ itself.
 - Keep workflow definitions backend-neutral.
 - Keep delivery and job boundaries thin; call host-owned modules that wrap
   Squidie public APIs.
+- Pass the same trusted `:partition` through every start, worker, cron, signal,
+  control, replay, and read-model boundary when a host isolates workflow state
+  by tenant or domain. Omitting it selects the legacy unpartitioned namespace.
+- Treat partitions as storage routing, not authorization. Authorize the caller
+  before selecting a partition or returning its run data.
 - Use `Squidie.list_runs/2` for index views and
   `Squidie.inspect_run/2`, `Squidie.inspect_run_graph/2`,
   `Squidie.inspect_run_timeline/2`, or `Squidie.explain_run/2` for details.

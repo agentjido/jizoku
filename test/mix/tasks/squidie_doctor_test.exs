@@ -12,11 +12,14 @@ defmodule Mix.Tasks.Squidie.DoctorTest do
   setup do
     previous_storage = Application.get_env(:squidie, :journal_storage)
     previous_queue = Application.get_env(:squidie, :queue)
+    previous_partition = Application.get_env(:squidie, :partition)
     previous_heartbeat_interval = Application.get_env(:squidie, :heartbeat_interval_ms)
+    Application.delete_env(:squidie, :partition)
 
     on_exit(fn ->
       restore_env(:journal_storage, previous_storage)
       restore_env(:queue, previous_queue)
+      restore_env(:partition, previous_partition)
       restore_env(:heartbeat_interval_ms, previous_heartbeat_interval)
       drop_tables(@table)
       Mix.Task.reenable(@task)
@@ -28,11 +31,13 @@ defmodule Mix.Tasks.Squidie.DoctorTest do
   test "prints JSON diagnostics without prose" do
     Application.put_env(:squidie, :journal_storage, {Jido.Storage.ETS, table: @table})
     Application.put_env(:squidie, :queue, "default")
+    Application.put_env(:squidie, :partition, "tenant_acme")
 
     output = capture_io(fn -> Doctor.run(["--json"]) end)
     report = Jason.decode!(output)
 
     assert report["schema_version"] == 1
+    assert report["partition"] == "tenant_acme"
     assert is_boolean(report["healthy"])
     assert [%{"id" => "configuration"} | _checks] = report["checks"]
     assert Enum.any?(report["checks"], &(&1["id"] == "schema"))
@@ -41,11 +46,13 @@ defmodule Mix.Tasks.Squidie.DoctorTest do
   test "prints operator-readable checks and next actions" do
     Application.put_env(:squidie, :journal_storage, {Jido.Storage.ETS, table: @table})
     Application.put_env(:squidie, :queue, "default")
+    Application.put_env(:squidie, :partition, "tenant_acme")
     Application.put_env(:squidie, :heartbeat_interval_ms, 1_000)
 
     output = capture_io(fn -> Doctor.run([]) end)
 
     assert output =~ "Squidie doctor at"
+    assert output =~ "Partition: tenant_acme"
     assert output =~ ~r/pass=\d+ warn=\d+ fail=\d+/
     assert output =~ "[warn] configuration:"
     assert output =~ "next: move_heartbeat_options_to_execute_next_worker_calls"

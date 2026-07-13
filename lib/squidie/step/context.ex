@@ -11,6 +11,7 @@ defmodule Squidie.Step.Context do
   @enforce_keys [:run_id, :workflow, :step, :attempt, :state]
   defstruct [
     :run_id,
+    :partition,
     :workflow,
     :step,
     :attempt,
@@ -23,6 +24,7 @@ defmodule Squidie.Step.Context do
 
   @type t :: %__MODULE__{
           run_id: Ecto.UUID.t(),
+          partition: String.t() | nil,
           workflow: module(),
           step: atom(),
           runnable_key: String.t() | nil,
@@ -38,6 +40,7 @@ defmodule Squidie.Step.Context do
   def from_map(context) when is_map(context) do
     %__MODULE__{
       run_id: Map.fetch!(context, :run_id),
+      partition: Map.get(context, :partition),
       workflow: Map.fetch!(context, :workflow),
       step: Map.fetch!(context, :step),
       attempt: Map.get(context, :attempt),

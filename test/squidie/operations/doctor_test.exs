@@ -18,8 +18,16 @@ defmodule Squidie.Operations.DoctorTest do
   test "reports an empty custom-storage runtime as healthy and JSON-safe" do
     storage = {Jido.Storage.ETS, table: :squidie_doctor_empty_test}
 
-    assert {:ok, report} = Doctor.report(now: @now, journal_storage: storage, queue: "critical")
+    assert {:ok, report} =
+             Doctor.report(
+               now: @now,
+               journal_storage: storage,
+               partition: "tenant_acme",
+               queue: "critical"
+             )
+
     assert report.schema_version == 1
+    assert report.partition == "tenant_acme"
     assert report.generated_at == "2026-07-11T12:00:00Z"
     assert report.healthy
     assert report.summary.fail == 0

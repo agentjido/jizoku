@@ -9,6 +9,7 @@ defmodule Squidie.ReadModel.Listing.Summary do
 
   @type t :: %__MODULE__{
           run_id: String.t(),
+          partition: String.t() | nil,
           workflow: String.t(),
           definition_version: String.t() | nil,
           queue: String.t(),
@@ -36,6 +37,7 @@ defmodule Squidie.ReadModel.Listing.Summary do
 
   defstruct [
     :run_id,
+    :partition,
     :workflow,
     :definition_version,
     :queue,

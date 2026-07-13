@@ -27,11 +27,12 @@ defmodule Squidie.Operations.StatusTest do
     }
 
     collector = %Collector{
-      config: %Config{queue: "default"},
+      config: %Config{partition: "tenant_acme", queue: "default"},
       now: @now,
       catalog_anomalies: [],
       runs: [
         %{
+          partition: "tenant_acme",
           run_id: "run-1",
           workflow: "BillingWorkflow",
           queue: "default",
@@ -50,6 +51,7 @@ defmodule Squidie.Operations.StatusTest do
       ],
       queues: %{
         "default" => %{
+          partition: "tenant_acme",
           queue: "default",
           projection: projection,
           attempts: [claimed, scheduled, visible]
@@ -60,14 +62,22 @@ defmodule Squidie.Operations.StatusTest do
     report = Status.from_collector(collector)
 
     assert report.schema_version == 1
+    assert report.partition == "tenant_acme"
     assert report.generated_at == "2026-07-11T12:00:00Z"
     assert report.totals == %{runs: 1, queues: 1, anomalies: 0}
 
     assert report.run_counts == [
-             %{workflow: "BillingWorkflow", queue: "default", status: :running, count: 1}
+             %{
+               partition: "tenant_acme",
+               workflow: "BillingWorkflow",
+               queue: "default",
+               status: :running,
+               count: 1
+             }
            ]
 
     assert [queue] = report.queues
+    assert queue.partition == "tenant_acme"
     assert queue.visible_attempt_depth == 1
     assert queue.scheduled_attempt_depth == 1
     assert queue.next_visible_at == "2026-07-11T12:05:00Z"

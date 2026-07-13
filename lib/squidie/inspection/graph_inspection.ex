@@ -16,6 +16,7 @@ defmodule Squidie.Inspection.GraphInspection do
 
   @type t :: %__MODULE__{
           run_id: String.t(),
+          partition: String.t() | nil,
           workflow: module() | String.t() | nil,
           definition_version: String.t() | nil,
           source: source(),
@@ -36,6 +37,7 @@ defmodule Squidie.Inspection.GraphInspection do
 
   defstruct [
     :run_id,
+    :partition,
     :workflow,
     :definition_version,
     :source,
@@ -67,6 +69,7 @@ defmodule Squidie.Inspection.GraphInspection do
 
     %__MODULE__{
       run_id: snapshot.run_id,
+      partition: snapshot.partition,
       workflow: snapshot.workflow,
       definition_version: snapshot.definition_version,
       source: source,
@@ -96,6 +99,7 @@ defmodule Squidie.Inspection.GraphInspection do
   def to_map(%__MODULE__{} = graph) do
     %{
       run_id: graph.run_id,
+      partition: graph.partition,
       workflow: workflow_name(graph.workflow),
       definition_version: graph.definition_version,
       source: graph.source,

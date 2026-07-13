@@ -58,6 +58,7 @@ defmodule Squidie.ReadModel.Explanation do
 
     %Diagnostic{
       run_id: snapshot.run_id,
+      partition: snapshot.partition,
       workflow: snapshot.workflow,
       definition_version: snapshot.definition_version,
       queue: snapshot.queue,

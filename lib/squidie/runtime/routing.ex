@@ -9,16 +9,18 @@ defmodule Squidie.Runtime.Routing do
 
   alias Squidie.Config
   alias Squidie.Runtime.Journal.Options
+  alias Squidie.Runtime.Journal.Storage
 
   @read_models [:read_model]
   @runtimes [:journal]
   @projection_snapshot_options [:queue, :now]
   @projection_list_options [:queue, :now]
-  @journal_start_options [:runtime, :journal_storage, :queue, :now, :run_id]
+  @journal_start_options [:runtime, :journal_storage, :queue, :partition, :now, :run_id]
   @journal_spec_start_options [
     :runtime,
     :journal_storage,
     :queue,
+    :partition,
     :now,
     :run_id,
     :action_registry,
@@ -28,15 +30,17 @@ defmodule Squidie.Runtime.Routing do
     :runtime,
     :journal_storage,
     :queue,
+    :partition,
     :now,
     :child_key,
     :metadata
   ]
-  @journal_control_options [:runtime, :journal_storage, :queue, :now]
+  @journal_control_options [:runtime, :journal_storage, :queue, :partition, :now]
   @journal_execute_options [
     :runtime,
     :journal_storage,
     :queue,
+    :partition,
     :owner_id,
     :lease_for,
     :heartbeat_interval_ms,
@@ -49,6 +53,7 @@ defmodule Squidie.Runtime.Routing do
     :read_model,
     :journal_storage,
     :queue,
+    :partition,
     :now,
     :repo,
     :action_registry
@@ -83,16 +88,9 @@ defmodule Squidie.Runtime.Routing do
   """
   @spec journal_storage(keyword()) :: {:ok, term()} | {:error, term()}
   def journal_storage(overrides) do
-    case Keyword.fetch(overrides, :journal_storage) do
-      {:ok, storage} ->
-        Options.storage(storage)
-
-      :error ->
-        case Config.load(config_routing_overrides(overrides)) do
-          {:ok, %Config{} = config} -> Options.storage(config.journal_storage)
-          {:error, {:missing_config, [:journal_storage]}} -> Options.storage(nil)
-          {:error, _reason} = error -> error
-        end
+    with {:ok, storage, partition} <- configured_storage_and_partition(overrides),
+         {:ok, storage} <- Options.storage(storage) do
+      Squidie.Runtime.Journal.Storage.scope(storage, partition)
     end
   end
 
@@ -125,7 +123,9 @@ defmodule Squidie.Runtime.Routing do
   """
   @spec journal_child_start_options(keyword()) :: keyword()
   def journal_child_start_options(overrides) do
-    configured_journal_options(overrides, @journal_child_start_options)
+    overrides
+    |> configured_journal_options(@journal_child_start_options)
+    |> child_partition_override(overrides)
   end
 
   @doc """
@@ -271,6 +271,7 @@ defmodule Squidie.Runtime.Routing do
           journal_storage: config.journal_storage,
           queue: config.queue
         ]
+        |> maybe_put_configured_partition(config.partition)
         |> Keyword.merge(Keyword.take(overrides, keys))
         |> Keyword.take(keys)
 
@@ -293,11 +294,69 @@ defmodule Squidie.Runtime.Routing do
   end
 
   defp config_routing_overrides(overrides) do
-    Keyword.take(overrides, [
+    overrides
+    |> Keyword.take([
       :repo,
       :runtime,
       :read_model,
-      :journal_storage
+      :journal_storage,
+      :partition
     ])
+    |> preserve_explicit_storage_partition(overrides)
   end
+
+  defp configured_storage_and_partition(overrides) do
+    case Keyword.fetch(overrides, :journal_storage) do
+      {:ok, storage} ->
+        partition =
+          overrides
+          |> config_routing_overrides()
+          |> Keyword.get(:partition, Application.get_env(:squidie, :partition))
+
+        {:ok, storage, partition}
+
+      :error ->
+        configured_storage_from_config(overrides)
+    end
+  end
+
+  defp configured_storage_from_config(overrides) do
+    case Config.load(config_routing_overrides(overrides)) do
+      {:ok, %Config{} = config} ->
+        {:ok, config.journal_storage, Keyword.get(overrides, :partition, config.partition)}
+
+      {:error, {:missing_config, [:journal_storage]}} ->
+        {:ok, nil, Keyword.get(overrides, :partition)}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp maybe_put_configured_partition(opts, nil), do: opts
+
+  defp maybe_put_configured_partition(opts, partition),
+    do: Keyword.put(opts, :partition, partition)
+
+  defp child_partition_override(opts, overrides) do
+    case Keyword.fetch(overrides, :partition) do
+      {:ok, partition} -> Keyword.put(opts, :partition, partition)
+      :error -> Keyword.delete(opts, :partition)
+    end
+  end
+
+  defp preserve_explicit_storage_partition(config_overrides, overrides) do
+    case {Keyword.fetch(overrides, :partition), Keyword.fetch(overrides, :journal_storage)} do
+      {:error, {:ok, storage}} ->
+        put_storage_partition(config_overrides, Storage.partition(storage))
+
+      {_partition, _storage} ->
+        config_overrides
+    end
+  end
+
+  defp put_storage_partition(config_overrides, nil), do: config_overrides
+
+  defp put_storage_partition(config_overrides, partition),
+    do: Keyword.put(config_overrides, :partition, partition)
 end

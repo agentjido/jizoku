@@ -10,7 +10,7 @@ defmodule Squidie.Runtime.Journal.Storage do
   """
 
   @enforce_keys [:adapter, :opts, :config]
-  defstruct [:adapter, :opts, :config]
+  defstruct [:adapter, :opts, :config, partition: nil]
 
   @storage_callbacks [
     get_checkpoint: 2,
@@ -25,14 +25,30 @@ defmodule Squidie.Runtime.Journal.Storage do
   @type t :: %__MODULE__{
           adapter: module(),
           opts: keyword(),
-          config: config()
+          config: config(),
+          partition: String.t() | nil
         }
 
   @doc false
+  @spec scope(t() | config(), String.t() | nil) ::
+          {:ok, t()} | {:error, {:invalid_option, term()}}
+  def scope(storage, partition) do
+    with {:ok, %__MODULE__{} = storage} <- normalize(storage),
+         {:ok, partition} <- Squidie.Runtime.Partition.normalize(partition) do
+      {:ok, %__MODULE__{storage | partition: partition}}
+    end
+  end
+
+  @doc false
+  @spec partition(t() | config()) :: String.t() | nil
+  def partition(%__MODULE__{partition: partition}), do: partition
+  def partition(_storage), do: nil
+
+  @doc false
   @spec normalize(term()) :: {:ok, t()} | {:error, {:invalid_option, term()}}
-  def normalize(%__MODULE__{adapter: module, opts: opts} = storage)
+  def normalize(%__MODULE__{adapter: module, opts: opts, partition: partition} = storage)
       when is_atom(module) and is_list(opts) do
-    validate_storage_module(module, storage, storage_config(module, opts), opts)
+    validate_storage_module(module, storage, storage_config(module, opts), opts, partition)
   end
 
   def normalize(%__MODULE__{} = storage), do: invalid_storage(storage)
@@ -40,11 +56,11 @@ defmodule Squidie.Runtime.Journal.Storage do
   def normalize(nil), do: {:error, {:invalid_option, {:journal_storage, nil}}}
 
   def normalize(storage) when is_atom(storage) do
-    validate_storage_module(storage, storage, storage, [])
+    validate_storage_module(storage, storage, storage, [], nil)
   end
 
   def normalize({module, opts} = storage) when is_atom(module) and is_list(opts) do
-    validate_storage_module(module, storage, storage, opts)
+    validate_storage_module(module, storage, storage, opts, nil)
   end
 
   def normalize(storage), do: invalid_storage(storage)
@@ -83,12 +99,14 @@ defmodule Squidie.Runtime.Journal.Storage do
     end
   end
 
-  defp validate_storage_module(module, storage, config, opts) do
+  defp validate_storage_module(module, storage, config, opts, partition) do
     with {:module, ^module} <- Code.ensure_loaded(module),
          true <- storage_callbacks?(module),
-         :ok <- validate_storage_options(module, opts) do
-      {:ok, %__MODULE__{adapter: module, opts: opts, config: config}}
+         :ok <- validate_storage_options(module, opts),
+         {:ok, partition} <- Squidie.Runtime.Partition.normalize(partition) do
+      {:ok, %__MODULE__{adapter: module, opts: opts, config: config, partition: partition}}
     else
+      {:error, {:invalid_option, {:partition, :invalid}}} = error -> error
       _error -> invalid_storage(storage)
     end
   end

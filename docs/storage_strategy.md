@@ -33,6 +33,22 @@ Storage adapters are for the runtime boundary:
 - Runtime modules append durable facts and rebuild projections through that
   boundary.
 
+An optional trusted `:partition` scopes Squidie's logical runtime identities
+before they reach the adapter. With no partition, physical keys remain exactly
+the legacy `squidie:run:*`, `squidie:dispatch:*`, `squidie:run_index:*`, and
+`squidie:run_catalog:all` forms. With a partition, each is rooted under
+`squidie:partition:<partition>:` and checkpoints use the same scoped thread
+identity. Adapters need no schema change, but must treat the full supplied key
+as opaque. Squidie never falls back to an unpartitioned or different-partition
+key after a miss.
+
+Changing the configured partition is therefore a runtime routing cutover.
+Squidie does not copy or merge existing histories, catalogs, indexes, or
+checkpoints. Hosts must keep workers and control/read traffic on the same
+partition during rollout, drain prior namespaces deliberately, and avoid
+rolling back to a Squidie version that cannot address partitioned keys while
+partitioned runs are still active.
+
 Keep storage adapters separate from executor, queue, and lease adapters. A
 queue adapter can own delivery mechanics. A lease adapter can own worker
 fencing against a backend. A storage adapter owns journal entries and

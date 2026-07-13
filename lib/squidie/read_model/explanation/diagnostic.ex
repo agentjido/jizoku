@@ -23,6 +23,7 @@ defmodule Squidie.ReadModel.Explanation.Diagnostic do
 
   @type t :: %__MODULE__{
           run_id: String.t(),
+          partition: String.t() | nil,
           workflow: String.t() | nil,
           definition_version: String.t() | nil,
           queue: String.t(),
@@ -51,6 +52,7 @@ defmodule Squidie.ReadModel.Explanation.Diagnostic do
 
   defstruct [
     :run_id,
+    :partition,
     :workflow,
     :definition_version,
     :queue,

@@ -11,6 +11,7 @@ defmodule Squidie.Inspection.DynamicWorkPreview do
 
   @type t :: %__MODULE__{
           run_id: String.t(),
+          partition: String.t() | nil,
           duplicate?: boolean(),
           recordable?: boolean(),
           origin_node_id: String.t() | nil,
@@ -23,6 +24,7 @@ defmodule Squidie.Inspection.DynamicWorkPreview do
 
   defstruct [
     :run_id,
+    :partition,
     :dynamic_work,
     :graph,
     :origin_node_id,
@@ -43,6 +45,7 @@ defmodule Squidie.Inspection.DynamicWorkPreview do
 
     %__MODULE__{
       run_id: run_id,
+      partition: graph.partition,
       dynamic_work: dynamic_work,
       duplicate?: duplicate?,
       recordable?: overlay.recordable?,
@@ -61,6 +64,7 @@ defmodule Squidie.Inspection.DynamicWorkPreview do
   def to_map(%__MODULE__{} = preview) do
     %{
       run_id: preview.run_id,
+      partition: preview.partition,
       duplicate?: preview.duplicate?,
       recordable?: preview.recordable?,
       origin_node_id: preview.origin_node_id,
