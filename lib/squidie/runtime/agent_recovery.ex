@@ -11,6 +11,7 @@ defmodule Squidie.Runtime.AgentRecovery do
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.Journal
+  alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.WorkflowAgent
 
   @type queue :: DispatchAgent.queue() | atom()
@@ -35,7 +36,8 @@ defmodule Squidie.Runtime.AgentRecovery do
 
   def recover(storage, run_id, queue, opts)
       when is_binary(run_id) and is_list(opts) do
-    with {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
+    with {:ok, storage} <- recovery_storage(storage, opts),
+         {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
          {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
          {:ok, %{agent: dispatch_agent, runnables: scheduled_runnables}} <-
            WorkflowAgent.schedule_pending_dispatches(
@@ -59,5 +61,11 @@ defmodule Squidie.Runtime.AgentRecovery do
          applied_attempts: applied_attempts
        }}
     end
+  end
+
+  defp recovery_storage(storage, opts) do
+    opts
+    |> Keyword.put(:journal_storage, storage)
+    |> Options.storage_from_opts()
   end
 end

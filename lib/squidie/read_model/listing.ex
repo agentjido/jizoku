@@ -11,6 +11,7 @@ defmodule Squidie.ReadModel.Listing do
   alias Squidie.Runtime.Deadline
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Options
+  alias Squidie.Runtime.Journal.Storage
   alias Squidie.Runtime.RunCatalogProjection
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
@@ -193,6 +194,7 @@ defmodule Squidie.ReadModel.Listing do
       {:ok,
        %Summary{
          run_id: run_id,
+         partition: Storage.partition(storage),
          workflow: workflow,
          definition_version: projection.definition_version,
          queue: queue,

@@ -7,6 +7,7 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   apply runtime commands.
   """
 
+  alias Squidie.Runtime.Partition
   alias Squidie.Runtime.Signal
 
   @source "/squidie/runtime/commands"
@@ -41,13 +42,15 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   def to_jido(%Signal{
         type: type,
         payload: payload,
+        partition: partition,
         metadata: metadata,
         occurred_at: occurred_at,
         idempotency_key: idempotency_key
       }) do
     with {:ok, jido_type} <- jido_type(type),
          {:ok, subject} <- subject(payload),
-         {:ok, data} <- transport_data(type, payload, metadata, occurred_at, idempotency_key) do
+         {:ok, data} <-
+           transport_data(type, payload, metadata, occurred_at, idempotency_key, partition) do
       normalize_jido_result(
         Jido.Signal.new(
           jido_type,
@@ -75,11 +78,13 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
          :ok <- validate_subject(command_type, subject, payload),
          {:ok, metadata} <- fetch_map(signal_data, :metadata),
          {:ok, occurred_at} <- fetch_occurred_at(signal_data),
-         {:ok, idempotency_key} <- fetch_idempotency_key(signal_data) do
+         {:ok, idempotency_key} <- fetch_idempotency_key(signal_data),
+         {:ok, partition} <- fetch_partition(signal_data) do
       {:ok,
        %Signal{
          type: command_type,
          payload: payload,
+         partition: partition,
          metadata: metadata,
          occurred_at: occurred_at,
          idempotency_key: idempotency_key
@@ -108,18 +113,23 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   defp subject(%{workflow: workflow}) when is_binary(workflow), do: {:ok, workflow}
   defp subject(_payload), do: invalid(:payload, :missing_subject_identity)
 
-  defp transport_data(type, payload, metadata, occurred_at, idempotency_key) do
-    with {:ok, payload} <- transport_payload(type, payload) do
-      {:ok,
-       %{
-         "type" => Atom.to_string(type),
-         "payload" => payload,
-         "metadata" => metadata,
-         "occurred_at" => DateTime.to_iso8601(occurred_at),
-         "idempotency_key" => idempotency_key
-       }}
+  defp transport_data(type, payload, metadata, occurred_at, idempotency_key, partition) do
+    with {:ok, payload} <- transport_payload(type, payload),
+         {:ok, partition} <- adapter_partition(partition) do
+      data = %{
+        "type" => Atom.to_string(type),
+        "payload" => payload,
+        "metadata" => metadata,
+        "occurred_at" => DateTime.to_iso8601(occurred_at),
+        "idempotency_key" => idempotency_key
+      }
+
+      {:ok, put_transport_partition(data, partition)}
     end
   end
+
+  defp put_transport_partition(data, nil), do: data
+  defp put_transport_partition(data, partition), do: Map.put(data, "partition", partition)
 
   defp transport_payload(:start_run, payload) do
     with {:ok, workflow} <- fetch_string(payload, :workflow),
@@ -251,6 +261,20 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
         {:ok, uuid} -> {:ok, uuid}
         :error -> invalid(field, :invalid)
       end
+    end
+  end
+
+  defp fetch_partition(data) do
+    case fetch_value(data, :partition) do
+      {:ok, partition} -> adapter_partition(partition)
+      :error -> {:ok, nil}
+    end
+  end
+
+  defp adapter_partition(partition) do
+    case Partition.normalize(partition) do
+      {:ok, partition} -> {:ok, partition}
+      {:error, _reason} -> invalid(:partition, :invalid)
     end
   end
 

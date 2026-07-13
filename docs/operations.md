@@ -222,6 +222,8 @@ mix squidie.doctor
 `mix squidie.status` summarizes run counts by workflow, queue, and status, plus
 visible, scheduled, and claimed attempt depth; the next scheduled visibility
 time; pending dispatches and results; and manual-intervention counts.
+The report includes the configured partition, and every collected run and queue
+row is scoped to that partition.
 
 `mix squidie.doctor` checks configuration, expired claims, overdue attempts,
 terminal runs with pending facts, manual-action queues, projection anomalies,
@@ -238,7 +240,9 @@ mix squidie.doctor --json
 
 The JSON contract is versioned with `schema_version` and excludes workflow
 payloads, attempt inputs and results, claim tokens, owner metadata, and command
-history. Use an explicit schema gate in CI after host migrations:
+history. Both reports include the configured `partition` so operators can keep
+otherwise identical run and queue identities distinct. Use an explicit schema
+gate in CI after host migrations:
 
 ```sh
 mix squidie.doctor --json --fail-on-drift

@@ -62,6 +62,9 @@
   native steps that receive `Squidie.Step.Context`.
 - Provide a stable, storage-safe `:child_key` for every child run; treat it as
   the idempotency key for the parent run and parent step.
+- Read the active namespace from `context.partition` when a step needs to pass
+  partition identity to host-domain code. Child starts inherit it and reject a
+  conflicting explicit `:partition`.
 - Keep child workflow modules backend-neutral, the same as parent workflows.
 - Return `{:ok, output}` for success.
 - Return `{:defer, reason, schedule_in: seconds}` when a native step observes

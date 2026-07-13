@@ -71,6 +71,7 @@ The host application configures Squidie under the `:squidie` application:
 ```elixir
 config :squidie,
   repo: MyApp.Repo,
+  partition: "tenant_acme",
   queue: "default"
 ```
 
@@ -92,6 +93,21 @@ Optional keys:
   journal-backed runtime or read-model paths.
 - `:queue` - `"default"` by default; selects the journal dispatch queue used by
   the configured journal runtime and read model
+- `:partition` - omitted by default, preserving the exact legacy journal
+  namespace. A validated string scopes run, dispatch, workflow-index,
+  global-catalog, and checkpoint identities together.
+
+When a host uses partitions, it must route the same trusted `:partition`
+through start, worker, cron, signal, control, replay, and inspection calls.
+Run UUIDs and queue names may repeat across partitions. Squidie does not search
+another partition when a lookup misses, and a partition is not an authorization
+boundary; authorize tenant or domain access in the host before selecting it.
+
+Enabling a partition is a namespace cutover, not an in-place migration.
+Existing unpartitioned runs remain in the legacy namespace and do not appear in
+partitioned lists or recovery. Drain them there or perform an explicit,
+application-owned migration before changing worker routing. Rolling the config
+back selects the legacy namespace again; it does not merge partitioned history.
 
 Public `Squidie.start/2`, `start/3`, and `start/4` calls resolve those defaults
 through the application environment too. If a host app starts runs manually
@@ -119,9 +135,10 @@ manual resume/approval controls, and `Squidie.execute_next/1`. Journal listing
 is backed by a durable run catalog fact rather than a storage-adapter scan, and
 returns redacted summaries; use `inspect_run/2` for one run when a caller needs
 inputs, outputs, attempts, or claim metadata. Dashboards can call
-`list_runs([])` for the index view, then pass the selected summary's `run_id`
-and `queue` to `inspect_run(run_id, queue: queue, include_history: true)` or
-`inspect_run_graph(run_id, queue: queue)` for detail views.
+`list_runs([])` for the index view, then pass the selected summary's
+`partition`, `run_id`, and `queue` to
+`inspect_run(run_id, partition: partition, queue: queue, include_history: true)` or
+`inspect_run_graph(run_id, partition: partition, queue: queue)` for detail views.
 
 Do not serialize inspection or graph detail directly to untrusted clients.
 Host apps should authorize the caller, select only the fields the view needs,

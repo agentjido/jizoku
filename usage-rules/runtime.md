@@ -81,6 +81,15 @@
 
 - Keep `Squidie.Runtime.Journal.Storage` as the Squidie-owned storage
   boundary.
+- Treat `:partition` as part of every durable workflow identity. Scope run,
+  dispatch, workflow-index, global-catalog, and checkpoint keys together; never
+  search or fall back to another partition.
+- Preserve the exact legacy storage namespace when `:partition` is omitted.
+- Propagate the selected partition through signals, cron payloads, native step
+  contexts, child runs, recovery agents, and read models. Child runs inherit the
+  parent partition and reject an explicit mismatch.
+- Validate partitions at trusted host boundaries. A partition is a namespace,
+  not an authorization or row-level security policy.
 - Default to Ecto/Postgres-backed Jido storage for documented host setup.
 - Keep the boundary database-agnostic, but require production adapters to
   provide ordered appends, conflict detection, deterministic replay, durable

@@ -20,6 +20,7 @@ defmodule Squidie.ReadModel.Timeline do
 
   @type t :: %__MODULE__{
           run_id: String.t(),
+          partition: String.t() | nil,
           workflow: String.t() | nil,
           queue: String.t(),
           status: atom(),
@@ -29,7 +30,16 @@ defmodule Squidie.ReadModel.Timeline do
         }
 
   @enforce_keys [:run_id, :workflow, :queue, :status, :terminal?, :terminal_status]
-  defstruct [:run_id, :workflow, :queue, :status, :terminal?, :terminal_status, events: []]
+  defstruct [
+    :run_id,
+    :partition,
+    :workflow,
+    :queue,
+    :status,
+    :terminal?,
+    :terminal_status,
+    events: []
+  ]
 
   @doc """
   Projects a stable timeline from the public inspection snapshot.
@@ -38,6 +48,7 @@ defmodule Squidie.ReadModel.Timeline do
   def from_snapshot(%Snapshot{} = snapshot) do
     %__MODULE__{
       run_id: snapshot.run_id,
+      partition: snapshot.partition,
       workflow: snapshot.workflow,
       queue: snapshot.queue,
       status: snapshot.status,

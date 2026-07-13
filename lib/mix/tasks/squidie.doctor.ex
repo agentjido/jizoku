@@ -46,6 +46,7 @@ defmodule Mix.Tasks.Squidie.Doctor do
 
   defp render_report(report, false) do
     Mix.shell().info("Squidie doctor at #{report.generated_at}")
+    render_partition(report.partition)
 
     Mix.shell().info(
       "pass=#{report.summary.pass} warn=#{report.summary.warn} fail=#{report.summary.fail}"
@@ -53,6 +54,9 @@ defmodule Mix.Tasks.Squidie.Doctor do
 
     Enum.each(report.checks, &render_check/1)
   end
+
+  defp render_partition(nil), do: :ok
+  defp render_partition(partition), do: Mix.shell().info("Partition: #{partition}")
 
   defp render_check(check) do
     Mix.shell().info("[#{check.status}] #{check.id}: #{check.message}")

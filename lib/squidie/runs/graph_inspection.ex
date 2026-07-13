@@ -16,6 +16,7 @@ defmodule Squidie.Runs.GraphInspection do
 
   @type t :: %__MODULE__{
           run_id: String.t(),
+          partition: String.t() | nil,
           workflow: module() | String.t() | nil,
           definition_version: String.t() | nil,
           source: source(),
@@ -36,6 +37,7 @@ defmodule Squidie.Runs.GraphInspection do
 
   defstruct [
     :run_id,
+    :partition,
     :workflow,
     :definition_version,
     :source,

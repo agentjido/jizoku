@@ -13,6 +13,7 @@ defmodule Squidie.Operations.Collector do
   alias Squidie.Runtime.DispatchAgent.State
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.Journal
+  alias Squidie.Runtime.Journal.Storage
   alias Squidie.Runtime.RunCatalogProjection
   alias Squidie.Runtime.WorkflowAgent
 
@@ -21,6 +22,7 @@ defmodule Squidie.Operations.Collector do
 
   @type run :: %{
           required(:run_id) => String.t(),
+          required(:partition) => String.t() | nil,
           required(:workflow) => String.t(),
           required(:queue) => String.t(),
           required(:status) => atom(),
@@ -33,6 +35,7 @@ defmodule Squidie.Operations.Collector do
 
   @type queue :: %{
           required(:queue) => String.t(),
+          required(:partition) => String.t() | nil,
           required(:projection) => DispatchProtocol.Projection.t(),
           required(:attempts) => [Squidie.Runtime.DispatchProtocol.ActionAttempt.t()]
         }
@@ -90,6 +93,13 @@ defmodule Squidie.Operations.Collector do
   @spec pending_dispatches(run(), queue()) :: [map()]
   @doc "Returns planned runnables that are missing from the selected queue projection."
   def pending_dispatches(run, queue) do
+    case {Map.get(run, :partition), Map.get(queue, :partition)} do
+      {partition, partition} -> matching_partition_pending_dispatches(run, queue)
+      {_run_partition, _queue_partition} -> []
+    end
+  end
+
+  defp matching_partition_pending_dispatches(run, queue) do
     dispatched_keys = DispatchProtocol.Projection.attempt_runnable_keys(queue.projection)
 
     Enum.reject(run.planned_runnables, fn runnable ->
@@ -104,6 +114,13 @@ defmodule Squidie.Operations.Collector do
   @spec pending_results(run(), queue()) :: [Squidie.Runtime.DispatchProtocol.ActionAttempt.t()]
   @doc "Returns completed queue attempts that have not been applied to the run projection."
   def pending_results(run, queue) do
+    case {Map.get(run, :partition), Map.get(queue, :partition)} do
+      {partition, partition} -> matching_partition_pending_results(run, queue)
+      {_run_partition, _queue_partition} -> []
+    end
+  end
+
+  defp matching_partition_pending_results(run, queue) do
     queue.projection
     |> DispatchProtocol.Projection.completed_results()
     |> Enum.filter(fn attempt ->
@@ -130,6 +147,7 @@ defmodule Squidie.Operations.Collector do
       {:ok, %Agent{state: %{projection: %WorkflowAgent.Projection{} = projection}}} ->
         run = %{
           run_id: catalog_run.run_id,
+          partition: Storage.partition(storage),
           workflow: catalog_run.workflow,
           queue: catalog_run.queue,
           status: WorkflowAgent.Projection.status(projection),
@@ -160,6 +178,7 @@ defmodule Squidie.Operations.Collector do
         {:ok, %Agent{state: %State{projection: %DispatchProtocol.Projection{} = projection}}} ->
           queue = %{
             queue: queue_name,
+            partition: config.partition,
             projection: projection,
             attempts:
               projection.attempts

@@ -20,6 +20,8 @@ defmodule Squidie.Runtime.DispatchAgent do
   alias Squidie.Runtime.DispatchProtocol.Projection
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Checkpoint
+  alias Squidie.Runtime.Journal.Storage
+  alias Squidie.Runtime.Partition
 
   @default_lease_seconds 300
 
@@ -52,13 +54,14 @@ defmodule Squidie.Runtime.DispatchAgent do
   @spec rebuild(storage_config(), queue() | atom()) :: {:ok, Agent.t()} | {:error, term()}
   def rebuild(storage, queue) do
     queue = normalize_queue(queue)
+    partition = Storage.partition(storage)
 
     with {:ok, loaded_thread} <- load_dispatch_thread(storage, queue),
          {:ok, projection} <- current_projection(storage, loaded_thread) do
       {:ok,
        new(
-         id: agent_id(queue),
-         state: dispatch_state(queue, projection, loaded_thread.rev)
+         id: agent_id(queue, partition),
+         state: dispatch_state(partition, queue, projection, loaded_thread.rev)
        )}
     end
   end
@@ -69,6 +72,15 @@ defmodule Squidie.Runtime.DispatchAgent do
   @spec agent_id(queue() | atom()) :: String.t()
   def agent_id(queue), do: "squidie.dispatch.#{normalize_queue(queue)}"
 
+  @doc false
+  @spec agent_id(queue() | atom(), String.t() | nil) :: String.t()
+  def agent_id(queue, nil), do: agent_id(queue)
+
+  def agent_id(queue, partition) when is_binary(partition) do
+    queue = normalize_queue(queue)
+    "squidie.dispatch.partition.#{Partition.identity([partition, queue])}"
+  end
+
   @doc """
   Stores the current dispatch projection as a checkpoint for faster rebuilds.
   """
@@ -78,11 +90,13 @@ defmodule Squidie.Runtime.DispatchAgent do
         %Agent{
           agent_module: __MODULE__,
           state: %State{queue: queue, projection: projection, thread_rev: thread_rev}
-        },
+        } = agent,
         opts \\ []
       )
       when is_binary(queue) and is_integer(thread_rev) and thread_rev >= 0 and is_list(opts) do
-    Journal.put_checkpoint(storage, {:dispatch, queue}, projection, thread_rev, opts)
+    with :ok <- validate_agent_partition(storage, agent) do
+      Journal.put_checkpoint(storage, {:dispatch, queue}, projection, thread_rev, opts)
+    end
   end
 
   @doc """
@@ -527,7 +541,7 @@ defmodule Squidie.Runtime.DispatchAgent do
         {:ok,
          %{
            thread: {:dispatch, queue},
-           thread_id: Journal.thread_id({:dispatch, queue}),
+           thread_id: Journal.thread_id({:dispatch, queue}, Storage.partition(storage)),
            rev: 0,
            entries: []
          }}
@@ -678,7 +692,8 @@ defmodule Squidie.Runtime.DispatchAgent do
            now: %DateTime{} = now
          }
        ) do
-    with {:ok, thread} <- Journal.append_entries(storage, entries, expected_rev: thread_rev) do
+    with :ok <- validate_agent_partition(storage, agent),
+         {:ok, thread} <- Journal.append_entries(storage, entries, expected_rev: thread_rev) do
       scheduled_agent = apply_dispatch_entries(agent, projection, entries, thread.rev)
 
       emit_live_wakeups(
@@ -752,7 +767,7 @@ defmodule Squidie.Runtime.DispatchAgent do
          %DateTime{} = now
        )
        when is_binary(run_id) do
-    attempt = wakeup_attempt(agent.state.queue, run_id, runnable)
+    attempt = wakeup_attempt(agent.state.partition, agent.state.queue, run_id, runnable)
 
     case DispatchNotifier.notify_attempt_scheduled(notifier, attempt, notifier_opts) do
       :ok ->
@@ -785,14 +800,20 @@ defmodule Squidie.Runtime.DispatchAgent do
     end
   end
 
-  defp wakeup_attempt(queue, run_id, runnable) do
-    %{
-      run_id: runnable_value(runnable, :run_id) || run_id,
-      runnable_key: runnable_key(runnable),
-      queue: runnable_value(runnable, :queue) || queue,
-      visible_at: runnable_value(runnable, :visible_at)
-    }
+  defp wakeup_attempt(partition, queue, run_id, runnable) do
+    maybe_put_partition(
+      %{
+        run_id: runnable_value(runnable, :run_id) || run_id,
+        runnable_key: runnable_key(runnable),
+        queue: runnable_value(runnable, :queue) || queue,
+        visible_at: runnable_value(runnable, :visible_at)
+      },
+      partition
+    )
   end
+
+  defp maybe_put_partition(attempt, nil), do: attempt
+  defp maybe_put_partition(attempt, partition), do: Map.put(attempt, :partition, partition)
 
   defp persist_claim(
          storage,
@@ -836,8 +857,16 @@ defmodule Squidie.Runtime.DispatchAgent do
          thread_rev,
          entry
        ) do
-    with {:ok, thread} <- Journal.append_entries(storage, [entry], expected_rev: thread_rev) do
+    with :ok <- validate_agent_partition(storage, agent),
+         {:ok, thread} <- Journal.append_entries(storage, [entry], expected_rev: thread_rev) do
       {:ok, apply_dispatch_entry(agent, projection, entry, thread.rev)}
+    end
+  end
+
+  defp validate_agent_partition(storage, %Agent{state: state}) do
+    case {Storage.partition(storage), Map.get(state, :partition)} do
+      {partition, partition} -> :ok
+      {_storage_partition, _agent_partition} -> {:error, {:partition_mismatch, :dispatch_agent}}
     end
   end
 
@@ -849,12 +878,17 @@ defmodule Squidie.Runtime.DispatchAgent do
     %Agent{
       agent
       | state:
-          dispatch_state(agent.state.queue, Projection.replay(projection, entries), thread_rev)
+          dispatch_state(
+            agent.state.partition,
+            agent.state.queue,
+            Projection.replay(projection, entries),
+            thread_rev
+          )
     }
   end
 
-  defp dispatch_state(queue, %Projection{} = projection, thread_rev) do
-    State.new(queue, projection, thread_rev)
+  defp dispatch_state(partition, queue, %Projection{} = projection, thread_rev) do
+    State.new(partition, queue, projection, thread_rev)
   end
 
   defp lifecycle_update(%Agent{} = agent, %ActionAttempt{} = attempt) do

@@ -63,6 +63,65 @@ defmodule Squidie.Runtime.JournalTest do
     assert {:ok, [^scheduled_entry]} = Journal.load_entries(storage, {:dispatch, "default"})
   end
 
+  test "scopes durable thread and checkpoint identities by partition while preserving legacy ids" do
+    assert Journal.thread_id({:run, @run_id}) == "squidie:run:run_123"
+    assert Journal.thread_id({:dispatch, "default"}) == "squidie:dispatch:default"
+
+    assert Journal.thread_id({:run_index, @workflow}) ==
+             "squidie:run_index:BillingWorkflow"
+
+    assert Journal.thread_id({:run_catalog, "all"}) == "squidie:run_catalog:all"
+
+    assert Journal.thread_id({:run, @run_id}, "tenant_acme") ==
+             "squidie:partition:tenant_acme:run:run_123"
+
+    assert Journal.thread_id({:dispatch, "default"}, "tenant_acme") ==
+             "squidie:partition:tenant_acme:dispatch:default"
+
+    assert Journal.thread_id({:run_index, @workflow}, "tenant_acme") ==
+             "squidie:partition:tenant_acme:run_index:BillingWorkflow"
+
+    assert Journal.thread_id({:run_catalog, "all"}, "tenant_acme") ==
+             "squidie:partition:tenant_acme:run_catalog:all"
+
+    refute Journal.thread_id({:run, @run_id}, "default") ==
+             Journal.thread_id({:run, @run_id})
+
+    assert {:ok, acme_storage} = Storage.scope(@storage, "tenant_acme")
+    assert {:ok, globex_storage} = Storage.scope(@storage, "tenant_globex")
+    assert {:ok, legacy_storage} = Storage.scope(@storage, nil)
+
+    assert {:ok, scheduled_entry} =
+             DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs())
+
+    assert {:ok, %{id: "squidie:partition:tenant_acme:dispatch:default"}} =
+             Journal.append_entries(acme_storage, [scheduled_entry])
+
+    assert {:ok, [^scheduled_entry]} =
+             Journal.load_entries(acme_storage, {:dispatch, "default"})
+
+    assert {:error, :not_found} =
+             Journal.load_entries(globex_storage, {:dispatch, "default"})
+
+    assert {:error, :not_found} =
+             Journal.load_entries(legacy_storage, {:dispatch, "default"})
+
+    assert :ok =
+             Journal.put_checkpoint(
+               acme_storage,
+               {:dispatch, "default"},
+               %Projection{},
+               1,
+               updated_at: @visible_at
+             )
+
+    assert {:ok, %Checkpoint{thread_id: "squidie:partition:tenant_acme:dispatch:default"}} =
+             Journal.fetch_checkpoint(acme_storage, {:dispatch, "default"})
+
+    assert {:error, :not_found} =
+             Journal.fetch_checkpoint(globex_storage, {:dispatch, "default"})
+  end
+
   test "revalidates normalized journal storage structs" do
     malformed_storage = %Storage{adapter: String, opts: [], config: String}
 

@@ -105,6 +105,21 @@ config :squidie,
   queue: "default"
 ```
 
+Hosts that need tenant or domain isolation can configure an optional durable
+partition, or pass it from a trusted host boundary:
+
+```elixir
+runtime_opts = [partition: "tenant_acme"]
+
+{:ok, run} = Squidie.start(MyWorkflow, %{order_id: "order_123"}, runtime_opts)
+{:ok, _} = Squidie.execute_next(Keyword.put(runtime_opts, :owner_id, "worker-1"))
+{:ok, _} = Squidie.inspect_run(run.run_id, runtime_opts)
+```
+
+The same run UUID and queue may exist independently in different partitions.
+Omitting `:partition` preserves the legacy namespace exactly. Partition routing
+does not replace host authorization.
+
 Install and run the migration:
 
 ```sh

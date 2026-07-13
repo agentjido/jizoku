@@ -83,6 +83,14 @@ defmodule Squidie.Runtime.Journal.SignalInterpreterTest do
     assert {:error, :invalid_signal} = SignalInterpreter.apply(%{}, [])
   end
 
+  test "rejects a signal and runtime partition mismatch before storage access" do
+    assert {:ok, %Signal{} = signal} =
+             Signal.cancel_run(@run_id, partition: "tenant_acme")
+
+    assert {:error, {:partition_mismatch, :signal}} =
+             SignalInterpreter.apply(signal, partition: "tenant_globex")
+  end
+
   test "journal control modules reject unsupported or malformed direct signals" do
     assert {:ok, %Signal{} = replay_signal} = Signal.replay_run(@run_id)
     assert {:ok, %Signal{} = cancel_signal} = Signal.cancel_run(@run_id)

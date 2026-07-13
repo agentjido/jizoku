@@ -23,6 +23,7 @@ defmodule Squidie.ReadModel.Inspection do
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Options
+  alias Squidie.Runtime.Journal.Storage
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Workflow.Definition
 
@@ -63,7 +64,14 @@ defmodule Squidie.ReadModel.Inspection do
          {:ok, now} <- snapshot_time(opts),
          {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
          {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue) do
-      {:ok, build_snapshot(workflow_agent, dispatch_agent, queue, now)}
+      {:ok,
+       build_snapshot(
+         workflow_agent,
+         dispatch_agent,
+         Storage.partition(storage),
+         queue,
+         now
+       )}
     end
   end
 
@@ -88,6 +96,7 @@ defmodule Squidie.ReadModel.Inspection do
              thread_rev: dispatch_thread_rev
            }
          } = dispatch_agent,
+         partition,
          queue,
          %DateTime{} = now
        ) do
@@ -146,6 +155,7 @@ defmodule Squidie.ReadModel.Inspection do
 
     %Snapshot{
       run_id: run_id,
+      partition: partition,
       workflow: workflow,
       trigger: workflow_projection.trigger,
       input: workflow_projection.input,

@@ -28,6 +28,23 @@ defmodule Squidie.Runtime.SignalTest do
              )
   end
 
+  test "validates and preserves an explicit partition" do
+    assert {:ok, %Signal{partition: "tenant_acme"}} =
+             Signal.cancel_run(@run_id,
+               partition: "tenant_acme",
+               occurred_at: @occurred_at
+             )
+
+    assert {:ok, %Signal{partition: nil}} =
+             Signal.cancel_run(@run_id, occurred_at: @occurred_at)
+
+    assert {:error, {:invalid_signal, {:partition, :invalid}}} =
+             Signal.cancel_run(@run_id,
+               partition: "contains secret/value",
+               occurred_at: @occurred_at
+             )
+  end
+
   test "builds a start run command signal from serialized names" do
     assert {:ok,
             %Signal{

@@ -35,10 +35,13 @@ defmodule Squidie.Operations.Doctor do
   end
 
   defp build_report(now, config_overrides) do
-    checks =
+    {partition, checks} =
       case Config.load(config_overrides) do
-        {:ok, %Config{} = config} -> configured_checks(config, now, config_overrides)
-        {:error, reason} -> [configuration_failure(reason)]
+        {:ok, %Config{} = config} ->
+          {config.partition, configured_checks(config, now, config_overrides)}
+
+        {:error, reason} ->
+          {nil, [configuration_failure(reason)]}
       end
 
     summary = Enum.frequencies_by(checks, & &1.status)
@@ -46,6 +49,7 @@ defmodule Squidie.Operations.Doctor do
     %{
       schema_version: @schema_version,
       generated_at: DateTime.to_iso8601(now),
+      partition: partition,
       healthy: not Enum.any?(checks, &(&1.status == :fail)),
       summary: %{
         pass: Map.get(summary, :pass, 0),

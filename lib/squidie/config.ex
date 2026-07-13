@@ -8,6 +8,7 @@ defmodule Squidie.Config do
   """
 
   alias Squidie.Runtime.Journal.Options
+  alias Squidie.Runtime.Journal.Storage
 
   @type runtime :: :journal
   @type read_model :: :read_model
@@ -16,14 +17,16 @@ defmodule Squidie.Config do
           runtime: runtime(),
           read_model: read_model(),
           journal_storage: term(),
-          queue: atom() | String.t()
+          queue: atom() | String.t(),
+          partition: String.t() | nil
         ]
   @type t :: %__MODULE__{
           repo: module() | nil,
           runtime: runtime(),
           read_model: read_model(),
           journal_storage: Squidie.Runtime.Journal.Storage.t() | nil,
-          queue: String.t()
+          queue: String.t(),
+          partition: String.t() | nil
         }
 
   defstruct [
@@ -31,7 +34,8 @@ defmodule Squidie.Config do
     :journal_storage,
     runtime: :journal,
     read_model: :read_model,
-    queue: "default"
+    queue: "default",
+    partition: nil
   ]
 
   @default_runtime :journal
@@ -60,14 +64,19 @@ defmodule Squidie.Config do
          {:ok, read_model} <-
            validate_read_model(Keyword.get(config, :read_model, @default_read_model)),
          {:ok, queue} <- validate_queue(Keyword.get(config, :queue, @default_queue)),
-         {:ok, journal_storage} <- validate_journal_storage(config, runtime, read_model) do
+         {:ok, journal_storage} <- validate_journal_storage(config, runtime, read_model),
+         {:ok, partition} <-
+           validate_partition(configured_partition(config, overrides, journal_storage)),
+         {:ok, journal_storage} <-
+           Storage.scope(journal_storage, partition) do
       {:ok,
        %__MODULE__{
          repo: Keyword.get(config, :repo),
          runtime: runtime,
          read_model: read_model,
          journal_storage: journal_storage,
-         queue: queue
+         queue: queue,
+         partition: partition
        }}
     end
   end
@@ -125,6 +134,39 @@ defmodule Squidie.Config do
         {:error, {:invalid_config, [queue: :invalid]}}
     end
   end
+
+  defp validate_partition(partition) do
+    case Options.partition(partition) do
+      {:ok, partition} ->
+        {:ok, partition}
+
+      {:error, {:invalid_option, {:partition, :invalid}}} ->
+        {:error, {:invalid_config, [partition: :invalid]}}
+    end
+  end
+
+  defp configured_partition(config, overrides, journal_storage) do
+    case Keyword.fetch(overrides, :partition) do
+      {:ok, partition} -> partition
+      :error -> explicit_storage_partition(overrides, journal_storage, config)
+    end
+  end
+
+  defp explicit_storage_partition(overrides, journal_storage, config) do
+    case Keyword.fetch(overrides, :journal_storage) do
+      {:ok, %Storage{partition: partition}} ->
+        partition
+
+      {:ok, _storage} ->
+        storage_or_config_partition(Storage.partition(journal_storage), config)
+
+      :error ->
+        Keyword.get(config, :partition)
+    end
+  end
+
+  defp storage_or_config_partition(nil, config), do: Keyword.get(config, :partition)
+  defp storage_or_config_partition(partition, _config), do: partition
 
   defp validate_journal_storage(config, :journal, :read_model) do
     validate_required_journal_storage(config)

@@ -18,6 +18,8 @@ defmodule Squidie.Runtime.WorkflowAgent do
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Checkpoint
+  alias Squidie.Runtime.Journal.Storage
+  alias Squidie.Runtime.Partition
   alias Squidie.Runtime.WorkflowAgent.Projection
 
   @type run_id :: String.t()
@@ -40,13 +42,16 @@ defmodule Squidie.Runtime.WorkflowAgent do
   """
   @spec rebuild(storage_config(), run_id()) :: {:ok, Agent.t()} | {:error, term()}
   def rebuild(storage, run_id) when is_binary(run_id) do
+    partition = Storage.partition(storage)
+
     with {:ok, loaded_thread} <- Journal.load_thread(storage, {:run, run_id}),
          {:ok, projection} <- current_projection(storage, loaded_thread) do
       {:ok,
        new(
-         id: agent_id(run_id),
+         id: agent_id(run_id, partition),
          state: %{
            run_id: run_id,
+           partition: partition,
            workflow: projection.workflow,
            projection: projection,
            thread_rev: loaded_thread.rev
@@ -61,6 +66,14 @@ defmodule Squidie.Runtime.WorkflowAgent do
   @spec agent_id(run_id()) :: String.t()
   def agent_id(run_id), do: "squidie.workflow.#{run_id}"
 
+  @doc false
+  @spec agent_id(run_id(), String.t() | nil) :: String.t()
+  def agent_id(run_id, nil), do: agent_id(run_id)
+
+  def agent_id(run_id, partition) when is_binary(run_id) and is_binary(partition) do
+    "squidie.workflow.partition.#{Partition.identity([partition, run_id])}"
+  end
+
   @doc """
   Stores the current workflow projection as a checkpoint for faster rebuilds.
   """
@@ -70,11 +83,13 @@ defmodule Squidie.Runtime.WorkflowAgent do
         %Agent{
           agent_module: __MODULE__,
           state: %{run_id: run_id, projection: projection, thread_rev: thread_rev}
-        },
+        } = agent,
         opts \\ []
       )
       when is_binary(run_id) and is_integer(thread_rev) and thread_rev >= 0 and is_list(opts) do
-    Journal.put_checkpoint(storage, {:run, run_id}, projection, thread_rev, opts)
+    with :ok <- validate_agent_partition(storage, agent) do
+      Journal.put_checkpoint(storage, {:run, run_id}, projection, thread_rev, opts)
+    end
   end
 
   @doc """
@@ -116,8 +131,11 @@ defmodule Squidie.Runtime.WorkflowAgent do
           Squidie.Runtime.DispatchProtocol.ActionAttempt.t()
         ]
   def pending_results(
-        %Agent{agent_module: __MODULE__, state: %{run_id: run_id, projection: projection}},
-        %Agent{agent_module: DispatchAgent} = dispatch_agent
+        %Agent{
+          agent_module: __MODULE__,
+          state: %{run_id: run_id, partition: partition, projection: projection}
+        },
+        %Agent{agent_module: DispatchAgent, state: %{partition: partition}} = dispatch_agent
       ) do
     applied_keys = Projection.applied_runnable_keys(projection)
 
@@ -131,13 +149,25 @@ defmodule Squidie.Runtime.WorkflowAgent do
     |> reject_when_terminal(projection)
   end
 
+  def pending_results(
+        %Agent{agent_module: __MODULE__},
+        %Agent{agent_module: DispatchAgent}
+      ),
+      do: []
+
   @doc """
   Lists planned runnables that still need dispatch scheduling.
   """
   @spec pending_dispatches(Agent.t(), Agent.t()) :: [map()]
   def pending_dispatches(
-        %Agent{agent_module: __MODULE__, state: %{projection: projection}},
-        %Agent{agent_module: DispatchAgent, state: %{queue: queue}} = dispatch_agent
+        %Agent{
+          agent_module: __MODULE__,
+          state: %{partition: partition, projection: projection}
+        },
+        %Agent{
+          agent_module: DispatchAgent,
+          state: %{partition: partition, queue: queue}
+        } = dispatch_agent
       ) do
     dispatched_keys = DispatchAgent.runnable_keys(dispatch_agent)
     applied_keys = Projection.applied_runnable_keys(projection)
@@ -153,6 +183,12 @@ defmodule Squidie.Runtime.WorkflowAgent do
     end)
     |> reject_when_terminal(projection)
   end
+
+  def pending_dispatches(
+        %Agent{agent_module: __MODULE__},
+        %Agent{agent_module: DispatchAgent}
+      ),
+      do: []
 
   @doc """
   Schedules every planned runnable that is missing from the dispatch journal.
@@ -330,8 +366,16 @@ defmodule Squidie.Runtime.WorkflowAgent do
          thread_rev,
          entry
        ) do
-    with {:ok, thread} <- Journal.append_entries(storage, [entry], expected_rev: thread_rev) do
+    with :ok <- validate_agent_partition(storage, agent),
+         {:ok, thread} <- Journal.append_entries(storage, [entry], expected_rev: thread_rev) do
       {:ok, apply_workflow_entry(agent, projection, entry, thread.rev)}
+    end
+  end
+
+  defp validate_agent_partition(storage, %Agent{state: state}) do
+    case {Storage.partition(storage), Map.get(state, :partition)} do
+      {partition, partition} -> :ok
+      {_storage_partition, _agent_partition} -> {:error, {:partition_mismatch, :workflow_agent}}
     end
   end
 

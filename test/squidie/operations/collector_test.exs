@@ -60,6 +60,27 @@ defmodule Squidie.Operations.CollectorTest do
              Collector.pending_dispatches(run, queue)
   end
 
+  test "fails closed when operational run and queue partitions differ" do
+    attempt = attempt("ready", "run-1")
+
+    queue = %{
+      partition: "tenant_globex",
+      queue: "default",
+      projection: %Projection{attempts: %{attempt.runnable_key => attempt}},
+      attempts: [attempt]
+    }
+
+    run = %{
+      partition: "tenant_acme",
+      queue: "default",
+      planned_runnables: [%{runnable_key: "ready"}],
+      applied_runnable_keys: MapSet.new()
+    }
+
+    assert Collector.pending_dispatches(run, queue) == []
+    assert Collector.pending_results(run, queue) == []
+  end
+
   defp attempt(key, run_id) do
     %ActionAttempt{
       run_id: run_id,

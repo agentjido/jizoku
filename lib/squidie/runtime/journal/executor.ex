@@ -2008,6 +2008,13 @@ defmodule Squidie.Runtime.Journal.Executor do
     }
   end
 
+  defp execution_partition(opts) do
+    case Options.storage_from_opts(opts) do
+      {:ok, storage} -> Squidie.Runtime.Journal.Storage.partition(storage)
+      {:error, _reason} -> nil
+    end
+  end
+
   defp retry_delay_ms(%{retry_after: retry_after}, _policy_delay_ms)
        when is_integer(retry_after) and retry_after >= 0 do
     retry_after
@@ -2557,6 +2564,7 @@ defmodule Squidie.Runtime.Journal.Executor do
        ) do
     %{
       run_id: attempt.run_id,
+      partition: execution_partition(opts),
       workflow: workflow,
       step: step_name,
       step_opts: execution_step_opts(step, opts),
@@ -3167,6 +3175,7 @@ defmodule Squidie.Runtime.Journal.Executor do
       :runtime,
       :journal_storage,
       :queue,
+      :partition,
       :owner_id,
       :claim_id,
       :claim_token,
@@ -3218,9 +3227,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp journal_storage(opts) do
-    opts
-    |> Keyword.get(:journal_storage)
-    |> Options.storage()
+    Options.storage_from_opts(opts)
   end
 
   defp queue(opts) do

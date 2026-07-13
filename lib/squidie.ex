@@ -862,8 +862,20 @@ defmodule Squidie do
 
   defp control_signal_options(overrides) do
     with {:ok, opts} <- control_signal_occurred_at(overrides),
-         {:ok, opts} <- control_signal_metadata(overrides, opts) do
+         {:ok, opts} <- control_signal_metadata(overrides, opts),
+         {:ok, opts} <- control_signal_partition(overrides, opts) do
       control_signal_idempotency_key(overrides, opts)
+    end
+  end
+
+  defp control_signal_partition(overrides, opts) do
+    overrides
+    |> Routing.journal_control_options()
+    |> Keyword.get(:partition)
+    |> Options.partition()
+    |> case do
+      {:ok, partition} -> {:ok, Keyword.put(opts, :partition, partition)}
+      {:error, _reason} = error -> error
     end
   end
 

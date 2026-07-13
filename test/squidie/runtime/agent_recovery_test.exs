@@ -171,7 +171,29 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
     assert Enum.count(dispatch_entries, &(&1.type == :attempt_scheduled)) == 2
   end
 
-  defp seed_recoverable_journal do
+  test "scopes direct restart recovery to the requested partition" do
+    assert {:ok, partitioned_storage} =
+             Squidie.Runtime.Journal.Storage.scope(@storage, "tenant_acme")
+
+    seed_recoverable_journal(partitioned_storage)
+
+    assert {:ok,
+            %{
+              workflow_agent: %{state: %{partition: "tenant_acme"}},
+              dispatch_agent: %{state: %{partition: "tenant_acme"}},
+              scheduled_runnables: [%{runnable_key: @refund_key}],
+              applied_attempts: [%{runnable_key: @charge_key}]
+            }} =
+             AgentRecovery.recover(@storage, @run_id, "default",
+               partition: "tenant_acme",
+               now: @completed_at
+             )
+
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @run_id})
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:dispatch, "default"})
+  end
+
+  defp seed_recoverable_journal(storage \\ @storage) do
     assert {:ok, run_started} =
              DispatchProtocol.new_entry(:run_started, %{
                run_id: @run_id,
@@ -195,10 +217,10 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
     assert {:ok, charge_completed} =
              DispatchProtocol.new_entry(:attempt_completed, completed_attrs())
 
-    assert {:ok, _run_thread} = Journal.append_entries(@storage, [run_started, runnables_planned])
+    assert {:ok, _run_thread} = Journal.append_entries(storage, [run_started, runnables_planned])
 
     assert {:ok, _dispatch_thread} =
-             Journal.append_entries(@storage, [
+             Journal.append_entries(storage, [
                charge_scheduled,
                charge_claimed,
                charge_completed

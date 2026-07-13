@@ -17,6 +17,7 @@ defmodule Squidie.Runtime.Journal.Options do
   """
 
   @thread_part_pattern ~r/^[A-Za-z0-9][A-Za-z0-9_.-]*$/
+  @max_partition_bytes 128
   @doc """
   Validates a journal storage config before a public API calls the adapter.
 
@@ -34,9 +35,17 @@ defmodule Squidie.Runtime.Journal.Options do
   @spec storage_from_opts(keyword()) ::
           {:ok, Squidie.Runtime.Journal.Storage.t()} | {:error, {:invalid_option, term()}}
   def storage_from_opts(opts) when is_list(opts) do
-    opts
-    |> Keyword.get(:journal_storage)
-    |> storage()
+    with {:ok, storage} <- storage(Keyword.get(opts, :journal_storage)),
+         {:ok, partition} <- storage_partition(opts, storage) do
+      Squidie.Runtime.Journal.Storage.scope(storage, partition)
+    end
+  end
+
+  defp storage_partition(opts, storage) do
+    case Keyword.fetch(opts, :partition) do
+      {:ok, partition} -> partition(partition)
+      :error -> {:ok, Squidie.Runtime.Journal.Storage.partition(storage)}
+    end
   end
 
   @doc """
@@ -63,6 +72,33 @@ defmodule Squidie.Runtime.Journal.Options do
     opts
     |> Keyword.get(:queue, "default")
     |> queue()
+  end
+
+  @doc """
+  Normalizes an optional logical runtime partition.
+
+  `nil` selects the legacy namespace. Explicit partitions must be non-empty
+  strings using the same portable character set as journal thread components.
+  """
+  @spec partition(term()) ::
+          {:ok, String.t() | nil} | {:error, {:invalid_option, {:partition, :invalid}}}
+  def partition(nil), do: {:ok, nil}
+
+  def partition(partition)
+      when is_binary(partition) and byte_size(partition) <= @max_partition_bytes,
+      do: validate_thread_part(partition, :partition)
+
+  def partition(_partition), do: invalid_option(:partition)
+
+  @doc """
+  Fetches and validates `:partition` from a runtime option list.
+  """
+  @spec partition_from_opts(keyword()) ::
+          {:ok, String.t() | nil} | {:error, {:invalid_option, {:partition, :invalid}}}
+  def partition_from_opts(opts) when is_list(opts) do
+    opts
+    |> Keyword.get(:partition)
+    |> partition()
   end
 
   @doc """

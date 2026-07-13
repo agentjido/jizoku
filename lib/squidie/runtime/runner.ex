@@ -7,6 +7,7 @@ defmodule Squidie.Runtime.Runner do
   """
 
   alias Squidie.ReadModel.Inspection.Snapshot
+  alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.ScheduleMetadata
   alias Squidie.Workflow.Definition
@@ -73,12 +74,48 @@ defmodule Squidie.Runtime.Runner do
   def start_cron_trigger(workflow_name, trigger_name, signal_payload, overrides)
       when is_binary(workflow_name) and is_binary(trigger_name) and is_map(signal_payload) and
              is_list(overrides) do
-    case existing_journal_schedule_start(workflow_name, trigger_name, signal_payload, overrides) do
-      {:ok, result} ->
-        result
+    with {:ok, overrides} <- cron_partition_options(signal_payload, overrides) do
+      case existing_journal_schedule_start(workflow_name, trigger_name, signal_payload, overrides) do
+        {:ok, result} -> result
+        :miss -> start_new_cron_trigger(workflow_name, trigger_name, signal_payload, overrides)
+        {:error, _reason} = error -> error
+      end
+    end
+  end
 
-      :miss ->
-        start_new_cron_trigger(workflow_name, trigger_name, signal_payload, overrides)
+  defp cron_partition_options(signal_payload, overrides) do
+    reconcile_cron_partition(
+      Map.fetch(signal_payload, "partition"),
+      Keyword.fetch(overrides, :partition),
+      overrides
+    )
+  end
+
+  defp reconcile_cron_partition(:error, :error, overrides),
+    do: {:ok, Keyword.put(overrides, :partition, nil)}
+
+  defp reconcile_cron_partition(:error, {:ok, partition}, overrides) do
+    with {:ok, partition} <- Options.partition(partition) do
+      {:ok, Keyword.put(overrides, :partition, partition)}
+    end
+  end
+
+  defp reconcile_cron_partition({:ok, partition}, :error, overrides) do
+    with {:ok, partition} <- Options.partition(partition) do
+      {:ok, Keyword.put(overrides, :partition, partition)}
+    end
+  end
+
+  defp reconcile_cron_partition({:ok, partition}, {:ok, partition}, overrides) do
+    with {:ok, partition} <- Options.partition(partition) do
+      {:ok, Keyword.put(overrides, :partition, partition)}
+    end
+  end
+
+  defp reconcile_cron_partition({:ok, payload_partition}, {:ok, override_partition}, _overrides) do
+    with {:ok, _payload_partition} <- Options.partition(payload_partition),
+         {:ok, _override_partition} <- Options.partition(override_partition) do
+      {:error, {:partition_mismatch, :cron_payload}}
     end
   end
 
@@ -109,8 +146,7 @@ defmodule Squidie.Runtime.Runner do
     else
       {:error, :not_found} -> :miss
       {:error, {:invalid_schedule_identity, _reason}} -> :miss
-      {:error, {:invalid_option, _reason}} -> :miss
-      {:error, _reason} -> :miss
+      {:error, _reason} = error -> error
     end
   end
 

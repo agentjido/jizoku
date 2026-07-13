@@ -21,10 +21,11 @@ defmodule Squidie.Runtime.Signal do
   caller does not provide one.
   """
 
+  alias Squidie.Runtime.Partition
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Workflow.Definition
 
-  @common_options [:metadata, :occurred_at, :idempotency_key]
+  @common_options [:metadata, :occurred_at, :idempotency_key, :partition]
   @replay_options [:allow_irreversible | @common_options]
 
   @type command_type ::
@@ -48,6 +49,7 @@ defmodule Squidie.Runtime.Signal do
   @type t :: %__MODULE__{
           type: command_type(),
           payload: payload(),
+          partition: String.t() | nil,
           metadata: map(),
           occurred_at: DateTime.t(),
           idempotency_key: String.t() | nil
@@ -56,7 +58,7 @@ defmodule Squidie.Runtime.Signal do
   @type error :: {:invalid_signal, term()}
 
   @enforce_keys [:type, :payload, :metadata, :occurred_at]
-  defstruct [:type, :payload, :occurred_at, metadata: %{}, idempotency_key: nil]
+  defstruct [:type, :payload, :occurred_at, :partition, metadata: %{}, idempotency_key: nil]
 
   @doc """
   Builds a command signal for starting a workflow run.
@@ -157,6 +159,7 @@ defmodule Squidie.Runtime.Signal do
      struct!(__MODULE__,
        type: type,
        payload: payload,
+       partition: envelope.partition,
        metadata: envelope.metadata,
        occurred_at: envelope.occurred_at,
        idempotency_key: envelope.idempotency_key
@@ -209,8 +212,15 @@ defmodule Squidie.Runtime.Signal do
          :ok <- supported_options(opts, allowed_options),
          {:ok, metadata} <- metadata(Keyword.get(opts, :metadata, %{})),
          {:ok, occurred_at} <- occurred_at(Keyword.get(opts, :occurred_at)),
-         {:ok, idempotency_key} <- idempotency_key(Keyword.get(opts, :idempotency_key)) do
-      {:ok, %{metadata: metadata, occurred_at: occurred_at, idempotency_key: idempotency_key}}
+         {:ok, idempotency_key} <- idempotency_key(Keyword.get(opts, :idempotency_key)),
+         {:ok, partition} <- signal_partition(Keyword.get(opts, :partition)) do
+      {:ok,
+       %{
+         metadata: metadata,
+         occurred_at: occurred_at,
+         idempotency_key: idempotency_key,
+         partition: partition
+       }}
     end
   end
 
@@ -243,6 +253,13 @@ defmodule Squidie.Runtime.Signal do
   defp idempotency_key(value) when is_binary(value) and value != "", do: {:ok, value}
 
   defp idempotency_key(_value), do: invalid(:idempotency_key, :expected_non_empty_string)
+
+  defp signal_partition(partition) do
+    case Partition.normalize(partition) do
+      {:ok, partition} -> {:ok, partition}
+      {:error, _reason} -> invalid(:partition, :invalid)
+    end
+  end
 
   defp cron_idempotency_key(key, _workflow, _trigger, _input) when is_binary(key), do: {:ok, key}
 

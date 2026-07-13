@@ -56,6 +56,19 @@ defmodule Squidie.Runtime.Signal.JidoAdapterTest do
     end
   end
 
+  test "round trips partition as a top-level transport field" do
+    assert {:ok, signal} =
+             Signal.cancel_run(@run_id,
+               partition: "tenant_acme",
+               occurred_at: @occurred_at
+             )
+
+    assert {:ok, %Jido.Signal{data: %{"partition" => "tenant_acme"}} = jido_signal} =
+             JidoAdapter.to_jido(signal)
+
+    assert {:ok, ^signal} = JidoAdapter.from_jido(jido_signal)
+  end
+
   test "converts serialized Jido signal data back to a Squidie signal" do
     idempotency_key = "cancel:#{@run_id}"
 
