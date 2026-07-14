@@ -157,11 +157,20 @@ should not need to construct raw Jido signals for normal workflow control.
 | `:cancel_run` | `%{run_id}` | `run_id` is a validated UUID |
 | `:replay_run` | `%{run_id, allow_irreversible}` | `run_id` is a validated UUID and irreversible replay stays explicit |
 
-All command signals carry `metadata`, `occurred_at`, and an optional
-`idempotency_key`. Runtime code should adapt these product-level signals at the
-Jido boundary instead of leaking backend signal shapes into public APIs. The
-signal path is first-class inside Squidie; raw `Jido.Signal` is the interop
-envelope, not a replacement for the Squidie signal taxonomy.
+All command signals carry a generated or caller-supplied `id`, plus `metadata`,
+`occurred_at`, an optional `idempotency_key`, and an optional durable `trace`.
+The journal command boundary creates a W3C-compatible root trace when one is
+missing. Runtime code should adapt these product-level signals at the Jido
+boundary instead of leaking backend signal shapes into public APIs. The signal
+path is first-class inside Squidie; raw `Jido.Signal` is the interop envelope,
+not a replacement for the Squidie signal taxonomy.
+
+The Jido adapter preserves the outer envelope ID exactly and stores trace
+correlation in the `"correlation"` extension. The runtime preserves that trace
+on the run and persists child spans with runnable and attempt facts. Because correlation is
+durable, a worker handoff, restart, conflict rebuild, or checkpoint loss does
+not depend on process-local trace state. Replay deliberately starts a fresh
+command lineage; `replayed_from_run_id` remains the source-run relationship.
 
 Public workflow-control functions normalize caller input into these signals and
 then hand them to the journal signal interpreter. `Squidie.apply_signal/2`
@@ -202,6 +211,32 @@ Squidie command type, payload, metadata, occurrence timestamp, and
 idempotency key. `from_jido/1` accepts only the known Squidie source and
 command types, and maps serialized string command names through an explicit
 whitelist rather than creating atoms from input.
+
+## Trace And Telemetry Flow
+
+The runtime exposes live telemetry without changing journal authority:
+
+```mermaid
+flowchart LR
+    Signal[Command signal and trace] --> Command[Command apply span]
+    Command --> Journal[Committed journal facts]
+    Journal --> Points[Lifecycle point events]
+    Journal --> Executor[Executor span]
+    Executor --> Step[Step invocation span]
+    Step --> Journal
+```
+
+Command, executor, and actual step invocation boundaries emit symmetric
+`:start`, `:stop`, or `:exception` span events. Successfully appended lifecycle
+facts emit point events in append order. For Squidie-owned Ecto step
+transactions, completion points are buffered until commit and discarded on
+rollback. They flush before the executor stop event.
+
+Telemetry is sanitized, bounded, and best-effort. It excludes payloads,
+results, raw errors, claim tokens, owner values, idempotency keys, arbitrary
+metadata, and trace state. Handlers, metrics reporters, exporters, dashboards,
+and alerting remain host-owned. See [Observability](observability.md) for the
+event catalog, metadata contract, metrics, and delivery limits.
 
 ## Runtime Capability Matrix
 

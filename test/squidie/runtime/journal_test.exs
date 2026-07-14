@@ -9,6 +9,49 @@ defmodule Squidie.Runtime.JournalTest do
   alias Squidie.Runtime.Journal.Storage
   alias Squidie.Runtime.RunCatalogProjection
   alias Squidie.Runtime.RunIndexProjection
+  alias Squidie.Telemetry.CommitBuffer
+  alias Squidie.Telemetry.JournalEvents
+  alias Squidie.Test.TelemetryCapture
+
+  defmodule LoadTrackingStorage do
+    @behaviour Jido.Storage
+
+    @impl Jido.Storage
+    def get_checkpoint(key, opts) do
+      ETS.get_checkpoint(key, delegate_opts(opts))
+    end
+
+    @impl Jido.Storage
+    def put_checkpoint(key, data, opts) do
+      ETS.put_checkpoint(key, data, delegate_opts(opts))
+    end
+
+    @impl Jido.Storage
+    def delete_checkpoint(key, opts) do
+      ETS.delete_checkpoint(key, delegate_opts(opts))
+    end
+
+    @impl Jido.Storage
+    def load_thread(thread_id, opts) do
+      send(Keyword.fetch!(opts, :test_pid), {:storage_load_thread, thread_id})
+      ETS.load_thread(thread_id, delegate_opts(opts))
+    end
+
+    @impl Jido.Storage
+    def append_thread(thread_id, entries, opts) do
+      send(Keyword.fetch!(opts, :test_pid), {:storage_append_opts, opts})
+      ETS.append_thread(thread_id, entries, delegate_opts(opts))
+    end
+
+    @impl Jido.Storage
+    def delete_thread(thread_id, opts) do
+      ETS.delete_thread(thread_id, delegate_opts(opts))
+    end
+
+    defp delegate_opts(opts) do
+      Keyword.delete(opts, :test_pid)
+    end
+  end
 
   @storage {ETS, table: :squidie_journal_test}
   @run_id "run_123"
@@ -25,6 +68,11 @@ defmodule Squidie.Runtime.JournalTest do
   @claimed_at ~U[2026-05-14 00:00:20Z]
   @lease_until ~U[2026-05-14 00:01:00Z]
   @completed_at ~U[2026-05-14 00:00:30Z]
+  @trace %{
+    trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
+    span_id: "00f067aa0ba902b7",
+    causation_id: "signal-123"
+  }
 
   setup do
     cleanup_storage()
@@ -438,10 +486,441 @@ defmodule Squidie.Runtime.JournalTest do
              Journal.append_entries(@storage, [run_entry, dispatch_entry])
   end
 
+  test "emits sanitized lifecycle points only after committed appends and in fact order" do
+    events = [
+      [:squidie, :runtime, :command, :received],
+      [:squidie, :runtime, :run, :started],
+      [:squidie, :runtime, :runnable, :planned],
+      [:squidie, :runtime, :attempt, :scheduled],
+      [:squidie, :runtime, :attempt, :claimed],
+      [:squidie, :runtime, :attempt, :heartbeat],
+      [:squidie, :runtime, :attempt, :completed]
+    ]
+
+    TelemetryCapture.attach(events)
+
+    runnable =
+      scheduled_attrs(trace: @trace)
+      |> Map.delete(:occurred_at)
+      |> Map.put(:input, %{password: "secret-sentinel"})
+
+    run_entries = [
+      entry!(:run_signal_received, %{
+        run_id: @run_id,
+        signal_type: :start_run,
+        signal_id: "signal-123",
+        trace: @trace,
+        payload: %{password: "secret-sentinel"},
+        metadata: %{token: "secret-sentinel"},
+        occurred_at: @started_at
+      }),
+      entry!(:run_started, %{
+        run_id: @run_id,
+        workflow: @workflow,
+        trace: @trace,
+        input: %{password: "secret-sentinel"},
+        occurred_at: @started_at
+      }),
+      entry!(:runnables_planned, %{
+        run_id: @run_id,
+        runnables: [runnable],
+        occurred_at: @started_at
+      })
+    ]
+
+    assert {:ok, %{rev: 3}} = Journal.append_entries(@storage, run_entries)
+
+    assert_receive {:telemetry_event, [:squidie, :runtime, :command, :received],
+                    %{count: 1, system_time: command_time}, command_metadata}
+
+    assert is_integer(command_time)
+
+    assert command_metadata == %{
+             command_type: :start_run,
+             workflow: @workflow,
+             run_id: @run_id,
+             signal_id: "signal-123",
+             trace_id: @trace.trace_id,
+             span_id: @trace.span_id,
+             causation_id: @trace.causation_id
+           }
+
+    assert_receive {:telemetry_event, [:squidie, :runtime, :run, :started], %{count: 1},
+                    started_metadata}
+
+    assert started_metadata == %{
+             workflow: @workflow,
+             run_id: @run_id,
+             trace_id: @trace.trace_id,
+             span_id: @trace.span_id,
+             causation_id: @trace.causation_id
+           }
+
+    assert_receive {:telemetry_event, [:squidie, :runtime, :runnable, :planned], %{count: 1},
+                    planned_metadata}
+
+    assert planned_metadata == %{
+             workflow: @workflow,
+             queue: @queue,
+             step: "charge_card",
+             attempt_number: 1,
+             run_id: @run_id,
+             runnable_key: @runnable_key,
+             trace_id: @trace.trace_id,
+             span_id: @trace.span_id,
+             causation_id: @trace.causation_id
+           }
+
+    dispatch_entries = [
+      entry!(:attempt_scheduled, scheduled_attrs(trace: @trace)),
+      entry!(:attempt_claimed, claimed_attrs(trace: @trace)),
+      entry!(:attempt_heartbeat, %{
+        run_id: @run_id,
+        runnable_key: @runnable_key,
+        claim_id: @claim_id,
+        claim_token_hash: @claim_token_hash,
+        owner_id: "secret-sentinel",
+        queue: @queue,
+        trace: @trace,
+        lease_until: @lease_until,
+        occurred_at: @claimed_at
+      }),
+      entry!(:attempt_completed, completed_attrs(trace: @trace))
+    ]
+
+    assert {:ok, %{rev: 4}} = Journal.append_entries(@storage, dispatch_entries)
+
+    for event <- [:scheduled, :claimed, :heartbeat, :completed] do
+      assert_receive {:telemetry_event, [:squidie, :runtime, :attempt, ^event], %{count: 1},
+                      metadata}
+
+      assert metadata.workflow == @workflow
+      assert metadata.queue == @queue
+      assert metadata.step == "charge_card"
+      assert metadata.attempt_number == 1
+      assert metadata.run_id == @run_id
+      assert metadata.runnable_key == @runnable_key
+      assert metadata.trace_id == @trace.trace_id
+      refute inspect(metadata) =~ "secret-sentinel"
+    end
+
+    refute_receive {:telemetry_event, _, _, _}
+  end
+
+  test "emits committed lifecycle points without rereading durable threads" do
+    storage =
+      {LoadTrackingStorage, table: :squidie_journal_test, test_pid: self()}
+
+    entry =
+      entry!(:run_started, %{
+        run_id: @run_id,
+        workflow: @workflow,
+        occurred_at: @started_at
+      })
+
+    assert {:ok, %{rev: 1}} =
+             Journal.append_entries(storage, [entry],
+               expected_rev: 0,
+               telemetry_projection: Squidie.Runtime.WorkflowAgent.Projection.new()
+             )
+
+    assert_receive {:storage_append_opts, append_opts}
+    refute Keyword.has_key?(append_opts, :telemetry_projection)
+    refute_receive {:storage_load_thread, _thread_id}
+  end
+
+  test "emits failure and retry scheduling once without exposing errors" do
+    failed_event = [:squidie, :runtime, :attempt, :failed]
+    retry_event = [:squidie, :runtime, :attempt, :retry_scheduled]
+    retry_key = "#{@run_id}:charge_card:2"
+
+    retry_trace = %{
+      trace_id: @trace.trace_id,
+      span_id: "b7ad6b7169203331",
+      parent_span_id: @trace.span_id,
+      causation_id: @runnable_key
+    }
+
+    assert {:ok, _thread} =
+             Journal.append_entries(@storage, [
+               entry!(:run_started, %{
+                 run_id: @run_id,
+                 workflow: @workflow,
+                 trace: @trace,
+                 occurred_at: @started_at
+               }),
+               entry!(:runnables_planned, %{
+                 run_id: @run_id,
+                 runnables: [Map.delete(scheduled_attrs(trace: @trace), :occurred_at)],
+                 occurred_at: @started_at
+               })
+             ])
+
+    assert {:ok, _thread} =
+             Journal.append_entries(@storage, [
+               entry!(:attempt_scheduled, scheduled_attrs(trace: @trace)),
+               entry!(:attempt_claimed, claimed_attrs(trace: @trace))
+             ])
+
+    assert {:ok, dispatch_projection} =
+             Journal.rebuild_dispatch_projection(@storage, @queue)
+
+    TelemetryCapture.attach([failed_event, retry_event])
+
+    failed_entry =
+      entry!(:attempt_failed, %{
+        run_id: @run_id,
+        runnable_key: @runnable_key,
+        claim_id: @claim_id,
+        claim_token_hash: @claim_token_hash,
+        queue: @queue,
+        trace: @trace,
+        error: %{message: "secret-sentinel", token: "secret-sentinel"},
+        retry_runnable_key: retry_key,
+        retry_visible_at: @completed_at,
+        retry_trace: retry_trace,
+        occurred_at: @completed_at
+      })
+
+    assert {:ok, %{rev: 3}} =
+             Journal.append_entries(@storage, [failed_entry],
+               telemetry_projection: dispatch_projection
+             )
+
+    assert_receive {:telemetry_event, ^failed_event, %{count: 1}, failed_metadata}
+    assert failed_metadata.runnable_key == @runnable_key
+    refute Map.has_key?(failed_metadata, :retry_state)
+    refute inspect(failed_metadata) =~ "secret-sentinel"
+
+    assert_receive {:telemetry_event, ^retry_event, %{count: 1}, retry_metadata}
+    assert retry_metadata.runnable_key == retry_key
+    assert retry_metadata.retry_state == :retry
+    assert retry_metadata.attempt_number == 2
+    assert retry_metadata.trace_id == retry_trace.trace_id
+    assert retry_metadata.span_id == retry_trace.span_id
+    refute_receive {:telemetry_event, _, _, _}
+  end
+
+  test "maps committed run lifecycle facts to exact sanitized point schemas" do
+    runnable = Map.delete(scheduled_attrs(trace: @trace), :occurred_at)
+
+    run_entries = [
+      entry!(:run_started, %{
+        run_id: @run_id,
+        workflow: @workflow,
+        trace: @trace,
+        occurred_at: @started_at
+      }),
+      entry!(:runnables_planned, %{
+        run_id: @run_id,
+        runnables: [runnable],
+        occurred_at: @started_at
+      })
+    ]
+
+    assert {:ok, _thread} = Journal.append_entries(@storage, run_entries)
+
+    workflow_projection = Squidie.Runtime.WorkflowAgent.Projection.rebuild(run_entries)
+
+    events = [
+      [:squidie, :runtime, :runnable, :applied],
+      [:squidie, :runtime, :manual, :paused],
+      [:squidie, :runtime, :manual, :resolved],
+      [:squidie, :runtime, :child, :started],
+      [:squidie, :runtime, :dynamic_work, :recorded],
+      [:squidie, :runtime, :run, :terminal]
+    ]
+
+    TelemetryCapture.attach(events)
+
+    entries = [
+      entry!(:runnable_applied, %{
+        run_id: @run_id,
+        runnable_key: @runnable_key,
+        trace: @trace,
+        result: %{token: "secret-sentinel"},
+        transition: %{on: "error", to: "manual_review"},
+        occurred_at: @completed_at
+      }),
+      entry!(:manual_step_paused, %{
+        run_id: @run_id,
+        step: "charge_card",
+        kind: "approval",
+        trace: @trace,
+        metadata: %{token: "secret-sentinel"},
+        occurred_at: @completed_at
+      }),
+      entry!(:manual_step_resolved, %{
+        run_id: @run_id,
+        step: "charge_card",
+        action: "approved",
+        trace: @trace,
+        result: %{token: "secret-sentinel"},
+        metadata: %{actor: "secret-sentinel"},
+        occurred_at: @completed_at
+      }),
+      entry!(:child_run_started, %{
+        run_id: @run_id,
+        child_run_id: @second_run_id,
+        child_workflow: "ChildWorkflow",
+        child_trigger: "manual",
+        child_key: "child-1",
+        origin: %{runnable_key: @runnable_key, step: "charge_card", attempt: 1},
+        trace: @trace,
+        metadata: %{token: "secret-sentinel"},
+        occurred_at: @completed_at
+      }),
+      entry!(:dynamic_work_recorded, %{
+        run_id: @run_id,
+        dynamic_key: "fanout-1",
+        origin: %{runnable_key: @runnable_key, step: "charge_card", attempt: 1},
+        nodes: [%{id: "node-1", metadata: %{token: "secret-sentinel"}}],
+        trace: @trace,
+        metadata: %{token: "secret-sentinel"},
+        occurred_at: @completed_at
+      }),
+      entry!(:run_terminal, %{
+        run_id: @run_id,
+        workflow: @workflow,
+        status: :failed,
+        trace: @trace,
+        error: %{message: "secret-sentinel"},
+        occurred_at: @completed_at
+      })
+    ]
+
+    assert {:ok, %{rev: 8}} =
+             Journal.append_entries(@storage, entries, telemetry_projection: workflow_projection)
+
+    assert_receive {:telemetry_event, [:squidie, :runtime, :runnable, :applied], %{count: 1},
+                    applied_metadata}
+
+    assert applied_metadata.outcome == :error
+    assert applied_metadata.step == "charge_card"
+    assert applied_metadata.queue == @queue
+
+    assert_receive {:telemetry_event, [:squidie, :runtime, :manual, :paused], %{count: 1},
+                    paused_metadata}
+
+    assert paused_metadata.kind == "approval"
+    assert paused_metadata.step == "charge_card"
+
+    assert_receive {:telemetry_event, [:squidie, :runtime, :manual, :resolved], %{count: 1},
+                    resolved_metadata}
+
+    assert resolved_metadata.action == "approved"
+    assert resolved_metadata.step == "charge_card"
+
+    assert_receive {:telemetry_event, [:squidie, :runtime, :child, :started], %{count: 1},
+                    child_metadata}
+
+    assert child_metadata.child_run_id == @second_run_id
+
+    assert_receive {:telemetry_event, [:squidie, :runtime, :dynamic_work, :recorded], %{count: 1},
+                    dynamic_metadata}
+
+    assert dynamic_metadata.dynamic_key == "fanout-1"
+
+    assert_receive {:telemetry_event, [:squidie, :runtime, :run, :terminal], %{count: 1},
+                    terminal_metadata}
+
+    assert terminal_metadata.status == :failed
+
+    for metadata <- [
+          applied_metadata,
+          paused_metadata,
+          resolved_metadata,
+          child_metadata,
+          dynamic_metadata,
+          terminal_metadata
+        ] do
+      assert metadata.workflow == @workflow
+      assert metadata.run_id == @run_id
+      assert metadata.trace_id == @trace.trace_id
+      refute inspect(metadata) =~ "secret-sentinel"
+    end
+
+    refute_receive {:telemetry_event, _, _, _}
+  end
+
+  test "conflicts checkpoints and projection rebuilds emit no lifecycle points" do
+    event = [:squidie, :runtime, :attempt, :scheduled]
+    TelemetryCapture.attach([event])
+
+    scheduled_entry = entry!(:attempt_scheduled, scheduled_attrs(trace: @trace))
+
+    assert {:ok, %{rev: 1}} =
+             Journal.append_entries(@storage, [scheduled_entry], expected_rev: 0)
+
+    assert_receive {:telemetry_event, ^event, %{count: 1}, _metadata}
+
+    assert {:error, :conflict} =
+             Journal.append_entries(@storage, [scheduled_entry], expected_rev: 0)
+
+    assert {:ok, projection} = Journal.rebuild_dispatch_projection(@storage, @queue)
+
+    assert :ok =
+             Journal.put_checkpoint(@storage, {:dispatch, @queue}, projection, 1,
+               updated_at: @visible_at
+             )
+
+    assert {:ok, %Checkpoint{}} = Journal.fetch_checkpoint(@storage, {:dispatch, @queue})
+    refute_receive {:telemetry_event, _, _, _}
+  end
+
+  test "buffers sanitized committed intents until explicit flush and discards them on demand" do
+    started_event = [:squidie, :runtime, :run, :started]
+    planned_event = [:squidie, :runtime, :runnable, :planned]
+    terminal_event = [:squidie, :runtime, :run, :terminal]
+    TelemetryCapture.attach([started_event, planned_event, terminal_event])
+
+    buffer = CommitBuffer.new()
+    assert {:ok, storage} = Storage.put_commit_buffer(@storage, buffer)
+
+    assert {:ok, %{rev: 2}} =
+             Journal.append_entries(storage, [
+               entry!(:run_started, %{
+                 run_id: @run_id,
+                 workflow: @workflow,
+                 trace: @trace,
+                 occurred_at: @started_at
+               }),
+               entry!(:runnables_planned, %{
+                 run_id: @run_id,
+                 runnables: [Map.delete(scheduled_attrs(trace: @trace), :occurred_at)],
+                 occurred_at: @started_at
+               })
+             ])
+
+    refute_receive {:telemetry_event, _, _, _}
+
+    assert :ok = JournalEvents.flush(buffer)
+    assert_receive {:telemetry_event, ^started_event, %{count: 1}, _metadata}
+    assert_receive {:telemetry_event, ^planned_event, %{count: 1}, _metadata}
+    refute_receive {:telemetry_event, _, _, _}
+
+    discard_buffer = CommitBuffer.new()
+    assert {:ok, discard_storage} = Storage.put_commit_buffer(@storage, discard_buffer)
+
+    assert {:ok, %{rev: 3}} =
+             Journal.append_entries(discard_storage, [
+               entry!(:run_terminal, %{
+                 run_id: @run_id,
+                 status: :completed,
+                 trace: @trace,
+                 occurred_at: @completed_at
+               })
+             ])
+
+    assert :ok = JournalEvents.discard(discard_buffer)
+    refute_receive {:telemetry_event, ^terminal_event, _, _}
+  end
+
   defp scheduled_attrs(attrs \\ %{}) do
     Map.merge(
       %{
         run_id: @run_id,
+        workflow: @workflow,
         runnable_key: @runnable_key,
         idempotency_key: @idempotency_key,
         attempt_number: 1,
@@ -484,6 +963,11 @@ defmodule Squidie.Runtime.JournalTest do
       },
       Map.new(attrs)
     )
+  end
+
+  defp entry!(type, attrs) do
+    assert {:ok, entry} = DispatchProtocol.new_entry(type, attrs)
+    entry
   end
 
   defp table_name(:checkpoints), do: :squidie_journal_test_checkpoints

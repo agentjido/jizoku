@@ -314,6 +314,7 @@ defmodule Squidie.Runtime.DispatchAgent do
              claim_id: claim_id,
              claim_token_hash: claim_token_hash(claim_token),
              queue: queue,
+             trace: attempt.trace,
              lease_until: lease_until,
              occurred_at: heartbeat_options.now
            }),
@@ -432,6 +433,7 @@ defmodule Squidie.Runtime.DispatchAgent do
                  claim_id: claim_id,
                  claim_token_hash: claim_token_hash(claim_token),
                  queue: queue,
+                 trace: attempt.trace,
                  error: error,
                  occurred_at: now
                },
@@ -520,6 +522,7 @@ defmodule Squidie.Runtime.DispatchAgent do
              claim_id: claim_id,
              claim_token_hash: claim_token_hash(claim_token),
              queue: queue,
+             trace: attempt.trace,
              result: result,
              guardrails: guardrails,
              execution_opts: execution_opts,
@@ -649,12 +652,14 @@ defmodule Squidie.Runtime.DispatchAgent do
       true ->
         DispatchProtocol.new_entry(:attempt_scheduled, %{
           run_id: run_id,
+          workflow: runnable_value(runnable, :workflow),
           runnable_key: runnable_key,
           idempotency_key: runnable_value(runnable, :idempotency_key),
           attempt_number: runnable_value(runnable, :attempt_number),
           queue: queue,
           step: runnable_value(runnable, :step),
           input: runnable_value(runnable, :input),
+          trace: runnable_value(runnable, :trace),
           visible_at: runnable_value(runnable, :visible_at),
           deadline: runnable_value(runnable, :deadline),
           occurred_at: now
@@ -693,7 +698,11 @@ defmodule Squidie.Runtime.DispatchAgent do
          }
        ) do
     with :ok <- validate_agent_partition(storage, agent),
-         {:ok, thread} <- Journal.append_entries(storage, entries, expected_rev: thread_rev) do
+         {:ok, thread} <-
+           Journal.append_entries(storage, entries,
+             expected_rev: thread_rev,
+             telemetry_projection: projection
+           ) do
       scheduled_agent = apply_dispatch_entries(agent, projection, entries, thread.rev)
 
       emit_live_wakeups(
@@ -837,6 +846,7 @@ defmodule Squidie.Runtime.DispatchAgent do
       claim_token_hash: claim_token_hash(claim_token),
       owner_id: owner_id,
       queue: queue,
+      trace: attempt.trace,
       lease_until: lease_until,
       occurred_at: now
     }
@@ -858,7 +868,11 @@ defmodule Squidie.Runtime.DispatchAgent do
          entry
        ) do
     with :ok <- validate_agent_partition(storage, agent),
-         {:ok, thread} <- Journal.append_entries(storage, [entry], expected_rev: thread_rev) do
+         {:ok, thread} <-
+           Journal.append_entries(storage, [entry],
+             expected_rev: thread_rev,
+             telemetry_projection: projection
+           ) do
       {:ok, apply_dispatch_entry(agent, projection, entry, thread.rev)}
     end
   end
@@ -1033,7 +1047,14 @@ defmodule Squidie.Runtime.DispatchAgent do
 
       {{:ok, retry_runnable_key}, {:ok, %DateTime{} = retry_visible_at}}
       when is_binary(retry_runnable_key) ->
-        attrs = %{retry_runnable_key: retry_runnable_key, retry_visible_at: retry_visible_at}
+        attrs =
+          maybe_put_retry_trace(
+            %{
+              retry_runnable_key: retry_runnable_key,
+              retry_visible_at: retry_visible_at
+            },
+            Keyword.get(opts, :retry_trace)
+          )
 
         case Keyword.fetch(opts, :retry_deadline) do
           {:ok, deadline} when is_map(deadline) ->
@@ -1053,6 +1074,11 @@ defmodule Squidie.Runtime.DispatchAgent do
         {:error, {:invalid_option, :retry}}
     end
   end
+
+  defp maybe_put_retry_trace(attrs, trace) when is_map(trace),
+    do: Map.put(attrs, :retry_trace, trace)
+
+  defp maybe_put_retry_trace(attrs, _trace), do: attrs
 
   defp current_claim(
          %Projection{} = projection,

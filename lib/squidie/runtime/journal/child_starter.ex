@@ -8,6 +8,8 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
   alias Squidie.Runtime.Journal.Commands.Starter
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.ScheduleIdentity
+  alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Step.Context
   alias Squidie.Workflow.Definition
@@ -57,7 +59,8 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
            child_trigger: Definition.serialize_trigger(child_trigger),
            child_key: child_key,
            origin: origin,
-           metadata: metadata
+           metadata: metadata,
+           trace: nil
          },
          :ok <- ensure_child_startable(storage, child_run_id, child, parent, resolved_payload),
          {:ok, linked_parent} <-
@@ -65,6 +68,15 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          :ok <- ensure_parent_active(storage, parent_context, parent_run_id),
          :ok <-
            ensure_child_startable(storage, child_run_id, child, linked_parent, resolved_payload),
+         {:ok, command_signal} <-
+           child_command_signal(
+             child_run_id,
+             child_workflow,
+             child_trigger,
+             payload,
+             linked_parent,
+             now
+           ),
          {:ok, %Inspection.Snapshot{} = child_snapshot} <-
            Starter.start_run(
              child_workflow,
@@ -72,7 +84,8 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
              payload,
              opts
              |> Keyword.put(:run_id, child_run_id)
-             |> Keyword.put(:initial_context, %{parent: linked_parent})
+             |> Keyword.put(:command_signal, command_signal)
+             |> Keyword.put(:initial_context, %{parent: Map.delete(linked_parent, :child_trace)})
            ) do
       Inspection.snapshot(storage, child_snapshot.run_id, queue: queue, now: now)
     end
@@ -174,6 +187,32 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
   end
 
   defp origin(%Context{}), do: {:error, {:invalid_parent_context, :origin}}
+
+  defp child_trace(nil, _origin), do: {:ok, nil}
+
+  defp child_trace(trace, %{runnable_key: runnable_key}) when is_map(trace) do
+    case Trace.child_of(trace, runnable_key) do
+      {:ok, child_trace} -> {:ok, child_trace}
+      {:error, _reason} -> {:ok, nil}
+    end
+  end
+
+  defp child_trace(_legacy_untraced, _origin), do: {:ok, nil}
+
+  defp child_command_signal(
+         child_run_id,
+         child_workflow,
+         child_trigger,
+         payload,
+         linked_parent,
+         %DateTime{} = now
+       ) do
+    Signal.start_run(child_workflow, child_trigger, payload,
+      id: child_run_id,
+      trace: Map.get(linked_parent, :child_trace),
+      occurred_at: now
+    )
+  end
 
   defp validate_child_start(child_workflow, child_trigger, payload) do
     with {:ok, definition} <- Definition.load(child_workflow),
@@ -281,8 +320,7 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
         parent_run_id,
         child,
         now,
-        rev,
-        entries,
+        %{rev: rev, entries: entries, projection: projection},
         retries_left
       )
     else
@@ -296,8 +334,7 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          parent_run_id,
          child,
          now,
-         rev,
-         entries,
+         %{rev: rev, entries: entries, projection: projection},
          retries_left
        ) do
     case child_link_state(entries, child) do
@@ -308,15 +345,32 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
         {:error, :conflict}
 
       :missing ->
-        append_parent_child_link(
-          storage,
-          parent_context,
-          parent_run_id,
-          child,
-          now,
-          rev,
-          retries_left
-        )
+        with {:ok, child} <- put_child_trace(child, projection, parent_context) do
+          append_parent_child_link(
+            storage,
+            parent_context,
+            parent_run_id,
+            child,
+            now,
+            rev,
+            projection,
+            retries_left
+          )
+        end
+    end
+  end
+
+  defp put_child_trace(child, projection, %Context{} = context) do
+    with runnable when is_map(runnable) <-
+           Enum.find(
+             Projection.planned_runnables(projection),
+             &(runnable_value(&1, :runnable_key) == context.runnable_key)
+           ),
+         {:ok, trace} <- child_trace(runnable_value(runnable, :trace), child.origin) do
+      {:ok, %{child | trace: trace}}
+    else
+      nil -> {:error, {:invalid_parent_context, :runnable_key}}
+      {:error, _reason} = error -> error
     end
   end
 
@@ -327,10 +381,14 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          child,
          now,
          rev,
+         projection,
          retries_left
        ) do
     with {:ok, entry} <- child_link_entry(parent_run_id, child, now) do
-      case Journal.append_entries(storage, [entry], expected_rev: rev) do
+      case Journal.append_entries(storage, [entry],
+             expected_rev: rev,
+             telemetry_projection: projection
+           ) do
         {:ok, _thread} ->
           parent_from_child_link(entry)
 
@@ -459,7 +517,10 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          attempt when is_integer(attempt) <- origin_value(origin, :attempt),
          child_key when is_binary(child_key) <- entry_value(entry, :child_key),
          metadata when is_map(metadata) <- entry_value(entry, :metadata) || %{} do
-      {:ok, parent_context(run_id, runnable_key, step, attempt, child_key, metadata)}
+      {:ok,
+       run_id
+       |> parent_context(runnable_key, step, attempt, child_key, metadata)
+       |> Map.put(:child_trace, entry_value(entry, :trace))}
     else
       _invalid -> {:error, :conflict}
     end
@@ -492,6 +553,7 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
       child_key: child.child_key,
       origin: child.origin,
       metadata: child.metadata,
+      trace: child.trace,
       occurred_at: now
     })
   end

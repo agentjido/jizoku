@@ -1,11 +1,13 @@
 defmodule Squidie.Runtime.Journal.SignalInterpreterTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Squidie.Runtime.Journal.Cancellation
   alias Squidie.Runtime.Journal.Commands
   alias Squidie.Runtime.Journal.ManualControl
   alias Squidie.Runtime.Journal.SignalInterpreter
   alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Trace
+  alias Squidie.Test.TelemetryCapture
 
   @run_id "3c82d86d-31a6-4d57-9e41-4f5c95125be6"
 
@@ -89,6 +91,51 @@ defmodule Squidie.Runtime.Journal.SignalInterpreterTest do
 
     assert {:error, {:partition_mismatch, :signal}} =
              SignalInterpreter.apply(signal, partition: "tenant_globex")
+  end
+
+  test "emits symmetric command spans with durable correlation and error outcomes" do
+    prefix = [:squidie, :runtime, :command, :apply]
+    events = Enum.map([:start, :stop, :exception], &Enum.concat(prefix, [&1]))
+    TelemetryCapture.attach(events)
+
+    assert {:ok, trace} = Trace.new_root(causation_id: "command-signal-1")
+
+    assert {:ok, %Signal{} = signal} =
+             Signal.cancel_run(@run_id,
+               id: "command-signal-1",
+               trace: trace,
+               partition: "tenant_acme"
+             )
+
+    assert {:error, {:partition_mismatch, :signal}} =
+             SignalInterpreter.apply(signal, partition: "tenant_globex")
+
+    assert_receive {:telemetry_event, start_event,
+                    %{monotonic_time: started_at, system_time: system_time}, start_metadata}
+
+    assert start_event == Enum.concat(prefix, [:start])
+    assert is_integer(started_at)
+    assert is_integer(system_time)
+
+    assert start_metadata == %{
+             command_type: :cancel_run,
+             signal_id: "command-signal-1",
+             partition: "tenant_acme",
+             run_id: @run_id,
+             trace_id: trace.trace_id,
+             span_id: trace.span_id,
+             causation_id: trace.causation_id,
+             outcome: :unknown
+           }
+
+    assert_receive {:telemetry_event, stop_event,
+                    %{duration: duration, monotonic_time: stopped_at}, stop_metadata}
+
+    assert stop_event == Enum.concat(prefix, [:stop])
+    assert duration >= 0
+    assert stopped_at >= started_at
+    assert stop_metadata == %{start_metadata | outcome: :error}
+    refute_receive {:telemetry_event, _, _, _}
   end
 
   test "journal control modules reject unsupported or malformed direct signals" do

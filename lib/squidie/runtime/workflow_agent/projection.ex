@@ -10,6 +10,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
 
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.DynamicEdge
+  alias Squidie.Runtime.Trace
 
   @type anomaly :: %{
           required(:reason) => atom(),
@@ -36,6 +37,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
           trigger: String.t() | nil,
           input: map() | nil,
           context: map(),
+          trace: Trace.t() | nil,
           started_at: DateTime.t() | nil,
           replayed_from_run_id: String.t() | nil,
           definition_version: String.t() | nil,
@@ -61,6 +63,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
             trigger: nil,
             input: nil,
             context: %{},
+            trace: nil,
             started_at: nil,
             replayed_from_run_id: nil,
             definition_version: nil,
@@ -97,6 +100,10 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   def replay(%__MODULE__{} = projection, entries) when is_list(entries) do
     Enum.reduce(entries, projection, &apply_entry/2)
   end
+
+  @doc false
+  @spec trace(t()) :: Trace.t() | nil
+  def trace(%__MODULE__{} = projection), do: Map.get(projection, :trace)
 
   @doc false
   @spec status(t()) :: atom()
@@ -242,6 +249,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     |> Map.put_new(:child_runs, [])
     |> Map.put_new(:dynamic_work, [])
     |> Map.put_new(:terminal_error, nil)
+    |> Map.put_new(:trace, nil)
   end
 
   @doc false
@@ -267,6 +275,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       |> Map.put(:trigger, Map.get(data, :trigger))
       |> Map.put(:input, Map.get(data, :input))
       |> Map.put(:context, Map.get(data, :context, %{}))
+      |> Map.put(:trace, Map.get(data, :trace))
       |> Map.put(:started_at, Map.get(data, :occurred_at, entry.occurred_at))
       |> Map.put(:replayed_from_run_id, Map.get(data, :replayed_from_run_id))
       |> Map.put(:definition_version, definition_metadata_value(data, :definition_version))
@@ -378,6 +387,8 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
         metadata: Map.get(data, :metadata, %{}),
         occurred_at: Map.get(data, :occurred_at)
       }
+      |> maybe_put(:signal_id, Map.get(data, :signal_id))
+      |> maybe_put(:trace, Map.get(data, :trace))
       |> maybe_put(:idempotency_key, Map.get(data, :idempotency_key))
       |> maybe_put(:actor, Map.get(data, :actor))
       |> maybe_put(:comment, Map.get(data, :comment))
@@ -442,15 +453,20 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   defp put_child_run(%__MODULE__{} = projection, entry, data) do
-    child_run = %{
-      child_run_id: data.child_run_id,
-      child_workflow: data.child_workflow,
-      child_trigger: data.child_trigger,
-      child_key: data.child_key,
-      origin: data.origin,
-      metadata: Map.get(data, :metadata, %{}),
-      started_at: child_started_at(data, entry)
-    }
+    child_run =
+      maybe_put(
+        %{
+          child_run_id: data.child_run_id,
+          child_workflow: data.child_workflow,
+          child_trigger: data.child_trigger,
+          child_key: data.child_key,
+          origin: data.origin,
+          metadata: Map.get(data, :metadata, %{}),
+          started_at: child_started_at(data, entry)
+        },
+        :trace,
+        Map.get(data, :trace)
+      )
 
     child_runs = Map.get(projection, :child_runs, [])
 
@@ -528,6 +544,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       nodes: nodes,
       edges: dynamic_edges(data, nodes),
       metadata: Map.get(data, :metadata, %{}),
+      trace: Map.get(data, :trace),
       recorded_at: dynamic_recorded_at(data, entry)
     })
   end

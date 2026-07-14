@@ -226,6 +226,34 @@ that also use a backend lease must maintain that backend lease separately from
 the journal claim lease. The runtime rejects intervals below 50ms to keep
 heartbeat write volume bounded.
 
+## Telemetry Integration
+
+Squidie emits public runtime events under `[:squidie, :runtime, ...]` for
+command application, executor polls, step invocation, and committed lifecycle
+facts. No runtime config is required to enable emission. Hosts attach handlers
+or supervise their selected reporter/exporter and can use
+`Squidie.Telemetry.metrics/0` as the default bounded-cardinality metric set.
+
+```elixir
+defmodule MyApp.Metrics do
+  def metrics do
+    application_metrics() ++ Squidie.Telemetry.metrics()
+  end
+end
+```
+
+Use `Squidie.Telemetry.partition_metrics/0` only after accepting the tenant or
+domain cardinality of the configured partition namespace. Correlation fields
+such as run, signal, runnable, and trace IDs are suitable for traces or
+authorized diagnostic logs, but not metric labels.
+
+Lifecycle point events follow successful journal appends. Squidie-owned Ecto
+step transactions buffer completion events until commit and discard them on
+rollback; arbitrary host-owned outer transactions are outside that guarantee.
+The events remain best-effort and do not replace journal-backed inspection.
+See [Observability](observability.md#runtime-telemetry) for the full event,
+metadata, privacy, and delivery contract.
+
 ## Cron Payload Contract
 
 Cron starts are the `Squidie.Executor` payload boundary. Hosts
@@ -659,6 +687,8 @@ The example app wires:
 - journal runtime smoke paths that use inferred Ecto storage and
   `Squidie.execute_next/1`, including cron activation through the journal
   runtime
+- a Jido command-signal round trip that proves durable trace lineage across a
+  worker handoff and captures a committed lifecycle telemetry event
 - cron activation smoke paths that deliver `Squidie.Executor.Payload.cron/3`
   through `Squidie.Runtime.Runner.perform/1`
 - Squidie through `MinimalHostApp.WorkflowRuns`

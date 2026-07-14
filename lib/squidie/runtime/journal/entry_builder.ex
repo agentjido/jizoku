@@ -42,6 +42,21 @@ defmodule Squidie.Runtime.Journal.EntryBuilder do
     entry!(:run_terminal, run_terminal_attrs(run_id, status, now, error))
   end
 
+  @doc "Builds a traced terminal run entry and raises on invalid entry data."
+  @spec traced_run_terminal!(String.t(), atom(), map() | nil, DateTime.t()) ::
+          DispatchProtocol.Entry.t()
+  def traced_run_terminal!(run_id, status, trace, %DateTime{} = now) do
+    entry!(:run_terminal, traced_run_terminal_attrs(run_id, status, trace, now))
+  end
+
+  @doc "Builds a traced failed terminal run entry with an error payload."
+  @spec traced_run_terminal!(String.t(), atom(), map() | nil, DateTime.t(), map()) ::
+          DispatchProtocol.Entry.t()
+  def traced_run_terminal!(run_id, status, trace, %DateTime{} = now, error)
+      when is_map(error) do
+    entry!(:run_terminal, traced_run_terminal_attrs(run_id, status, trace, now, error))
+  end
+
   @doc """
   Builds an initial or successor runnable payload for a workflow step.
   """
@@ -146,6 +161,15 @@ defmodule Squidie.Runtime.Journal.EntryBuilder do
 
   defp run_terminal_attrs(run_id, status, %DateTime{} = now, error) when is_map(error) do
     Map.new(run_id: run_id, status: status, error: error, occurred_at: now)
+  end
+
+  defp traced_run_terminal_attrs(run_id, status, trace, %DateTime{} = now) do
+    Map.new(run_id: run_id, status: status, trace: trace, occurred_at: now)
+  end
+
+  defp traced_run_terminal_attrs(run_id, status, trace, %DateTime{} = now, error)
+       when is_map(error) do
+    Map.new(run_id: run_id, status: status, trace: trace, error: error, occurred_at: now)
   end
 
   defp runnable_attrs(

@@ -2,7 +2,9 @@ defmodule Squidie.Runtime.DispatchProtocolTest do
   use ExUnit.Case, async: true
 
   alias Squidie.Runtime.DispatchProtocol
+  alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.DispatchProtocol.Projection
+  alias Squidie.Test.TelemetryCapture
 
   @run_id "run_123"
   @workflow "BillingWorkflow"
@@ -18,6 +20,35 @@ defmodule Squidie.Runtime.DispatchProtocolTest do
   @claimed_at ~U[2026-05-14 00:00:20Z]
   @lease_until ~U[2026-05-14 00:01:00Z]
   @expired_at ~U[2026-05-14 00:02:00Z]
+  @trace %{
+    trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
+    span_id: "00f067aa0ba902b7"
+  }
+
+  test "preserves optional attempt trace without making it part of duplicate semantics" do
+    assert {:ok, scheduled} =
+             DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs(trace: @trace))
+
+    other_trace = %{@trace | span_id: "b7ad6b7169203331"}
+
+    assert {:ok, duplicate} =
+             DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs(trace: other_trace))
+
+    projection = Projection.rebuild([scheduled, duplicate])
+
+    assert %ActionAttempt{trace: @trace} = projection.attempts[@runnable_key]
+    assert Projection.anomalies(projection) == []
+  end
+
+  test "rebuilds legacy untraced entries without emitting telemetry" do
+    TelemetryCapture.attach(Squidie.Telemetry.events())
+
+    assert {:ok, scheduled} = DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs())
+    projection = Projection.rebuild([scheduled])
+
+    assert %ActionAttempt{trace: nil} = projection.attempts[@runnable_key]
+    refute_receive {:telemetry_event, _, _, _}
+  end
 
   test "classifies run, dispatch, run index, and run catalog thread entries" do
     assert {:ok, run_entry} =

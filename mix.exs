@@ -135,6 +135,8 @@ defmodule Squidie.MixProject do
   defp deps do
     [
       {:ecto_sql, "~> 3.13"},
+      {:telemetry, "~> 1.3"},
+      {:telemetry_metrics, "~> 1.1"},
       {:bypass, "~> 2.1", only: :test},
       {:jason, "~> 1.4"},
       {:jido, "~> 2.0"},

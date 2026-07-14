@@ -205,6 +205,7 @@ defmodule SquidieTest do
       key = {__MODULE__, context.run_id}
       calls = :persistent_term.get(key, 0)
       :persistent_term.put(key, calls + 1)
+      :persistent_term.put({__MODULE__, context.run_id, :trace}, context.trace)
 
       if calls == 0 do
         {:defer, %{code: "gateway_pending", order_id: order_id}, schedule_in: 30}
@@ -3060,6 +3061,26 @@ defmodule SquidieTest do
       refute snapshot.terminal?
       assert [%{step: "compensate:authorize_payment"}] = snapshot.visible_attempts
 
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, @read_model_queue})
+
+      run_dispatch_entries =
+        Enum.filter(dispatch_entries, &(&1.data.run_id == snapshot.run_id))
+
+      assert %{data: %{runnable_key: failed_runnable_key, trace: failed_trace}} =
+               Enum.find(run_dispatch_entries, &(&1.type == :attempt_failed))
+
+      assert %{data: %{trace: compensation_trace}} =
+               Enum.find(run_dispatch_entries, fn entry ->
+                 entry.type == :attempt_scheduled and
+                   entry.data.step == "compensate:authorize_payment"
+               end)
+
+      assert compensation_trace.trace_id == failed_trace.trace_id
+      assert compensation_trace.parent_span_id == failed_trace.span_id
+      assert compensation_trace.causation_id == failed_runnable_key
+      refute compensation_trace.span_id == failed_trace.span_id
+
       assert [%{dynamic_work: %{kind: :compensation, origin_step: "authorize_payment"}}] =
                Enum.filter(
                  snapshot.planned_runnables,
@@ -3349,6 +3370,10 @@ defmodule SquidieTest do
         :persistent_term.erase(
           {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id}
         )
+
+        :persistent_term.erase(
+          {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id, :trace}
+        )
       end)
 
       finished_at = DateTime.add(@read_model_visible_at, 1, :second)
@@ -3389,6 +3414,30 @@ defmodule SquidieTest do
 
       assert original_runnable_key == "#{started_snapshot.run_id}:check_gateway:1"
       assert deferred_attempt.runnable_key == "#{original_runnable_key}:deferred"
+
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, @read_model_queue})
+
+      attempts =
+        dispatch_entries
+        |> Enum.filter(fn entry ->
+          entry.data.run_id == started_snapshot.run_id and
+            is_binary(Map.get(entry.data, :runnable_key))
+        end)
+        |> Enum.group_by(& &1.data.runnable_key)
+
+      assert [%{data: %{trace: original_trace}} | _lifecycle] =
+               attempts[original_runnable_key]
+
+      assert [%{data: %{trace: deferred_trace}}] = attempts[deferred_attempt.runnable_key]
+      assert deferred_trace.trace_id == original_trace.trace_id
+      assert deferred_trace.parent_span_id == original_trace.span_id
+      assert deferred_trace.causation_id == original_runnable_key
+      refute deferred_trace.span_id == original_trace.span_id
+
+      assert :persistent_term.get(
+               {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id, :trace}
+             ) == original_trace
 
       assert {:ok, graph} =
                Squidie.inspect_run_graph(started_snapshot.run_id,
@@ -3458,6 +3507,10 @@ defmodule SquidieTest do
       on_exit(fn ->
         :persistent_term.erase(
           {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id}
+        )
+
+        :persistent_term.erase(
+          {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id, :trace}
         )
       end)
 
@@ -3612,6 +3665,10 @@ defmodule SquidieTest do
         :persistent_term.erase(
           {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id}
         )
+
+        :persistent_term.erase(
+          {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id, :trace}
+        )
       end)
 
       deferred_finished_at = DateTime.add(@read_model_visible_at, 1, :second)
@@ -3638,6 +3695,22 @@ defmodule SquidieTest do
       assert cancelled_snapshot.status == :cancelled
       assert cancelled_snapshot.visible_attempts == []
 
+      cancel_entries = raw_run_entries(started_snapshot.run_id, @read_model_storage)
+
+      assert %{data: %{signal_id: cancel_signal_id, trace: cancel_trace}} =
+               Enum.find(cancel_entries, fn entry ->
+                 entry.type == :run_signal_received and entry.data.signal_type == "cancel_run"
+               end)
+
+      assert is_binary(cancel_signal_id)
+
+      assert %{data: %{status: :cancelled, trace: ^cancel_trace}} =
+               Enum.find(cancel_entries, &(&1.type == :run_terminal))
+
+      executor_prefix = [:squidie, :runtime, :executor, :execute_next]
+      executor_events = Enum.map([:start, :stop], &Enum.concat(executor_prefix, [&1]))
+      Squidie.Test.TelemetryCapture.attach(executor_events)
+
       assert {:ok, :none} =
                execute_journal_next(
                  runtime: :journal,
@@ -3647,6 +3720,19 @@ defmodule SquidieTest do
                  now: deferred_visible_at,
                  finished_at: DateTime.add(deferred_visible_at, 1, :second)
                )
+
+      assert_receive {:telemetry_event, cancelled_executor_start, _measurements,
+                      %{outcome: :unknown} = cancelled_executor_metadata}
+
+      assert cancelled_executor_start == Enum.concat(executor_prefix, [:start])
+
+      assert_receive {:telemetry_event, cancelled_executor_stop, %{duration: duration},
+                      cancelled_executor_stop_metadata}
+
+      assert cancelled_executor_stop == Enum.concat(executor_prefix, [:stop])
+      assert duration >= 0
+      assert cancelled_executor_stop_metadata == %{cancelled_executor_metadata | outcome: :ok}
+      refute_receive {:telemetry_event, _, _, _}
 
       assert {:ok, %Snapshot{} = still_cancelled} =
                Squidie.inspect_run(started_snapshot.run_id,
@@ -3679,6 +3765,8 @@ defmodule SquidieTest do
 
       on_exit(fn ->
         :persistent_term.erase({DeferredContinuationWorkflow.CheckGateway, source.run_id})
+
+        :persistent_term.erase({DeferredContinuationWorkflow.CheckGateway, source.run_id, :trace})
       end)
 
       assert {:ok, %Snapshot{reason: :deferred_continuation}} =
@@ -3691,6 +3779,15 @@ defmodule SquidieTest do
                  finished_at: DateTime.add(@read_model_visible_at, 1, :second)
                )
 
+      replay_events = [
+        [:squidie, :runtime, :command, :received],
+        [:squidie, :runtime, :run, :started],
+        [:squidie, :runtime, :runnable, :planned],
+        [:squidie, :runtime, :attempt, :scheduled]
+      ]
+
+      Squidie.Test.TelemetryCapture.attach(replay_events)
+
       assert {:ok, %Snapshot{} = replay} =
                Squidie.replay(source.run_id,
                  runtime: :journal,
@@ -3701,6 +3798,8 @@ defmodule SquidieTest do
 
       on_exit(fn ->
         :persistent_term.erase({DeferredContinuationWorkflow.CheckGateway, replay.run_id})
+
+        :persistent_term.erase({DeferredContinuationWorkflow.CheckGateway, replay.run_id, :trace})
       end)
 
       assert replay.run_id != source.run_id
@@ -3708,6 +3807,37 @@ defmodule SquidieTest do
       assert replay.input == %{order_id: "order_deferred_replay"}
       assert [%{step: "check_gateway", attempt_number: 1}] = replay.visible_attempts
       assert replay.scheduled_attempts == []
+
+      assert %{data: %{trace: source_trace}} =
+               source.run_id
+               |> raw_run_entries(@read_model_storage)
+               |> Enum.find(&(&1.type == :run_started))
+
+      replay_entries = raw_run_entries(replay.run_id, @read_model_storage)
+
+      assert %{data: %{signal_id: replay_signal_id, trace: replay_trace}} =
+               Enum.find(replay_entries, fn entry ->
+                 entry.type == :run_signal_received and entry.data.signal_type == "replay_run"
+               end)
+
+      assert %{data: %{trace: ^replay_trace}} =
+               Enum.find(replay_entries, &(&1.type == :run_started))
+
+      assert %{data: %{runnables: [%{trace: replay_runnable_trace}]}} =
+               Enum.find(replay_entries, &(&1.type == :runnables_planned))
+
+      refute replay_trace.trace_id == source_trace.trace_id
+      assert replay_runnable_trace.trace_id == replay_trace.trace_id
+      assert replay_runnable_trace.parent_span_id == replay_trace.span_id
+      assert replay_runnable_trace.causation_id == replay_signal_id
+
+      for event <- replay_events do
+        assert_receive {:telemetry_event, ^event, %{count: 1}, %{run_id: replay_run_id}}
+        assert replay_run_id == replay.run_id
+        refute replay_run_id == source.run_id
+      end
+
+      refute_receive {:telemetry_event, _, _, _}
 
       assert {:ok, %Snapshot{} = replay_deferred} =
                execute_journal_next(
@@ -3738,6 +3868,10 @@ defmodule SquidieTest do
       on_exit(fn ->
         :persistent_term.erase(
           {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id}
+        )
+
+        :persistent_term.erase(
+          {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id, :trace}
         )
       end)
 
@@ -4670,9 +4804,26 @@ defmodule SquidieTest do
                %{
                  dynamic_key: "subscription_digest_fanout",
                  status: :scheduled,
+                 trace: dynamic_trace,
                  nodes: [%{id: "deliver_digest:chat_1", input: %{subscription_id: "sub_123"}}]
                }
              ] = scheduled.dynamic_work
+
+      assert %{trace: origin_trace} =
+               Enum.find(after_charge.planned_runnables, &(&1.runnable_key == charge_key))
+
+      assert %{trace: node_trace} =
+               Enum.find(
+                 scheduled.planned_runnables,
+                 &(&1.step == "deliver_digest:chat_1")
+               )
+
+      assert dynamic_trace.trace_id == origin_trace.trace_id
+      assert dynamic_trace.parent_span_id == origin_trace.span_id
+      assert dynamic_trace.causation_id == charge_key
+      assert node_trace.trace_id == dynamic_trace.trace_id
+      assert node_trace.parent_span_id == dynamic_trace.span_id
+      assert node_trace.causation_id == "deliver_digest:chat_1"
 
       assert {:ok, %Snapshot{} = duplicate_schedule} =
                Squidie.schedule_dynamic_work(
@@ -5484,6 +5635,8 @@ defmodule SquidieTest do
                }
              } = preview
 
+      refute Map.has_key?(preview.dynamic_work, :trace)
+
       assert Enum.any?(preview.graph.nodes, &(&1.id == "deliver_digest:chat_1" and &1.dynamic?))
 
       assert [%{dynamic_key: "subscription_digest_fanout", recorded_at: @read_model_visible_at}] =
@@ -6160,6 +6313,17 @@ defmodule SquidieTest do
                  occurred_at: @read_model_started_at
                )
 
+      assert signal.trace == nil
+
+      lifecycle_events = [
+        [:squidie, :runtime, :command, :received],
+        [:squidie, :runtime, :run, :started],
+        [:squidie, :runtime, :runnable, :planned],
+        [:squidie, :runtime, :attempt, :scheduled]
+      ]
+
+      Squidie.Test.TelemetryCapture.attach(lifecycle_events)
+
       assert {:ok, %Snapshot{} = snapshot} =
                Squidie.apply_signal(signal,
                  runtime: :journal,
@@ -6188,10 +6352,36 @@ defmodule SquidieTest do
       assert workflow == Atom.to_string(PaymentRecoveryWorkflow)
 
       assert [
-               %{type: :run_signal_received},
-               %{type: :run_started},
-               %{type: :runnables_planned}
+               %{
+                 type: :run_signal_received,
+                 data: %{signal_id: signal_id, trace: run_trace}
+               },
+               %{type: :run_started, data: %{trace: started_trace}},
+               %{
+                 type: :runnables_planned,
+                 data: %{runnables: [%{trace: runnable_trace}]}
+               }
              ] = raw_run_entries(snapshot.run_id, @read_model_storage)
+
+      assert signal_id == signal.id
+      assert started_trace == run_trace
+      assert %{trace_id: trace_id, span_id: run_span_id} = run_trace
+      assert runnable_trace.trace_id == trace_id
+      assert runnable_trace.parent_span_id == run_span_id
+      assert runnable_trace.causation_id == signal.id
+      refute runnable_trace.span_id == run_span_id
+
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, @read_model_queue})
+
+      assert %{data: %{trace: ^runnable_trace}} =
+               Enum.find(dispatch_entries, fn entry ->
+                 entry.type == :attempt_scheduled and entry.data.run_id == snapshot.run_id
+               end)
+
+      for event <- lifecycle_events do
+        assert_receive {:telemetry_event, ^event, %{count: 1}, _metadata}
+      end
 
       command_history = snapshot.command_history
       run_entries = raw_run_entries(snapshot.run_id, @read_model_storage)
@@ -6206,6 +6396,7 @@ defmodule SquidieTest do
       assert duplicate_snapshot.run_id == snapshot.run_id
       assert duplicate_snapshot.command_history == command_history
       assert raw_run_entries(snapshot.run_id, @read_model_storage) == run_entries
+      refute_receive {:telemetry_event, _, _, _}
     end
 
     test "start/3 starts a default-trigger journal run" do
@@ -6523,9 +6714,26 @@ defmodule SquidieTest do
                    step: "check_gateway",
                    attempt: 1
                  },
+                 trace: child_trace,
                  metadata: %{subscription_id: "sub_123"}
                }
              ] = inspected_parent.child_runs
+
+      assert child_trace.trace_id == parent_context.trace.trace_id
+      assert child_trace.parent_span_id == parent_context.trace.span_id
+      assert child_trace.causation_id == parent_runnable_key
+
+      child_entries = raw_run_entries(child.run_id, @read_model_storage)
+
+      assert %{data: %{trace: ^child_trace}} =
+               Enum.find(child_entries, &(&1.type == :run_started))
+
+      assert %{data: %{runnables: [%{trace: child_runnable_trace}]}} =
+               Enum.find(child_entries, &(&1.type == :runnables_planned))
+
+      assert child_runnable_trace.trace_id == child_trace.trace_id
+      assert child_runnable_trace.parent_span_id == child_trace.span_id
+      assert child_runnable_trace.causation_id == child.run_id
     end
 
     test "child runs inherit the parent partition" do
@@ -8214,11 +8422,35 @@ defmodule SquidieTest do
       first_runnable_key = "#{parent_run_id}:check_gateway:1"
       retry_runnable_key = "#{parent_run_id}:check_gateway:2"
       child_key = "digest_subscription_1"
+      trace_id = String.duplicate("a", 32)
+      parent_trace = %{trace_id: trace_id, span_id: String.duplicate("b", 16)}
+
+      first_trace = %{
+        trace_id: trace_id,
+        span_id: String.duplicate("c", 16),
+        parent_span_id: parent_trace.span_id,
+        causation_id: "parent-start"
+      }
+
+      retry_trace = %{
+        trace_id: trace_id,
+        span_id: String.duplicate("d", 16),
+        parent_span_id: first_trace.span_id,
+        causation_id: first_runnable_key
+      }
+
+      persisted_child_trace = %{
+        trace_id: trace_id,
+        span_id: String.duplicate("e", 16),
+        parent_span_id: first_trace.span_id,
+        causation_id: first_runnable_key
+      }
 
       assert {:ok, run_started} =
                DispatchProtocol.new_entry(:run_started, %{
                  run_id: parent_run_id,
                  workflow: Atom.to_string(PaymentRecoveryWorkflow),
+                 trace: parent_trace,
                  occurred_at: @read_model_started_at
                })
 
@@ -8226,13 +8458,13 @@ defmodule SquidieTest do
                DispatchProtocol.new_entry(:runnables_planned, %{
                  run_id: parent_run_id,
                  runnables: [
-                   journal_start_runnable(parent_run_id),
-                   %{
-                     journal_start_runnable(parent_run_id)
-                     | runnable_key: retry_runnable_key,
-                       idempotency_key: retry_runnable_key,
-                       attempt_number: 2
-                   }
+                   Map.put(journal_start_runnable(parent_run_id), :trace, first_trace),
+                   Map.merge(journal_start_runnable(parent_run_id), %{
+                     runnable_key: retry_runnable_key,
+                     idempotency_key: retry_runnable_key,
+                     attempt_number: 2,
+                     trace: retry_trace
+                   })
                  ],
                  occurred_at: @read_model_started_at
                })
@@ -8253,6 +8485,7 @@ defmodule SquidieTest do
                  child_key: child_key,
                  origin: %{runnable_key: first_runnable_key, step: "check_gateway", attempt: 1},
                  metadata: %{subscription_id: "sub_123"},
+                 trace: persisted_child_trace,
                  occurred_at: @read_model_visible_at
                })
 
@@ -8269,6 +8502,7 @@ defmodule SquidieTest do
         step: :check_gateway,
         attempt: 2,
         runnable_key: retry_runnable_key,
+        trace: retry_trace,
         state: %{}
       }
 
@@ -8288,6 +8522,11 @@ defmodule SquidieTest do
 
       assert child.parent_run.runnable_key == first_runnable_key
       assert child.parent_run.attempt == 1
+
+      assert %{data: %{trace: ^persisted_child_trace}} =
+               child.run_id
+               |> raw_run_entries(@read_model_storage)
+               |> Enum.find(&(&1.type == :run_started))
     end
 
     test "list_runs/2 lists journal runs for one workflow newest first" do
@@ -9556,6 +9795,24 @@ defmodule SquidieTest do
             nil
         end)
 
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, @read_model_queue})
+
+      run_dispatch_entries =
+        Enum.filter(dispatch_entries, &(&1.data.run_id == source.run_id))
+
+      assert %{data: %{runnable_key: original_runnable_key, trace: original_trace}} =
+               Enum.find(run_dispatch_entries, &(&1.type == :attempt_scheduled))
+
+      assert %{data: %{trace: ^original_trace, retry_trace: persisted_retry_trace}} =
+               Enum.find(run_dispatch_entries, &(&1.type == :attempt_failed))
+
+      assert persisted_retry_trace == retry_runnable.trace
+      assert persisted_retry_trace.trace_id == original_trace.trace_id
+      assert persisted_retry_trace.parent_span_id == original_trace.span_id
+      assert persisted_retry_trace.causation_id == original_runnable_key
+      refute persisted_retry_trace.span_id == original_trace.span_id
+
       assert retry_runnable.recovery == %{
                "irreversible?" => false,
                "compensatable?" => true,
@@ -10319,6 +10576,27 @@ defmodule SquidieTest do
                  }
                }
              } = Enum.at(run_entries, 4)
+
+      raw_entries = raw_run_entries(run_id, @read_model_storage)
+
+      assert %{data: %{signal_id: signal_id, trace: command_trace}} =
+               Enum.find(raw_entries, fn entry ->
+                 entry.type == :run_signal_received and entry.data.signal_type == "resume_run"
+               end)
+
+      assert %{data: %{trace: ^command_trace}} =
+               Enum.find(raw_entries, &(&1.type == :manual_step_resolved))
+
+      assert %{trace: continuation_trace} =
+               run_entries
+               |> Enum.filter(&(&1.type == :runnables_planned))
+               |> Enum.flat_map(&Map.fetch!(&1.data, :runnables))
+               |> Enum.find(&(&1.step == "record_delivery"))
+
+      assert continuation_trace.trace_id == command_trace.trace_id
+      assert continuation_trace.parent_span_id == command_trace.span_id
+      assert continuation_trace.causation_id == signal_id
+      refute continuation_trace.span_id == command_trace.span_id
 
       assert {:ok, %Snapshot{} = replayed_resume_snapshot} =
                Squidie.resume(
@@ -11457,6 +11735,17 @@ defmodule SquidieTest do
                |> Enum.filter(&(&1.step == "send_email"))
 
       assert delayed_runnable.visible_at == delayed_at
+
+      assert wait_runnable =
+               run_entries
+               |> Enum.filter(&(&1.type == :runnables_planned))
+               |> Enum.flat_map(&Map.fetch!(&1.data, :runnables))
+               |> Enum.find(&(&1.step == "wait_for_settlement"))
+
+      assert delayed_runnable.trace.trace_id == wait_runnable.trace.trace_id
+      assert delayed_runnable.trace.parent_span_id == wait_runnable.trace.span_id
+      assert delayed_runnable.trace.causation_id == wait_runnable.runnable_key
+      refute delayed_runnable.trace.span_id == wait_runnable.trace.span_id
     end
 
     test "journal runtime recovers dependency wait successor delay after dispatch completion" do
@@ -12500,6 +12789,136 @@ defmodule SquidieTest do
       assert transactional_events(started_snapshot.run_id) == ["recorded"]
     end
 
+    test "repo transaction telemetry flushes after commit and is discarded after completion rollback" do
+      Repo.delete_all("transactional_events")
+
+      queue = "repo-transaction-telemetry-#{System.unique_integer([:positive])}"
+      storage = {Squidie.Runtime.Journal.Storage.Ecto, repo: Repo}
+
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               Squidie.start(
+                 RepoTransactionWorkflow,
+                 :repo_transaction,
+                 %{account_id: "acct_repo_txn_telemetry"},
+                 runtime: :journal,
+                 journal_storage: storage,
+                 queue: queue,
+                 now: @read_model_started_at
+               )
+
+      events = [
+        [:squidie, :runtime, :attempt, :completed],
+        [:squidie, :runtime, :runnable, :applied],
+        [:squidie, :runtime, :run, :terminal]
+      ]
+
+      Squidie.Test.TelemetryCapture.attach(events)
+
+      test_after_transaction_completion = fn %{run_id: run_id} ->
+        assert run_id == started_snapshot.run_id
+        refute_receive {:telemetry_event, _event, _measurements, _metadata}
+        {:error, :simulated_completion_rollback}
+      end
+
+      assert {:error, {:test_after_transaction_completion, :simulated_completion_rollback}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: storage,
+                 queue: queue,
+                 owner_id: "repo-txn-telemetry-rollback",
+                 lease_for: 1,
+                 now: @read_model_visible_at,
+                 test_after_transaction_completion: test_after_transaction_completion
+               )
+
+      assert transactional_events(started_snapshot.run_id) == []
+      refute_receive {:telemetry_event, _, _, _}
+
+      executor_stop = [:squidie, :runtime, :executor, :execute_next, :stop]
+      Squidie.Test.TelemetryCapture.attach([executor_stop])
+
+      assert {:ok, %Snapshot{status: :completed}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: storage,
+                 queue: queue,
+                 owner_id: "repo-txn-telemetry-commit",
+                 now: DateTime.add(@read_model_visible_at, 2, :second)
+               )
+
+      for event <- events do
+        assert_receive {:telemetry_event, ^event, %{count: 1}, metadata}
+        assert metadata.run_id == started_snapshot.run_id
+      end
+
+      assert_receive {:telemetry_event, ^executor_stop, %{duration: duration}, %{outcome: :ok}}
+      assert duration >= 0
+
+      assert transactional_events(started_snapshot.run_id) == ["recorded"]
+      refute_receive {:telemetry_event, _, _, _}
+    end
+
+    test "repo transaction telemetry is discarded while raise throw and exit semantics are preserved" do
+      Repo.delete_all("transactional_events")
+
+      storage = {Squidie.Runtime.Journal.Storage.Ecto, repo: Repo}
+
+      events = [
+        [:squidie, :runtime, :attempt, :completed],
+        [:squidie, :runtime, :runnable, :applied],
+        [:squidie, :runtime, :run, :terminal]
+      ]
+
+      Squidie.Test.TelemetryCapture.attach(events)
+
+      operations = [
+        {:raise, fn -> raise "expected transaction raise" end},
+        {:throw, fn -> throw(:expected_transaction_throw) end},
+        {:exit, fn -> exit(:expected_transaction_exit) end}
+      ]
+
+      for {kind, operation} <- operations do
+        queue = "repo-transaction-#{kind}-#{System.unique_integer([:positive])}"
+
+        assert {:ok, %Snapshot{} = started} =
+                 Squidie.start(
+                   RepoTransactionWorkflow,
+                   :repo_transaction,
+                   %{account_id: "acct_repo_txn_#{kind}"},
+                   runtime: :journal,
+                   journal_storage: storage,
+                   queue: queue,
+                   now: @read_model_started_at
+                 )
+
+        hook = fn %{run_id: run_id} ->
+          assert run_id == started.run_id
+          refute_receive {:telemetry_event, _event, _measurements, _metadata}
+          operation.()
+        end
+
+        execute = fn ->
+          execute_journal_next(
+            runtime: :journal,
+            journal_storage: storage,
+            queue: queue,
+            owner_id: "repo-txn-#{kind}",
+            now: @read_model_visible_at,
+            test_after_transaction_completion: hook
+          )
+        end
+
+        case kind do
+          :raise -> assert_raise RuntimeError, "expected transaction raise", execute
+          :throw -> assert catch_throw(execute.()) == :expected_transaction_throw
+          :exit -> assert catch_exit(execute.()) == :expected_transaction_exit
+        end
+
+        refute_receive {:telemetry_event, _, _, _}
+        assert transactional_events(started.run_id) == []
+      end
+    end
+
     test "execute_next/1 heartbeats returned step output until durable completion" do
       parent = self()
 
@@ -12588,6 +13007,130 @@ defmodule SquidieTest do
       assert error.retryable? == false
     end
 
+    test "executor and step spans enclose committed lifecycle events in order" do
+      assert {:ok, %Snapshot{} = started} =
+               Squidie.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_span_order"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      executor_prefix = [:squidie, :runtime, :executor, :execute_next]
+      step_prefix = [:squidie, :runtime, :step, :execute]
+
+      events = [
+        Enum.concat(executor_prefix, [:start]),
+        [:squidie, :runtime, :attempt, :claimed],
+        Enum.concat(step_prefix, [:start]),
+        Enum.concat(step_prefix, [:stop]),
+        [:squidie, :runtime, :attempt, :completed],
+        [:squidie, :runtime, :runnable, :applied],
+        [:squidie, :runtime, :run, :terminal],
+        Enum.concat(executor_prefix, [:stop])
+      ]
+
+      Squidie.Test.TelemetryCapture.attach(events)
+
+      assert {:ok, %Snapshot{status: :completed}} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "span-order-worker",
+                 now: @read_model_visible_at
+               )
+
+      assert_receive {:telemetry_event, executor_start, executor_start_measurements,
+                      executor_start_metadata}
+
+      assert executor_start == Enum.concat(executor_prefix, [:start])
+      assert is_integer(executor_start_measurements.monotonic_time)
+      assert executor_start_metadata == %{queue: @read_model_queue, outcome: :unknown}
+
+      assert_receive {:telemetry_event, [:squidie, :runtime, :attempt, :claimed], %{count: 1},
+                      claimed_metadata}
+
+      assert claimed_metadata.run_id == started.run_id
+
+      assert_receive {:telemetry_event, step_start, step_start_measurements, step_start_metadata}
+
+      assert step_start == Enum.concat(step_prefix, [:start])
+      assert is_integer(step_start_measurements.monotonic_time)
+      assert step_start_metadata.workflow == Atom.to_string(PaymentRecoveryWorkflow)
+      assert step_start_metadata.step == "check_gateway"
+      assert step_start_metadata.run_id == started.run_id
+      assert step_start_metadata.outcome == :unknown
+
+      assert_receive {:telemetry_event, step_stop, %{duration: step_duration}, step_stop_metadata}
+
+      assert step_stop == Enum.concat(step_prefix, [:stop])
+      assert step_duration >= 0
+      assert step_stop_metadata == %{step_start_metadata | outcome: :ok}
+
+      for event <- [
+            [:squidie, :runtime, :attempt, :completed],
+            [:squidie, :runtime, :runnable, :applied],
+            [:squidie, :runtime, :run, :terminal]
+          ] do
+        assert_receive {:telemetry_event, ^event, %{count: 1}, %{run_id: run_id}}
+        assert run_id == started.run_id
+      end
+
+      assert_receive {:telemetry_event, executor_stop, %{duration: executor_duration},
+                      executor_stop_metadata}
+
+      assert executor_stop == Enum.concat(executor_prefix, [:stop])
+      assert executor_duration >= 0
+      assert executor_stop_metadata == %{executor_start_metadata | outcome: :ok}
+      refute_receive {:telemetry_event, _, _, _}
+    end
+
+    test "executor exceptions emit sanitized exception spans and preserve raises" do
+      assert {:ok, %Snapshot{} = started} =
+               Squidie.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_executor_exception"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      prefix = [:squidie, :runtime, :executor, :execute_next]
+      events = Enum.map([:start, :stop, :exception], &Enum.concat(prefix, [&1]))
+      Squidie.Test.TelemetryCapture.attach(events)
+
+      assert_raise RuntimeError, "secret-sentinel", fn ->
+        execute_journal_next(
+          runtime: :journal,
+          journal_storage: @read_model_storage,
+          queue: @read_model_queue,
+          owner_id: "executor-exception-worker",
+          now: @read_model_visible_at,
+          test_after_claim: fn attempt ->
+            assert attempt.run_id == started.run_id
+            raise "secret-sentinel"
+          end
+        )
+      end
+
+      assert_receive {:telemetry_event, start_event, _measurements, start_metadata}
+      assert start_event == Enum.concat(prefix, [:start])
+      assert start_metadata == %{queue: @read_model_queue, outcome: :unknown}
+
+      assert_receive {:telemetry_event, exception_event, %{duration: duration},
+                      exception_metadata}
+
+      assert exception_event == Enum.concat(prefix, [:exception])
+      assert duration >= 0
+      assert exception_metadata == %{queue: @read_model_queue, outcome: :exception}
+      refute inspect(exception_metadata) =~ "secret-sentinel"
+      refute_receive {:telemetry_event, _, _, _}
+    end
+
     test "execute_next/1 plans and schedules the successor step after a journal completion" do
       assert {:ok, %Snapshot{} = started_snapshot} =
                Squidie.start(
@@ -12624,6 +13167,29 @@ defmodule SquidieTest do
                invoice: %{id: "inv_456", status: "open"}
              }
 
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, @read_model_queue})
+
+      scheduled_entries =
+        Enum.filter(dispatch_entries, fn entry ->
+          entry.type == :attempt_scheduled and entry.data.run_id == started_snapshot.run_id
+        end)
+
+      assert [
+               %{data: %{runnable_key: parent_runnable_key, trace: parent_trace}},
+               %{data: %{trace: successor_trace}}
+             ] = scheduled_entries
+
+      assert successor_trace.trace_id == parent_trace.trace_id
+      assert successor_trace.parent_span_id == parent_trace.span_id
+      assert successor_trace.causation_id == parent_runnable_key
+      refute successor_trace.span_id == parent_trace.span_id
+
+      assert {:ok, run_entries} = load_read_model_run_entries(started_snapshot.run_id)
+
+      assert %{data: %{trace: ^parent_trace}} =
+               Enum.find(run_entries, &(&1.type == :runnable_applied))
+
       assert {:ok, %Snapshot{} = completed_snapshot} =
                execute_journal_next(
                  runtime: :journal,
@@ -12638,6 +13204,14 @@ defmodule SquidieTest do
       assert completed_snapshot.status == :completed
       assert completed_snapshot.reason == :terminal
       assert completed_snapshot.terminal? == true
+
+      completed_run_entries = raw_run_entries(started_snapshot.run_id, @read_model_storage)
+
+      assert %{data: %{trace: run_trace}} =
+               Enum.find(completed_run_entries, &(&1.type == :run_started))
+
+      assert %{data: %{trace: ^run_trace}} =
+               Enum.find(completed_run_entries, &(&1.type == :run_terminal))
 
       assert Enum.map(completed_snapshot.attempts, & &1.step) == [
                "load_invoice",
@@ -14924,6 +15498,19 @@ defmodule SquidieTest do
                  now: @read_model_started_at
                )
 
+      executor_prefix = [:squidie, :runtime, :executor, :execute_next]
+      step_prefix = [:squidie, :runtime, :step, :execute]
+
+      span_events = [
+        Enum.concat(executor_prefix, [:start]),
+        Enum.concat(step_prefix, [:start]),
+        Enum.concat(step_prefix, [:stop]),
+        Enum.concat(step_prefix, [:exception]),
+        Enum.concat(executor_prefix, [:stop])
+      ]
+
+      Squidie.Test.TelemetryCapture.attach(span_events)
+
       assert {:ok, %Snapshot{status: :failed, terminal?: true}} =
                Squidie.execute_next(
                  journal_storage: @read_model_storage,
@@ -14931,6 +15518,31 @@ defmodule SquidieTest do
                  owner_id: "exception-worker",
                  now: @read_model_visible_at
                )
+
+      assert_receive {:telemetry_event, executor_start, _measurements,
+                      %{outcome: :unknown} = executor_metadata}
+
+      assert executor_start == Enum.concat(executor_prefix, [:start])
+
+      assert_receive {:telemetry_event, step_start, _measurements,
+                      %{outcome: :unknown} = step_metadata}
+
+      assert step_start == Enum.concat(step_prefix, [:start])
+      assert step_metadata.run_id == started_snapshot.run_id
+
+      assert_receive {:telemetry_event, step_stop, %{duration: step_duration}, step_stop_metadata}
+
+      assert step_stop == Enum.concat(step_prefix, [:stop])
+      assert step_duration >= 0
+      assert step_stop_metadata == %{step_metadata | outcome: :error}
+
+      assert_receive {:telemetry_event, executor_stop, %{duration: executor_duration},
+                      executor_stop_metadata}
+
+      assert executor_stop == Enum.concat(executor_prefix, [:stop])
+      assert executor_duration >= 0
+      assert executor_stop_metadata == %{executor_metadata | outcome: :ok}
+      refute_receive {:telemetry_event, _, _, _}
 
       assert {:ok, %Snapshot{status: :failed, terminal?: true} = inspected_snapshot} =
                Squidie.inspect_run(started_snapshot.run_id,
@@ -15264,13 +15876,24 @@ defmodule SquidieTest do
   end
 
   defp step_context(%Snapshot{} = snapshot, opts) do
+    runnable_key = Keyword.fetch!(opts, :runnable_key)
+
+    trace =
+      snapshot.planned_runnables
+      |> Enum.find(&(Map.get(&1, :runnable_key) == runnable_key))
+      |> case do
+        nil -> nil
+        runnable -> Map.get(runnable, :trace)
+      end
+
     %Squidie.Step.Context{
       run_id: snapshot.run_id,
       partition: snapshot.partition,
       workflow: PaymentRecoveryWorkflow,
       step: Keyword.fetch!(opts, :step),
       attempt: Keyword.get(opts, :attempt, 1),
-      runnable_key: Keyword.fetch!(opts, :runnable_key),
+      runnable_key: runnable_key,
+      trace: trace,
       state: Keyword.get(opts, :state, %{})
     }
   end

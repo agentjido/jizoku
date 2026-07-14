@@ -29,6 +29,7 @@ defmodule Squidie do
   alias Squidie.Runtime.Routing
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Workflow.ActionRegistry
   alias Squidie.Workflow.SpecPreview
@@ -478,7 +479,8 @@ defmodule Squidie do
          {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides),
          {:ok, context} <- dynamic_work_context(snapshot, overrides),
          {:ok, intent} <-
-           DynamicWork.new_entry(run_id, attrs, now, context) do
+           DynamicWork.new_entry(run_id, attrs, now, context),
+         {:ok, intent} <- trace_dynamic_work_intent(intent, snapshot) do
       record_dynamic_work_intent(storage, run_id, overrides, snapshot, intent)
     end
   end
@@ -525,6 +527,7 @@ defmodule Squidie do
              now,
              context
            ),
+         {:ok, intent} <- trace_dynamic_work_intent(intent, snapshot),
          :ok <- dynamic_work_origin_applied(intent, snapshot),
          {:ok, runnables} <- dynamic_work_runnables(run_id, intent, queue, now, registry) do
       schedule_dynamic_work_intent(storage, run_id, overrides, snapshot, intent, runnables, now)
@@ -1180,6 +1183,7 @@ defmodule Squidie do
          step: node_id,
          input: Map.get(node, :input, %{}),
          visible_at: now,
+         trace: dynamic_node_trace(dynamic_work, node_id),
          recovery: dynamic_work_recovery(Map.get(node, :action)),
          dynamic?: true,
          dynamic_work: %{
@@ -1241,6 +1245,44 @@ defmodule Squidie do
       {:error, {:invalid_dynamic_work, {:origin, :unapplied_runnable}}}
     end
   end
+
+  defp trace_dynamic_work_intent(:duplicate, %Inspection.Snapshot{}), do: {:ok, :duplicate}
+
+  defp trace_dynamic_work_intent(
+         %DispatchProtocol.Entry{data: %{origin: %{runnable_key: origin_key}}} = entry,
+         %Inspection.Snapshot{} = snapshot
+       ) do
+    origin_trace =
+      snapshot.planned_runnables
+      |> Enum.find(&(Squidie.MapField.get(&1, :runnable_key) == origin_key))
+      |> case do
+        nil -> nil
+        runnable -> Squidie.MapField.get(runnable, :trace)
+      end
+
+    case origin_trace do
+      trace when is_map(trace) ->
+        case Trace.child_of(trace, origin_key) do
+          {:ok, dynamic_trace} ->
+            {:ok, %{entry | data: Map.put(entry.data, :trace, dynamic_trace)}}
+
+          {:error, _reason} ->
+            {:ok, entry}
+        end
+
+      _legacy_untraced ->
+        {:ok, entry}
+    end
+  end
+
+  defp dynamic_node_trace(%{trace: trace}, node_id) when is_map(trace) do
+    case Trace.child_of(trace, node_id) do
+      {:ok, node_trace} -> node_trace
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp dynamic_node_trace(_dynamic_work, _node_id), do: nil
 
   defp dynamic_work_context(%Inspection.Snapshot{terminal?: true} = snapshot, overrides) do
     maybe_put_dynamic_work_action_registry(

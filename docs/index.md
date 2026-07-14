@@ -45,7 +45,7 @@ Use these when building or embedding Squidie in an application.
   production concerns.
 - [Observability](observability.md) - durable read-model surfaces,
   field-selection and redaction guidance, operator explanations, graph output,
-  host-owned telemetry, and logs.
+  runtime telemetry, host-owned reporting, and logs.
 - [Actor Visibility](actor_visibility.md) - actor-scoped visibility patterns,
   redaction policies, multi-tenant access control, and security best practices.
 

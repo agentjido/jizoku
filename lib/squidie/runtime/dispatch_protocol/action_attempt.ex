@@ -8,13 +8,17 @@ defmodule Squidie.Runtime.DispatchProtocol.ActionAttempt do
 
   @type status :: :available | :retry_scheduled | :claimed | :completed | :failed
 
+  alias Squidie.Runtime.Trace
+
   @type t :: %__MODULE__{
           run_id: String.t(),
+          workflow: String.t() | nil,
           runnable_key: String.t(),
           idempotency_key: String.t(),
           attempt_number: pos_integer(),
           step: String.t(),
           input: map(),
+          trace: Trace.t() | nil,
           scheduled_at: DateTime.t() | nil,
           visible_at: DateTime.t(),
           status: status(),
@@ -46,11 +50,13 @@ defmodule Squidie.Runtime.DispatchProtocol.ActionAttempt do
   ]
   defstruct [
     :run_id,
+    :workflow,
     :runnable_key,
     :idempotency_key,
     :attempt_number,
     :step,
     :input,
+    :trace,
     :scheduled_at,
     :visible_at,
     :status,
@@ -69,4 +75,11 @@ defmodule Squidie.Runtime.DispatchProtocol.ActionAttempt do
     wakeup_emitted?: false,
     applied?: false
   ]
+
+  @doc false
+  @spec upgrade(t()) :: t()
+  def upgrade(%__MODULE__{} = attempt) do
+    attributes = Map.delete(attempt, :__struct__)
+    struct(__MODULE__, attributes)
+  end
 end

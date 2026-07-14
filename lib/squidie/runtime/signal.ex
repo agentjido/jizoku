@@ -23,10 +23,12 @@ defmodule Squidie.Runtime.Signal do
 
   alias Squidie.Runtime.Partition
   alias Squidie.Runtime.ScheduleIdentity
+  alias Squidie.Runtime.Trace
   alias Squidie.Workflow.Definition
 
-  @common_options [:metadata, :occurred_at, :idempotency_key, :partition]
+  @common_options [:id, :trace, :metadata, :occurred_at, :idempotency_key, :partition]
   @replay_options [:allow_irreversible | @common_options]
+  @max_id_bytes 255
 
   @type command_type ::
           :start_run
@@ -47,8 +49,10 @@ defmodule Squidie.Runtime.Signal do
         }
 
   @type t :: %__MODULE__{
+          id: String.t() | nil,
           type: command_type(),
           payload: payload(),
+          trace: Trace.t() | nil,
           partition: String.t() | nil,
           metadata: map(),
           occurred_at: DateTime.t(),
@@ -58,7 +62,16 @@ defmodule Squidie.Runtime.Signal do
   @type error :: {:invalid_signal, term()}
 
   @enforce_keys [:type, :payload, :metadata, :occurred_at]
-  defstruct [:type, :payload, :occurred_at, :partition, metadata: %{}, idempotency_key: nil]
+  defstruct [
+    :id,
+    :type,
+    :payload,
+    :occurred_at,
+    :partition,
+    :trace,
+    metadata: %{},
+    idempotency_key: nil
+  ]
 
   @doc """
   Builds a command signal for starting a workflow run.
@@ -157,9 +170,11 @@ defmodule Squidie.Runtime.Signal do
   defp new(type, payload, envelope) do
     {:ok,
      struct!(__MODULE__,
+       id: envelope.id,
        type: type,
        payload: payload,
        partition: envelope.partition,
+       trace: envelope.trace,
        metadata: envelope.metadata,
        occurred_at: envelope.occurred_at,
        idempotency_key: envelope.idempotency_key
@@ -213,9 +228,13 @@ defmodule Squidie.Runtime.Signal do
          {:ok, metadata} <- metadata(Keyword.get(opts, :metadata, %{})),
          {:ok, occurred_at} <- occurred_at(Keyword.get(opts, :occurred_at)),
          {:ok, idempotency_key} <- idempotency_key(Keyword.get(opts, :idempotency_key)),
-         {:ok, partition} <- signal_partition(Keyword.get(opts, :partition)) do
+         {:ok, partition} <- signal_partition(Keyword.get(opts, :partition)),
+         {:ok, id} <- signal_id(Keyword.get(opts, :id)),
+         {:ok, trace} <- signal_trace(Keyword.get(opts, :trace)) do
       {:ok,
        %{
+         id: id,
+         trace: trace,
          metadata: metadata,
          occurred_at: occurred_at,
          idempotency_key: idempotency_key,
@@ -253,6 +272,27 @@ defmodule Squidie.Runtime.Signal do
   defp idempotency_key(value) when is_binary(value) and value != "", do: {:ok, value}
 
   defp idempotency_key(_value), do: invalid(:idempotency_key, :expected_non_empty_string)
+
+  defp signal_id(nil), do: {:ok, Ecto.UUID.generate()}
+
+  defp signal_id(value) when is_binary(value) and value != "" do
+    cond do
+      byte_size(value) > @max_id_bytes -> invalid(:id, :too_long)
+      not String.valid?(value) -> invalid(:id, :invalid)
+      true -> {:ok, value}
+    end
+  end
+
+  defp signal_id(_value), do: invalid(:id, :expected_non_empty_string)
+
+  defp signal_trace(nil), do: {:ok, nil}
+
+  defp signal_trace(trace) do
+    case Trace.normalize(trace) do
+      {:ok, trace} -> {:ok, trace}
+      {:error, {:invalid_trace, reason}} -> invalid(:trace, reason)
+    end
+  end
 
   defp signal_partition(partition) do
     case Partition.normalize(partition) do

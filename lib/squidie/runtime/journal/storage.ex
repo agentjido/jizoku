@@ -10,7 +10,7 @@ defmodule Squidie.Runtime.Journal.Storage do
   """
 
   @enforce_keys [:adapter, :opts, :config]
-  defstruct [:adapter, :opts, :config, partition: nil]
+  defstruct [:adapter, :opts, :config, :commit_buffer, partition: nil]
 
   @storage_callbacks [
     get_checkpoint: 2,
@@ -26,6 +26,7 @@ defmodule Squidie.Runtime.Journal.Storage do
           adapter: module(),
           opts: keyword(),
           config: config(),
+          commit_buffer: Squidie.Telemetry.CommitBuffer.t() | nil,
           partition: String.t() | nil
         }
 
@@ -45,10 +46,38 @@ defmodule Squidie.Runtime.Journal.Storage do
   def partition(_storage), do: nil
 
   @doc false
+  @spec commit_buffer(t() | config()) :: Squidie.Telemetry.CommitBuffer.t() | nil
+  def commit_buffer(%__MODULE__{commit_buffer: commit_buffer}), do: commit_buffer
+  def commit_buffer(_storage), do: nil
+
+  @doc false
+  @spec put_commit_buffer(t() | config(), Squidie.Telemetry.CommitBuffer.t()) ::
+          {:ok, t()} | {:error, {:invalid_option, term()}}
+  def put_commit_buffer(storage, %Squidie.Telemetry.CommitBuffer{} = commit_buffer) do
+    with {:ok, %__MODULE__{} = storage} <- normalize(storage) do
+      {:ok, %__MODULE__{storage | commit_buffer: commit_buffer}}
+    end
+  end
+
+  @doc false
   @spec normalize(term()) :: {:ok, t()} | {:error, {:invalid_option, term()}}
-  def normalize(%__MODULE__{adapter: module, opts: opts, partition: partition} = storage)
+  def normalize(
+        %__MODULE__{
+          adapter: module,
+          opts: opts,
+          partition: partition,
+          commit_buffer: commit_buffer
+        } = storage
+      )
       when is_atom(module) and is_list(opts) do
-    validate_storage_module(module, storage, storage_config(module, opts), opts, partition)
+    validate_storage_module(
+      module,
+      storage,
+      storage_config(module, opts),
+      opts,
+      partition,
+      commit_buffer
+    )
   end
 
   def normalize(%__MODULE__{} = storage), do: invalid_storage(storage)
@@ -56,11 +85,11 @@ defmodule Squidie.Runtime.Journal.Storage do
   def normalize(nil), do: {:error, {:invalid_option, {:journal_storage, nil}}}
 
   def normalize(storage) when is_atom(storage) do
-    validate_storage_module(storage, storage, storage, [], nil)
+    validate_storage_module(storage, storage, storage, [], nil, nil)
   end
 
   def normalize({module, opts} = storage) when is_atom(module) and is_list(opts) do
-    validate_storage_module(module, storage, storage, opts, nil)
+    validate_storage_module(module, storage, storage, opts, nil, nil)
   end
 
   def normalize(storage), do: invalid_storage(storage)
@@ -99,12 +128,20 @@ defmodule Squidie.Runtime.Journal.Storage do
     end
   end
 
-  defp validate_storage_module(module, storage, config, opts, partition) do
+  defp validate_storage_module(module, storage, config, opts, partition, commit_buffer) do
     with {:module, ^module} <- Code.ensure_loaded(module),
          true <- storage_callbacks?(module),
          :ok <- validate_storage_options(module, opts),
+         :ok <- validate_commit_buffer(commit_buffer),
          {:ok, partition} <- Squidie.Runtime.Partition.normalize(partition) do
-      {:ok, %__MODULE__{adapter: module, opts: opts, config: config, partition: partition}}
+      {:ok,
+       %__MODULE__{
+         adapter: module,
+         opts: opts,
+         config: config,
+         partition: partition,
+         commit_buffer: commit_buffer
+       }}
     else
       {:error, {:invalid_option, {:partition, :invalid}}} = error -> error
       _error -> invalid_storage(storage)
@@ -149,6 +186,10 @@ defmodule Squidie.Runtime.Journal.Storage do
   end
 
   defp validate_storage_options(_module, _opts), do: :ok
+
+  defp validate_commit_buffer(nil), do: :ok
+  defp validate_commit_buffer(%Squidie.Telemetry.CommitBuffer{}), do: :ok
+  defp validate_commit_buffer(_commit_buffer), do: :error
 
   defp invalid_storage(%__MODULE__{adapter: module}) when is_atom(module) do
     {:error, {:invalid_option, {:journal_storage, module}}}

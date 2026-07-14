@@ -10,6 +10,8 @@ This page defines the currently supported baseline for Squidie.
 | Erlang/OTP | `28.4.1` |
 | Postgres | `15+` |
 | Jido | `2.0+` |
+| Telemetry | `1.3+` |
+| Telemetry.Metrics | `1.1+` |
 
 ## What Supported Means
 
@@ -28,6 +30,8 @@ Supported host apps are expected to provide:
 - a supervised worker that calls `Squidie.execute_next/1`
 - a scheduler that can deliver cron payloads to `Squidie.Runtime.Runner.perform/2`, if the app uses cron triggers
 - step modules that conform to the current Squidie action contract
+- a host-selected telemetry reporter or exporter only when runtime metrics or
+  traces should leave the BEAM
 
 ## Storage Compatibility
 
