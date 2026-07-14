@@ -3508,6 +3508,10 @@ defmodule SquidieTest do
         :persistent_term.erase(
           {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id}
         )
+
+        :persistent_term.erase(
+          {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id, :trace}
+        )
       end)
 
       finished_at = DateTime.add(@read_model_visible_at, 1, :second)
@@ -3661,6 +3665,10 @@ defmodule SquidieTest do
         :persistent_term.erase(
           {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id}
         )
+
+        :persistent_term.erase(
+          {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id, :trace}
+        )
       end)
 
       deferred_finished_at = DateTime.add(@read_model_visible_at, 1, :second)
@@ -3757,6 +3765,8 @@ defmodule SquidieTest do
 
       on_exit(fn ->
         :persistent_term.erase({DeferredContinuationWorkflow.CheckGateway, source.run_id})
+
+        :persistent_term.erase({DeferredContinuationWorkflow.CheckGateway, source.run_id, :trace})
       end)
 
       assert {:ok, %Snapshot{reason: :deferred_continuation}} =
@@ -3788,6 +3798,8 @@ defmodule SquidieTest do
 
       on_exit(fn ->
         :persistent_term.erase({DeferredContinuationWorkflow.CheckGateway, replay.run_id})
+
+        :persistent_term.erase({DeferredContinuationWorkflow.CheckGateway, replay.run_id, :trace})
       end)
 
       assert replay.run_id != source.run_id
@@ -3856,6 +3868,10 @@ defmodule SquidieTest do
       on_exit(fn ->
         :persistent_term.erase(
           {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id}
+        )
+
+        :persistent_term.erase(
+          {DeferredContinuationWorkflow.CheckGateway, started_snapshot.run_id, :trace}
         )
       end)
 

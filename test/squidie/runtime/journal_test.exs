@@ -502,7 +502,7 @@ defmodule Squidie.Runtime.JournalTest do
     runnable =
       scheduled_attrs(trace: @trace)
       |> Map.delete(:occurred_at)
-      |> Map.put(:payload, %{password: "secret-sentinel"})
+      |> Map.put(:input, %{password: "secret-sentinel"})
 
     run_entries = [
       entry!(:run_signal_received, %{

@@ -43,8 +43,6 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          {:ok, metadata} <- metadata(opts),
          {:ok, origin} <- origin(parent_context),
          {:ok, parent_run_id} <- parent_run_id(parent_context),
-         {:ok, parent_trace} <- durable_parent_trace(storage, parent_run_id, parent_context),
-         {:ok, child_trace} <- child_trace(parent_trace, origin),
          {:ok, resolved_payload} <- validate_child_start(child_workflow, child_trigger, payload),
          {:ok, child_run_id} <-
            child_run_id(
@@ -62,7 +60,7 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
            child_key: child_key,
            origin: origin,
            metadata: metadata,
-           trace: child_trace
+           trace: nil
          },
          :ok <- ensure_child_startable(storage, child_run_id, child, parent, resolved_payload),
          {:ok, linked_parent} <-
@@ -189,21 +187,6 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
   end
 
   defp origin(%Context{}), do: {:error, {:invalid_parent_context, :origin}}
-
-  defp durable_parent_trace(storage, parent_run_id, %Context{} = context) do
-    with {:ok, %{entries: entries}} <- Journal.load_thread(storage, {:run, parent_run_id}),
-         projection = Projection.rebuild(entries),
-         runnable when is_map(runnable) <-
-           Enum.find(
-             Projection.planned_runnables(projection),
-             &(runnable_value(&1, :runnable_key) == context.runnable_key)
-           ) do
-      {:ok, runnable_value(runnable, :trace)}
-    else
-      nil -> {:error, {:invalid_parent_context, :runnable_key}}
-      {:error, _reason} = error -> error
-    end
-  end
 
   defp child_trace(nil, _origin), do: {:ok, nil}
 
@@ -362,16 +345,32 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
         {:error, :conflict}
 
       :missing ->
-        append_parent_child_link(
-          storage,
-          parent_context,
-          parent_run_id,
-          child,
-          now,
-          rev,
-          projection,
-          retries_left
-        )
+        with {:ok, child} <- put_child_trace(child, projection, parent_context) do
+          append_parent_child_link(
+            storage,
+            parent_context,
+            parent_run_id,
+            child,
+            now,
+            rev,
+            projection,
+            retries_left
+          )
+        end
+    end
+  end
+
+  defp put_child_trace(child, projection, %Context{} = context) do
+    with runnable when is_map(runnable) <-
+           Enum.find(
+             Projection.planned_runnables(projection),
+             &(runnable_value(&1, :runnable_key) == context.runnable_key)
+           ),
+         {:ok, trace} <- child_trace(runnable_value(runnable, :trace), child.origin) do
+      {:ok, %{child | trace: trace}}
+    else
+      nil -> {:error, {:invalid_parent_context, :runnable_key}}
+      {:error, _reason} = error -> error
     end
   end
 
