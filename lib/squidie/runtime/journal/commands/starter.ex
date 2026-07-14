@@ -27,6 +27,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
   alias Squidie.Runtime.RunCatalogProjection
   alias Squidie.Runtime.RunIndexProjection
   alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Workflow.ActionRegistry
@@ -69,6 +70,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
          {:ok, run_id} <- run_id(opts),
          :ok <- validate_initial_context(opts),
          {:ok, journal_runnables} <- journal_runnables(definition, run_id, queue, runnables, now),
+         {:ok, journal_runnables, opts} <- traced_start_runnables(journal_runnables, opts),
          {:ok, start_state} <-
            ensure_run_started(
              storage,
@@ -115,6 +117,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
          :ok <- validate_initial_context(opts),
          {:ok, journal_runnables} <-
            journal_runnables(persisted_definition, run_id, queue, runnables, now),
+         {:ok, journal_runnables, opts} <- traced_start_runnables(journal_runnables, opts),
          {:ok, start_state} <-
            ensure_run_started(
              storage,
@@ -334,6 +337,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
           replayed_from_run_id: replayed_from_run_id(opts),
           definition_version: definition.definition_version,
           definition_fingerprint: expected_fingerprint,
+          trace: start_run_trace(opts),
           occurred_at: now
         },
         definition_source,
@@ -349,6 +353,8 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
                run_id: run_id,
                payload: start_signal_payload(opts, workflow, trigger, input),
                metadata: start_signal_metadata(opts),
+               signal_id: start_signal_id(opts),
+               trace: start_run_trace(opts),
                idempotency_key: start_signal_idempotency_key(opts)
              },
              now
@@ -430,6 +436,63 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
       %Signal{metadata: metadata} -> metadata
       nil -> %{}
     end
+  end
+
+  defp traced_start_runnables(runnables, opts) when is_list(runnables) and is_list(opts) do
+    with {:ok, signal_id, run_trace, opts} <- start_trace_context(opts),
+         {:ok, runnables} <- trace_initial_runnables(runnables, run_trace, signal_id) do
+      lineage = %{signal_id: signal_id, run_trace: run_trace}
+      {:ok, runnables, Keyword.put(opts, :start_trace_lineage, lineage)}
+    end
+  end
+
+  defp start_trace_context(opts) do
+    case start_command_signal(opts) do
+      %Signal{} = signal ->
+        with {:ok, signal_id} <- start_trace_signal_id(signal.id),
+             {:ok, run_trace} <- normalized_or_new_trace(signal.trace) do
+          signal = %Signal{signal | id: signal_id, trace: run_trace}
+          {:ok, signal_id, run_trace, Keyword.put(opts, :command_signal, signal)}
+        end
+
+      nil ->
+        with {:ok, run_trace} <- Trace.new_root() do
+          {:ok, Ecto.UUID.generate(), run_trace, opts}
+        end
+    end
+  end
+
+  defp start_trace_signal_id(id) when is_binary(id) and id != "", do: {:ok, id}
+  defp start_trace_signal_id(_id), do: {:ok, Ecto.UUID.generate()}
+
+  defp normalized_or_new_trace(nil), do: Trace.new_root()
+  defp normalized_or_new_trace(trace), do: Trace.normalize(trace)
+
+  defp trace_initial_runnables(runnables, run_trace, signal_id) do
+    result =
+      Enum.reduce_while(runnables, {:ok, []}, fn runnable, {:ok, traced_runnables} ->
+        case Trace.child_of(run_trace, signal_id) do
+          {:ok, trace} -> {:cont, {:ok, [Map.put(runnable, :trace, trace) | traced_runnables]}}
+          {:error, _reason} = error -> {:halt, error}
+        end
+      end)
+
+    case result do
+      {:ok, traced_runnables} -> {:ok, Enum.reverse(traced_runnables)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp start_signal_id(opts) do
+    opts
+    |> Keyword.fetch!(:start_trace_lineage)
+    |> Map.fetch!(:signal_id)
+  end
+
+  defp start_run_trace(opts) do
+    opts
+    |> Keyword.fetch!(:start_trace_lineage)
+    |> Map.fetch!(:run_trace)
   end
 
   defp command_signal(opts) do

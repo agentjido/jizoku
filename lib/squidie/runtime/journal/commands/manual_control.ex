@@ -18,6 +18,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
   alias Squidie.Runtime.ManualAction
   alias Squidie.Runtime.Signal
   alias Squidie.Runtime.StepInput
+  alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Workflow.Definition
@@ -49,8 +50,9 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
          {:ok, storage} <- journal_storage(opts),
          {:ok, queue} <- queue(opts),
          {:ok, now} <- now(opts),
+         {:ok, command} <- direct_command(:resume_run, run_id, attrs, now),
          {:ok, workflow_agent} <-
-           resolve_or_repair(storage, run_id, queue, attrs, now, @run_append_retries),
+           resolve_or_repair(storage, run_id, queue, attrs, command, @run_append_retries),
          {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
          {:ok, _schedule_update} <-
            schedule_pending_dispatches(
@@ -168,6 +170,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
          {:ok, storage} <- journal_storage(opts),
          {:ok, queue} <- queue(opts),
          {:ok, now} <- now(opts),
+         {:ok, command} <- direct_command(review_signal_type(decision), run_id, attrs, now),
          {:ok, workflow_agent} <-
            resolve_or_repair_review(
              storage,
@@ -175,7 +178,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
              queue,
              decision,
              attrs,
-             now,
+             command,
              @run_append_retries
            ),
          {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
@@ -390,6 +393,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
              target,
              result,
              manual_input(manual_state, projection),
+             command,
              queue,
              now
            ),
@@ -404,6 +408,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
            :resumed,
            result,
            ManualAction.build(:resumed, attrs, now),
+           command_trace(command),
            now
          )
          | progression_entries
@@ -433,6 +438,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
              target,
              result,
              manual_input(manual_state, projection),
+             command,
              queue,
              now
            ),
@@ -452,6 +458,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
            decision,
            result,
            ManualAction.build(decision, attrs, now),
+           command_trace(command),
            now
          )
          | progression_entries
@@ -631,6 +638,8 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
         run_id: run_id,
         payload: %{run_id: run_id, attributes: command_attributes(attrs)},
         metadata: command_metadata(signal, attrs),
+        signal_id: signal.id,
+        trace: signal.trace,
         idempotency_key: signal.idempotency_key,
         actor: Map.get(attrs, :actor),
         comment: Map.get(attrs, :comment)
@@ -655,6 +664,25 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
 
   defp command_occurred_at(%Signal{occurred_at: %DateTime{} = now}), do: now
   defp command_occurred_at(%DateTime{} = now), do: now
+
+  defp direct_command(type, run_id, attrs, %DateTime{} = now) do
+    with {:ok, trace} <- Trace.new_root() do
+      apply(Signal, type, [run_id, attrs, [occurred_at: now, trace: trace]])
+    end
+  end
+
+  defp command_trace(%Signal{trace: trace}), do: trace
+  defp command_trace(%DateTime{}), do: nil
+
+  defp trace_manual_runnable(runnable, %Signal{id: signal_id, trace: trace})
+       when is_map(runnable) and is_map(trace) do
+    case Trace.child_of(trace, signal_id) do
+      {:ok, child_trace} -> {:ok, Map.put(runnable, :trace, child_trace)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp trace_manual_runnable(runnable, _command) when is_map(runnable), do: {:ok, runnable}
 
   defp command_metadata(%Signal{metadata: metadata}, _attrs) when map_size(metadata) > 0 do
     metadata
@@ -700,10 +728,12 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
          :complete,
          _result,
          _input,
+         command,
          _queue,
          %DateTime{} = now
        ) do
-    {:ok, [run_terminal_entry!(workflow_agent.state.run_id, :completed, now)]}
+    {:ok,
+     [run_terminal_entry!(workflow_agent.state.run_id, :completed, command_trace(command), now)]}
   end
 
   defp resolution_progression_entries(
@@ -712,6 +742,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
          next_step,
          result,
          input,
+         command,
          queue,
          %DateTime{} = now
        )
@@ -732,7 +763,8 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
              input,
              1,
              now
-           ) do
+           ),
+         {:ok, runnable} <- trace_manual_runnable(runnable, command) do
       {:ok,
        [
          runnables_planned_entry!(
@@ -912,7 +944,15 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
     end
   end
 
-  defp manual_step_resolved_entry!(run_id, step_name, action, result, metadata, %DateTime{} = now)
+  defp manual_step_resolved_entry!(
+         run_id,
+         step_name,
+         action,
+         result,
+         metadata,
+         trace,
+         %DateTime{} = now
+       )
        when is_binary(run_id) and is_atom(step_name) and is_atom(action) and is_map(result) and
               is_map(metadata) do
     entry!(:manual_step_resolved, %{
@@ -921,6 +961,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
       action: Atom.to_string(action),
       result: result,
       metadata: metadata,
+      trace: trace,
       occurred_at: now
     })
   end
@@ -929,8 +970,8 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
     Squidie.Runtime.Journal.EntryBuilder.runnables_planned!(run_id, runnables, now)
   end
 
-  defp run_terminal_entry!(run_id, status, %DateTime{} = now) do
-    Squidie.Runtime.Journal.EntryBuilder.run_terminal!(run_id, status, now)
+  defp run_terminal_entry!(run_id, status, trace, %DateTime{} = now) do
+    Squidie.Runtime.Journal.EntryBuilder.traced_run_terminal!(run_id, status, trace, now)
   end
 
   defp entry!(type, attrs) do

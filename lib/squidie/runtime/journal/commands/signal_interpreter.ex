@@ -16,6 +16,8 @@ defmodule Squidie.Runtime.Journal.Commands.SignalInterpreter do
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.ScheduleMetadata
   alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Trace
+  alias Squidie.Telemetry.Emitter
   alias Squidie.Workflow.Definition
 
   @manual_signal_types [:approve_run, :reject_run, :resume_run]
@@ -26,13 +28,50 @@ defmodule Squidie.Runtime.Journal.Commands.SignalInterpreter do
   """
   @spec apply(Signal.t(), keyword()) :: {:ok, term()} | {:error, term()}
   def apply(%Signal{} = signal, opts) when is_list(opts) do
-    with {:ok, opts} <- partition_options(signal, opts) do
-      do_apply(signal, opts)
+    with {:ok, signal} <- ensure_trace(signal) do
+      apply_with_span(signal, opts)
     end
   end
 
   def apply(%Signal{}, _opts), do: {:error, {:invalid_option, {:opts, :invalid}}}
   def apply(_signal, _opts), do: {:error, :invalid_signal}
+
+  defp apply_with_span(%Signal{} = signal, opts) do
+    Emitter.span(
+      [:squidie, :runtime, :command, :apply],
+      command_span_metadata(signal),
+      fn -> apply_partitioned(signal, opts) end
+    )
+  end
+
+  defp apply_partitioned(%Signal{} = signal, opts) do
+    with {:ok, opts} <- partition_options(signal, opts) do
+      do_apply(signal, opts)
+    end
+  end
+
+  defp ensure_trace(%Signal{trace: nil} = signal) do
+    with {:ok, trace} <- Trace.new_root() do
+      {:ok, %Signal{signal | trace: trace}}
+    end
+  end
+
+  defp ensure_trace(%Signal{trace: trace} = signal) do
+    case Trace.normalize(trace) do
+      {:ok, trace} -> {:ok, %Signal{signal | trace: trace}}
+      {:error, {:invalid_trace, reason}} -> {:error, {:invalid_signal, {:trace, reason}}}
+    end
+  end
+
+  defp command_span_metadata(%Signal{} = signal) do
+    %{
+      command_type: signal.type,
+      signal_id: signal.id,
+      trace: signal.trace,
+      partition: signal.partition,
+      run_id: MapField.get(signal.payload, :run_id)
+    }
+  end
 
   defp do_apply(%Signal{type: type} = signal, opts)
        when type in @start_signal_types and is_list(opts) do

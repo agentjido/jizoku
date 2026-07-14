@@ -15,6 +15,7 @@ defmodule Squidie.Runtime.Journal do
   alias Squidie.Runtime.Journal.Storage
   alias Squidie.Runtime.RunCatalogProjection
   alias Squidie.Runtime.RunIndexProjection
+  alias Squidie.Telemetry.JournalEvents
 
   @type storage_config :: Storage.config() | Storage.t()
   @type append_error :: :empty_entries | {:mixed_threads, [Entry.thread()]} | term()
@@ -39,12 +40,19 @@ defmodule Squidie.Runtime.Journal do
       {:ok, thread} ->
         partition = Storage.partition(storage)
 
-        Storage.append_thread(
-          storage,
-          thread_id(thread, partition),
-          Enum.map(entries, &to_jido_entry(&1, partition)),
-          opts
-        )
+        case Storage.append_thread(
+               storage,
+               thread_id(thread, partition),
+               Enum.map(entries, &to_jido_entry(&1, partition)),
+               opts
+             ) do
+          {:ok, _thread} = ok ->
+            JournalEvents.commit(storage, entries)
+            ok
+
+          {:error, _reason} = error ->
+            error
+        end
 
       {:error, _reason} = error ->
         error

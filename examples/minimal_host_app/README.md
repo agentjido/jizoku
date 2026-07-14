@@ -103,6 +103,9 @@ The smoke task:
 - waits for execution, inspects all completed manual workflows, and
   verifies the paused approval run's durable audit history, command receipt
   history, local transaction rollback, and saga rollback compensation history
+- round-trips a traced start command through a Jido envelope, executes its
+  durable runnable lineage across two workers, and captures the committed
+  attempt telemetry event
 - activates the same digest workflow through the host app's cron plugin
 - verifies both digest triggers complete through the same workflow graph
 
@@ -186,7 +189,9 @@ example of using native Squidie context fields such as `idempotency_key` and
 `MinimalHostApp.RuntimeSignals` is the concrete signal boundary for this sample.
 It accepts native `Squidie.Runtime.Signal` commands and inbound `Jido.Signal`
 envelopes, converts Jido envelopes with `Squidie.Runtime.Signal.JidoAdapter`,
-and applies the resulting command with `Squidie.apply_signal/2`.
+and applies the resulting command with `Squidie.apply_signal/2`. The smoke path
+also verifies that the envelope ID and correlation survive the round trip and
+that the resulting run/runnable trace remains durable across a worker handoff.
 
 The saga checkout workflow demonstrates reversible side effects:
 

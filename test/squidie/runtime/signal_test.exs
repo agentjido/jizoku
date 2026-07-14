@@ -4,6 +4,11 @@ defmodule Squidie.Runtime.SignalTest do
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.Signal
 
+  @trace %{
+    trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
+    span_id: "00f067aa0ba902b7"
+  }
+
   @occurred_at ~U[2026-05-26 12:00:00Z]
   @run_id "2b81e1da-04d8-4f0e-99fa-9dbd0ff7ec5d"
   @workflow __MODULE__.CheckoutWorkflow
@@ -191,8 +196,48 @@ defmodule Squidie.Runtime.SignalTest do
               type: :cancel_run,
               metadata: %{},
               occurred_at: %DateTime{},
+              id: id,
+              trace: nil,
               idempotency_key: nil
             }} = Signal.cancel_run(@run_id)
+
+    assert is_binary(id)
+    assert {:ok, _id} = Ecto.UUID.cast(id)
+  end
+
+  test "normalizes explicit signal identity and trace" do
+    assert {:ok,
+            %Signal{
+              id: "external-command-123",
+              trace: @trace,
+              partition: "tenant_acme"
+            }} =
+             Signal.cancel_run(@run_id,
+               id: "external-command-123",
+               trace: %{
+                 "trace_id" => @trace.trace_id,
+                 "span_id" => @trace.span_id
+               },
+               partition: "tenant_acme",
+               occurred_at: @occurred_at
+             )
+  end
+
+  test "rejects malformed signal identity and trace without echoing values" do
+    assert {:error, {:invalid_signal, {:id, :expected_non_empty_string}}} =
+             Signal.cancel_run(@run_id, id: "", occurred_at: @occurred_at)
+
+    assert {:error, {:invalid_signal, {:id, :too_long}}} =
+             Signal.cancel_run(@run_id,
+               id: String.duplicate("x", 256),
+               occurred_at: @occurred_at
+             )
+
+    assert {:error, {:invalid_signal, {:trace, {:trace_id, :invalid}}}} =
+             Signal.cancel_run(@run_id,
+               trace: %{trace_id: "sensitive-malformed-value", span_id: @trace.span_id},
+               occurred_at: @occurred_at
+             )
   end
 
   test "rejects invalid signal payload data" do

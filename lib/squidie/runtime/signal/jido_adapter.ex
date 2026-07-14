@@ -9,6 +9,7 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
 
   alias Squidie.Runtime.Partition
   alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Trace
 
   @source "/squidie/runtime/commands"
   @datacontenttype "application/vnd.squidie.runtime-signal+json"
@@ -40,9 +41,11 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   """
   @spec to_jido(Signal.t()) :: {:ok, Jido.Signal.t()} | {:error, error()}
   def to_jido(%Signal{
+        id: id,
         type: type,
         payload: payload,
         partition: partition,
+        trace: trace,
         metadata: metadata,
         occurred_at: occurred_at,
         idempotency_key: idempotency_key
@@ -50,17 +53,22 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
     with {:ok, jido_type} <- jido_type(type),
          {:ok, subject} <- subject(payload),
          {:ok, data} <-
-           transport_data(type, payload, metadata, occurred_at, idempotency_key, partition) do
-      normalize_jido_result(
-        Jido.Signal.new(
-          jido_type,
-          data,
-          source: @source,
-          subject: subject,
-          time: DateTime.to_iso8601(occurred_at),
-          datacontenttype: @datacontenttype
-        )
-      )
+           transport_data(type, payload, metadata, occurred_at, idempotency_key, partition),
+         {:ok, id} <- adapter_id(id),
+         {:ok, trace} <- adapter_trace(trace),
+         {:ok, jido_signal} <-
+           normalize_jido_result(
+             Jido.Signal.new(
+               jido_type,
+               data,
+               id: id,
+               source: @source,
+               subject: subject,
+               time: DateTime.to_iso8601(occurred_at),
+               datacontenttype: @datacontenttype
+             )
+           ) do
+      put_trace(jido_signal, trace)
     end
   end
 
@@ -70,7 +78,14 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   Converts a `Jido.Signal` produced by this adapter back to a Squidie signal.
   """
   @spec from_jido(Jido.Signal.t()) :: {:ok, Signal.t()} | {:error, error()}
-  def from_jido(%Jido.Signal{source: @source, type: jido_type, data: data, subject: subject}) do
+  def from_jido(%Jido.Signal{
+        id: id,
+        source: @source,
+        type: jido_type,
+        data: data,
+        subject: subject,
+        extensions: extensions
+      }) do
     with {:ok, command_type} <- command_type(jido_type),
          {:ok, signal_data} <- signal_data(data),
          :ok <- matching_command_type(command_type, signal_data),
@@ -79,12 +94,16 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
          {:ok, metadata} <- fetch_map(signal_data, :metadata),
          {:ok, occurred_at} <- fetch_occurred_at(signal_data),
          {:ok, idempotency_key} <- fetch_idempotency_key(signal_data),
-         {:ok, partition} <- fetch_partition(signal_data) do
+         {:ok, partition} <- fetch_partition(signal_data),
+         {:ok, id} <- adapter_id(id),
+         {:ok, trace} <- fetch_trace(extensions) do
       {:ok,
        %Signal{
+         id: id,
          type: command_type,
          payload: payload,
          partition: partition,
+         trace: trace,
          metadata: metadata,
          occurred_at: occurred_at,
          idempotency_key: idempotency_key
@@ -275,6 +294,46 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
     case Partition.normalize(partition) do
       {:ok, partition} -> {:ok, partition}
       {:error, _reason} -> invalid(:partition, :invalid)
+    end
+  end
+
+  defp adapter_id(id) when is_binary(id) and id != "" do
+    if byte_size(id) <= 255 and String.valid?(id) do
+      {:ok, id}
+    else
+      invalid(:id, :invalid)
+    end
+  end
+
+  defp adapter_id(_id), do: invalid(:id, :invalid)
+
+  defp adapter_trace(nil), do: {:ok, nil}
+
+  defp adapter_trace(trace) do
+    case Trace.normalize(trace) do
+      {:ok, trace} -> {:ok, trace}
+      {:error, {:invalid_trace, reason}} -> invalid(:trace, reason)
+    end
+  end
+
+  defp fetch_trace(extensions) when is_map(extensions) do
+    case {Map.fetch(extensions, "correlation"), Map.fetch(extensions, :correlation)} do
+      {:error, :error} -> {:ok, nil}
+      {{:ok, trace}, :error} -> adapter_trace(trace)
+      {:error, {:ok, trace}} -> adapter_trace(trace)
+      {{:ok, trace}, {:ok, trace}} -> adapter_trace(trace)
+      {{:ok, _string_trace}, {:ok, _atom_trace}} -> invalid(:trace, :ambiguous)
+    end
+  end
+
+  defp fetch_trace(_extensions), do: invalid(:extensions, :expected_map)
+
+  defp put_trace(signal, nil), do: {:ok, signal}
+
+  defp put_trace(signal, trace) do
+    case Jido.Signal.put_extension(signal, "correlation", trace) do
+      {:ok, signal} -> {:ok, signal}
+      {:error, _reason} -> invalid(:trace, :invalid)
     end
   end
 

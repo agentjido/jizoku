@@ -57,7 +57,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @spec normalize(t()) :: t()
   def normalize(%__MODULE__{} = projection) do
     %__MODULE__{
-      attempts: Map.get(projection, :attempts, %{}),
+      attempts: normalize_attempts(Map.get(projection, :attempts, %{})),
       anomalies: Map.get(projection, :anomalies, []),
       queued_run_ids: Map.get(projection, :queued_run_ids, MapSet.new()),
       terminal_runs: Map.get(projection, :terminal_runs, MapSet.new())
@@ -369,6 +369,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
             status: :retry_scheduled,
             scheduled_at: data.occurred_at,
             visible_at: retry_visible_at,
+            trace: Map.get(data, :retry_trace),
             deadline: Map.get(data, :retry_deadline),
             claim_id: nil,
             claim_token_hash: nil,
@@ -399,6 +400,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
       attempt_number: data.attempt_number,
       step: data.step,
       input: data.input,
+      trace: Map.get(data, :trace),
       scheduled_at: data.occurred_at,
       visible_at: data.visible_at,
       deadline: Map.get(data, :deadline),
@@ -411,6 +413,12 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
       projection
       | attempts: Map.put(projection.attempts, attempt.runnable_key, attempt)
     }
+  end
+
+  defp normalize_attempts(attempts) when is_map(attempts) do
+    Map.new(attempts, fn {runnable_key, %ActionAttempt{} = attempt} ->
+      {runnable_key, ActionAttempt.upgrade(attempt)}
+    end)
   end
 
   defp put_claimed_attempt(projection, %ActionAttempt{} = attempt, data) do

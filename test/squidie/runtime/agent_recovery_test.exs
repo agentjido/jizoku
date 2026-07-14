@@ -17,6 +17,10 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
   @claimed_at ~U[2026-05-15 00:00:20Z]
   @completed_at ~U[2026-05-15 00:00:40Z]
   @lease_until ~U[2026-05-15 00:01:00Z]
+  @trace %{
+    trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
+    span_id: "00f067aa0ba902b7"
+  }
 
   setup do
     cleanup_storage()
@@ -169,6 +173,49 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
 
     assert {:ok, dispatch_entries} = Journal.load_entries(@storage, {:dispatch, "default"})
     assert Enum.count(dispatch_entries, &(&1.type == :attempt_scheduled)) == 2
+  end
+
+  test "preserves durable runnable trace through checkpoint-loss recovery" do
+    assert {:ok, run_started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               trace: @trace,
+               occurred_at: @started_at
+             })
+
+    traced_runnables =
+      Enum.map([charge_runnable(), refund_runnable()], &Map.put(&1, :trace, @trace))
+
+    assert {:ok, runnables_planned} =
+             DispatchProtocol.new_entry(:runnables_planned, %{
+               run_id: @run_id,
+               runnables: traced_runnables,
+               occurred_at: @visible_at
+             })
+
+    assert {:ok, charge_scheduled} =
+             DispatchProtocol.new_entry(
+               :attempt_scheduled,
+               scheduled_attrs(trace: @trace)
+             )
+
+    assert {:ok, charge_claimed} =
+             DispatchProtocol.new_entry(:attempt_claimed, claimed_attrs(trace: @trace))
+
+    assert {:ok, charge_completed} =
+             DispatchProtocol.new_entry(:attempt_completed, completed_attrs(trace: @trace))
+
+    assert {:ok, _run_thread} = Journal.append_entries(@storage, [run_started, runnables_planned])
+
+    assert {:ok, _dispatch_thread} =
+             Journal.append_entries(@storage, [charge_scheduled, charge_claimed, charge_completed])
+
+    assert {:ok, %{applied_attempts: [applied_attempt], dispatch_agent: dispatch_agent}} =
+             AgentRecovery.recover(@storage, @run_id, "default", now: @completed_at)
+
+    assert applied_attempt.trace == @trace
+    assert dispatch_agent.state.projection.attempts[@refund_key].trace == @trace
   end
 
   test "scopes direct restart recovery to the requested partition" do

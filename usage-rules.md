@@ -12,6 +12,9 @@ itself.
 - The Jido-native journal runtime is the source of truth for run, dispatch,
   attempt, manual-control, and terminal facts.
 - Host workers provide execution capacity by calling `Squidie.execute_next/1`.
+- Runtime command, run, runnable, and attempt trace lineage is durable journal
+  data; public telemetry is a best-effort projection of committed lifecycle
+  facts and execution spans.
 - Optional schedulers can deliver cron payloads through
   `Squidie.Runtime.Runner.perform/2`.
 - Optional backend adapters, such as the Bedrock example, can own durable
@@ -45,6 +48,8 @@ itself.
   `opts[:guardrails]`; guardrail keys are host-owned validator contracts and
   decisions are exposed through previews, inspection, and explanations.
 - Add idempotency keys or domain duplicate detection to side-effecting steps.
+- Use `Squidie.Telemetry.metrics/0` for the default bounded-cardinality metric
+  set. Keep reporters, exporters, dashboards, alerts, and logging host-owned.
 - Treat external exactly-once behavior as out of scope for Squidie.
 
 ## Rules To Avoid

@@ -8,6 +8,7 @@ defmodule MinimalHostApp.Smoke do
   alias MinimalHostApp.Cron
   alias MinimalHostApp.Repo
   alias MinimalHostApp.RuntimeHarness
+  alias MinimalHostApp.RuntimeSignals
   alias MinimalHostApp.Steps
   alias MinimalHostApp.WorkflowRuns
   alias MinimalHostApp.Workers.SquidieWorker
@@ -17,6 +18,7 @@ defmodule MinimalHostApp.Smoke do
   alias Squidie.Runtime.Runner
   alias Squidie.Runtime.Signal
   alias Squidie.Runtime.Signal.JidoAdapter
+  alias Squidie.Runtime.Trace
 
   @poll_attempts 20
   @journal_run_attempts 10
@@ -246,7 +248,9 @@ defmodule MinimalHostApp.Smoke do
     end
   end
 
-  defp ensure_deferred_gateway_explanation(%Squidie.ReadModel.Explanation.Diagnostic{} = diagnostic) do
+  defp ensure_deferred_gateway_explanation(
+         %Squidie.ReadModel.Explanation.Diagnostic{} = diagnostic
+       ) do
     case diagnostic do
       %{reason: :deferred_continuation, next_actions: [:wait_until_attempt_visible]} ->
         :ok
@@ -887,6 +891,7 @@ defmodule MinimalHostApp.Smoke do
   def run_journal_command_signals! do
     RuntimeHarness.ensure_runtime_started()
     queue = journal_run_queue()
+    lifecycle_event = [:squidie, :runtime, :attempt, :completed]
 
     attrs = %{
       account_id: "acct_journal_signal_demo",
@@ -894,55 +899,79 @@ defmodule MinimalHostApp.Smoke do
       attempt_id: "attempt_journal_signal_demo"
     }
 
-    with_journal_runtime_config(queue, fn ->
-      with {:ok, start_signal} <-
-             Signal.start_run(
-               MinimalHostApp.Workflows.DependencyRecovery,
-               :dependency_recovery,
-               attrs,
-               metadata: %{source: "minimal_host_app_smoke"},
-               idempotency_key: "minimal-host-app:journal-signal:start"
-             ),
-           {:ok, started_run} <- Squidie.apply_signal(start_signal),
-           {:ok, completed_start} <- drain_journal_run(started_run.run_id, @journal_run_attempts),
-           {:ok, replay_signal} <-
-             Signal.replay_run(
-               completed_start.run_id,
-               metadata: %{source: "minimal_host_app_smoke"},
-               idempotency_key: "minimal-host-app:journal-signal:replay"
-             ),
-           {:ok, replayed_run} <- Squidie.apply_signal(replay_signal),
-           {:ok, completed_replay} <-
-             drain_journal_run(replayed_run.run_id, @journal_run_attempts) do
-        unless completed_start.status == :completed and completed_replay.status == :completed do
-          raise "unexpected journal command signal smoke result"
+    with_smoke_telemetry(lifecycle_event, fn ->
+      with_journal_runtime_config(queue, fn ->
+        with {:ok, command_trace} <-
+               Trace.new_root(causation_id: "minimal-host-app:journal-signal:jido-start"),
+             {:ok, start_signal} <-
+               Signal.start_run(
+                 MinimalHostApp.Workflows.DependencyRecovery,
+                 :dependency_recovery,
+                 attrs,
+                 id: "minimal-host-app:journal-signal:jido-start",
+                 trace: command_trace,
+                 metadata: %{source: "minimal_host_app_smoke"},
+                 idempotency_key: "minimal-host-app:journal-signal:start"
+               ),
+             {:ok, jido_start_signal} <- RuntimeSignals.to_jido(start_signal),
+             {:ok, ^start_signal} <- JidoAdapter.from_jido(jido_start_signal),
+             {:ok, started_run} <- RuntimeSignals.apply(jido_start_signal),
+             {:ok, _first_worker_run} <-
+               Squidie.execute_next(owner_id: "minimal-host-app-signal-worker-a"),
+             {:ok, lifecycle_metadata} <-
+               await_smoke_telemetry(lifecycle_event, started_run.run_id),
+             {:ok, completed_start} <-
+               drain_journal_run(
+                 started_run.run_id,
+                 @journal_run_attempts,
+                 owner_id: "minimal-host-app-signal-worker-b"
+               ),
+             :ok <-
+               ensure_journal_signal_trace(
+                 completed_start,
+                 queue,
+                 command_trace,
+                 lifecycle_metadata
+               ),
+             {:ok, replay_signal} <-
+               Signal.replay_run(
+                 completed_start.run_id,
+                 metadata: %{source: "minimal_host_app_smoke"},
+                 idempotency_key: "minimal-host-app:journal-signal:replay"
+               ),
+             {:ok, replayed_run} <- Squidie.apply_signal(replay_signal),
+             {:ok, completed_replay} <-
+               drain_journal_run(replayed_run.run_id, @journal_run_attempts) do
+          unless completed_start.status == :completed and completed_replay.status == :completed do
+            raise "unexpected journal command signal smoke result"
+          end
+
+          unless completed_replay.replayed_from_run_id == completed_start.run_id do
+            raise "unexpected journal command signal replay lineage"
+          end
+
+          case completed_start.command_history do
+            [%{signal_type: "start_run", metadata: %{source: "minimal_host_app_smoke"}}] ->
+              :ok
+
+            _other ->
+              raise "unexpected journal start command signal history"
+          end
+
+          case completed_replay.command_history do
+            [%{signal_type: "replay_run", metadata: %{source: "minimal_host_app_smoke"}}] ->
+              :ok
+
+            _other ->
+              raise "unexpected journal replay command signal history"
+          end
+
+          %{start: completed_start, replay: completed_replay}
+        else
+          {:error, reason} ->
+            raise "journal command signal smoke test failed: #{inspect(reason)}"
         end
-
-        unless completed_replay.replayed_from_run_id == completed_start.run_id do
-          raise "unexpected journal command signal replay lineage"
-        end
-
-        case completed_start.command_history do
-          [%{signal_type: "start_run", metadata: %{source: "minimal_host_app_smoke"}}] ->
-            :ok
-
-          _other ->
-            raise "unexpected journal start command signal history"
-        end
-
-        case completed_replay.command_history do
-          [%{signal_type: "replay_run", metadata: %{source: "minimal_host_app_smoke"}}] ->
-            :ok
-
-          _other ->
-            raise "unexpected journal replay command signal history"
-        end
-
-        %{start: completed_start, replay: completed_replay}
-      else
-        {:error, reason} ->
-          raise "journal command signal smoke test failed: #{inspect(reason)}"
-      end
+      end)
     end)
   end
 
@@ -1085,8 +1114,7 @@ defmodule MinimalHostApp.Smoke do
   end
 
   @spec run_local_ledger_checkout!() ::
-          {Squidie.ReadModel.Inspection.Snapshot.t(),
-           Squidie.ReadModel.Inspection.Snapshot.t()}
+          {Squidie.ReadModel.Inspection.Snapshot.t(), Squidie.ReadModel.Inspection.Snapshot.t()}
   def run_local_ledger_checkout! do
     committed_attrs = %{account_id: "acct_local_commit", fail_after_reserve: false}
     rolled_back_attrs = %{account_id: "acct_local_rollback", fail_after_reserve: true}
@@ -1142,8 +1170,7 @@ defmodule MinimalHostApp.Smoke do
   Runs a nested workflow where parent and child both retry once.
   """
   @spec run_nested_invite_delivery!() ::
-          {Squidie.ReadModel.Inspection.Snapshot.t(),
-           Squidie.ReadModel.Inspection.Snapshot.t()}
+          {Squidie.ReadModel.Inspection.Snapshot.t(), Squidie.ReadModel.Inspection.Snapshot.t()}
   def run_nested_invite_delivery! do
     child_queue = "minimal-host-app-nested-child-smoke"
 
@@ -1361,21 +1388,28 @@ defmodule MinimalHostApp.Smoke do
   defp drain_journal_run(_run_id, 0), do: {:error, :timeout}
 
   defp drain_journal_run(run_id, attempts_remaining) when attempts_remaining > 0 do
+    drain_journal_run(run_id, attempts_remaining, journal_run_execute_options())
+  end
+
+  defp drain_journal_run(_run_id, 0, _execute_options), do: {:error, :timeout}
+
+  defp drain_journal_run(run_id, attempts_remaining, execute_options)
+       when attempts_remaining > 0 and is_list(execute_options) do
     case Squidie.inspect_run(run_id) do
       {:ok, %Squidie.ReadModel.Inspection.Snapshot{terminal?: true} = run} ->
         {:ok, run}
 
       {:ok, %Squidie.ReadModel.Inspection.Snapshot{}} ->
-        case Squidie.execute_next(journal_run_execute_options()) do
+        case Squidie.execute_next(execute_options) do
           {:ok, %Squidie.ReadModel.Inspection.Snapshot{terminal?: true} = run} ->
             {:ok, run}
 
           {:ok, %Squidie.ReadModel.Inspection.Snapshot{}} ->
-            drain_journal_run(run_id, attempts_remaining - 1)
+            drain_journal_run(run_id, attempts_remaining - 1, execute_options)
 
           {:ok, :none} ->
             Process.sleep(50)
-            drain_journal_run(run_id, attempts_remaining - 1)
+            drain_journal_run(run_id, attempts_remaining - 1, execute_options)
 
           {:error, reason} ->
             {:error, reason}
@@ -1390,6 +1424,114 @@ defmodule MinimalHostApp.Smoke do
     [
       owner_id: "minimal-host-app-smoke"
     ]
+  end
+
+  defp with_smoke_telemetry(event, operation) when is_list(event) and is_function(operation, 0) do
+    handler_id = {__MODULE__, make_ref()}
+    receiver = self()
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        event,
+        fn event, measurements, metadata, receiver ->
+          send(receiver, {:minimal_host_app_telemetry, event, measurements, metadata})
+        end,
+        receiver
+      )
+
+    try do
+      operation.()
+    after
+      :telemetry.detach(handler_id)
+    end
+  end
+
+  defp await_smoke_telemetry(event, run_id) do
+    receive do
+      {:minimal_host_app_telemetry, ^event, %{count: 1}, %{run_id: ^run_id} = metadata} ->
+        {:ok, metadata}
+
+      {:minimal_host_app_telemetry, ^event, _measurements, _metadata} ->
+        await_smoke_telemetry(event, run_id)
+    after
+      2_000 -> {:error, :missing_runtime_lifecycle_telemetry}
+    end
+  end
+
+  defp ensure_journal_signal_trace(completed_run, queue, command_trace, lifecycle_metadata) do
+    with {:ok, run_entries} <-
+           Journal.load_entries(@journal_run_storage, {:run, completed_run.run_id}),
+         {:ok, dispatch_entries} <- Journal.load_entries(@journal_run_storage, {:dispatch, queue}),
+         %{data: %{trace: run_trace}} <- Enum.find(run_entries, &(&1.type == :run_started)),
+         runnable_key when is_binary(runnable_key) <-
+           Map.get(lifecycle_metadata, :runnable_key),
+         runnable when is_map(runnable) <- journal_runnable(run_entries, runnable_key),
+         runnable_trace when is_map(runnable_trace) <- Map.get(runnable, :trace),
+         %{data: %{trace: attempt_trace}} <-
+           Enum.find(dispatch_entries, fn entry ->
+             entry.type == :attempt_completed and
+               Map.get(entry.data, :run_id) == completed_run.run_id and
+               Map.get(entry.data, :runnable_key) == runnable_key
+           end),
+         :ok <-
+           validate_journal_signal_trace(
+             completed_run,
+             command_trace,
+             run_trace,
+             runnable_trace,
+             attempt_trace,
+             lifecycle_metadata
+           ) do
+      :ok
+    else
+      {:error, reason} -> {:error, reason}
+      _missing -> {:error, :unexpected_journal_signal_trace}
+    end
+  end
+
+  defp journal_runnable(entries, runnable_key) do
+    Enum.find_value(entries, fn
+      %{type: :runnables_planned, data: %{runnables: runnables}} when is_list(runnables) ->
+        Enum.find(runnables, &(Map.get(&1, :runnable_key) == runnable_key))
+
+      _entry ->
+        nil
+    end)
+  end
+
+  defp validate_journal_signal_trace(
+         completed_run,
+         command_trace,
+         run_trace,
+         runnable_trace,
+         attempt_trace,
+         lifecycle_metadata
+       ) do
+    owners = completed_run.attempts |> Enum.map(& &1.owner_id) |> Enum.uniq()
+
+    cond do
+      run_trace != command_trace ->
+        {:error, :unexpected_journal_run_trace}
+
+      runnable_trace.trace_id != run_trace.trace_id or
+          runnable_trace.parent_span_id != run_trace.span_id ->
+        {:error, :unexpected_journal_runnable_trace}
+
+      attempt_trace != runnable_trace ->
+        {:error, :unexpected_journal_attempt_trace}
+
+      lifecycle_metadata.trace_id != attempt_trace.trace_id or
+          lifecycle_metadata.span_id != attempt_trace.span_id ->
+        {:error, :unexpected_journal_telemetry_trace}
+
+      "minimal-host-app-signal-worker-a" not in owners or
+          "minimal-host-app-signal-worker-b" not in owners ->
+        {:error, :unexpected_journal_worker_handoff}
+
+      true ->
+        :ok
+    end
   end
 
   defp schedule_dynamic_work!(%Squidie.ReadModel.Inspection.Snapshot{} = inspected_run) do

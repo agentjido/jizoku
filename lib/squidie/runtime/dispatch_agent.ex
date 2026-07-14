@@ -314,6 +314,7 @@ defmodule Squidie.Runtime.DispatchAgent do
              claim_id: claim_id,
              claim_token_hash: claim_token_hash(claim_token),
              queue: queue,
+             trace: attempt.trace,
              lease_until: lease_until,
              occurred_at: heartbeat_options.now
            }),
@@ -432,6 +433,7 @@ defmodule Squidie.Runtime.DispatchAgent do
                  claim_id: claim_id,
                  claim_token_hash: claim_token_hash(claim_token),
                  queue: queue,
+                 trace: attempt.trace,
                  error: error,
                  occurred_at: now
                },
@@ -520,6 +522,7 @@ defmodule Squidie.Runtime.DispatchAgent do
              claim_id: claim_id,
              claim_token_hash: claim_token_hash(claim_token),
              queue: queue,
+             trace: attempt.trace,
              result: result,
              guardrails: guardrails,
              execution_opts: execution_opts,
@@ -655,6 +658,7 @@ defmodule Squidie.Runtime.DispatchAgent do
           queue: queue,
           step: runnable_value(runnable, :step),
           input: runnable_value(runnable, :input),
+          trace: runnable_value(runnable, :trace),
           visible_at: runnable_value(runnable, :visible_at),
           deadline: runnable_value(runnable, :deadline),
           occurred_at: now
@@ -837,6 +841,7 @@ defmodule Squidie.Runtime.DispatchAgent do
       claim_token_hash: claim_token_hash(claim_token),
       owner_id: owner_id,
       queue: queue,
+      trace: attempt.trace,
       lease_until: lease_until,
       occurred_at: now
     }
@@ -1033,7 +1038,14 @@ defmodule Squidie.Runtime.DispatchAgent do
 
       {{:ok, retry_runnable_key}, {:ok, %DateTime{} = retry_visible_at}}
       when is_binary(retry_runnable_key) ->
-        attrs = %{retry_runnable_key: retry_runnable_key, retry_visible_at: retry_visible_at}
+        attrs =
+          maybe_put_retry_trace(
+            %{
+              retry_runnable_key: retry_runnable_key,
+              retry_visible_at: retry_visible_at
+            },
+            Keyword.get(opts, :retry_trace)
+          )
 
         case Keyword.fetch(opts, :retry_deadline) do
           {:ok, deadline} when is_map(deadline) ->
@@ -1053,6 +1065,11 @@ defmodule Squidie.Runtime.DispatchAgent do
         {:error, {:invalid_option, :retry}}
     end
   end
+
+  defp maybe_put_retry_trace(attrs, trace) when is_map(trace),
+    do: Map.put(attrs, :retry_trace, trace)
+
+  defp maybe_put_retry_trace(attrs, _trace), do: attrs
 
   defp current_claim(
          %Projection{} = projection,

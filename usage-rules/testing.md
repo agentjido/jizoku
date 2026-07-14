@@ -19,6 +19,9 @@
   eliminated, revalidated under the same lock, or safe by idempotent design.
 - For telemetry or audit-history changes, test terminal-event symmetry and
   ordering relative to durable commits.
+- Prove trace lineage across worker handoff and reconstruction. Assert exact
+  telemetry metadata keys, secret exclusion, rollback discard, and
+  point-before-enclosing-span ordering.
 - For partition-aware behavior, reuse the same run UUID, queue, workflow, and
   idempotency keys in two partitions. Assert isolation for journal entries,
   checkpoints, catalogs, indexes, execution, replay, controls, cron, signals,

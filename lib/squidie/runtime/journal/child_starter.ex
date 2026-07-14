@@ -8,6 +8,8 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
   alias Squidie.Runtime.Journal.Commands.Starter
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.ScheduleIdentity
+  alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Step.Context
   alias Squidie.Workflow.Definition
@@ -41,6 +43,8 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          {:ok, metadata} <- metadata(opts),
          {:ok, origin} <- origin(parent_context),
          {:ok, parent_run_id} <- parent_run_id(parent_context),
+         {:ok, parent_trace} <- durable_parent_trace(storage, parent_run_id, parent_context),
+         {:ok, child_trace} <- child_trace(parent_trace, origin),
          {:ok, resolved_payload} <- validate_child_start(child_workflow, child_trigger, payload),
          {:ok, child_run_id} <-
            child_run_id(
@@ -57,7 +61,8 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
            child_trigger: Definition.serialize_trigger(child_trigger),
            child_key: child_key,
            origin: origin,
-           metadata: metadata
+           metadata: metadata,
+           trace: child_trace
          },
          :ok <- ensure_child_startable(storage, child_run_id, child, parent, resolved_payload),
          {:ok, linked_parent} <-
@@ -65,6 +70,15 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          :ok <- ensure_parent_active(storage, parent_context, parent_run_id),
          :ok <-
            ensure_child_startable(storage, child_run_id, child, linked_parent, resolved_payload),
+         {:ok, command_signal} <-
+           child_command_signal(
+             child_run_id,
+             child_workflow,
+             child_trigger,
+             payload,
+             linked_parent,
+             now
+           ),
          {:ok, %Inspection.Snapshot{} = child_snapshot} <-
            Starter.start_run(
              child_workflow,
@@ -72,7 +86,8 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
              payload,
              opts
              |> Keyword.put(:run_id, child_run_id)
-             |> Keyword.put(:initial_context, %{parent: linked_parent})
+             |> Keyword.put(:command_signal, command_signal)
+             |> Keyword.put(:initial_context, %{parent: Map.delete(linked_parent, :child_trace)})
            ) do
       Inspection.snapshot(storage, child_snapshot.run_id, queue: queue, now: now)
     end
@@ -174,6 +189,47 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
   end
 
   defp origin(%Context{}), do: {:error, {:invalid_parent_context, :origin}}
+
+  defp durable_parent_trace(storage, parent_run_id, %Context{} = context) do
+    with {:ok, %{entries: entries}} <- Journal.load_thread(storage, {:run, parent_run_id}),
+         projection = Projection.rebuild(entries),
+         runnable when is_map(runnable) <-
+           Enum.find(
+             Projection.planned_runnables(projection),
+             &(runnable_value(&1, :runnable_key) == context.runnable_key)
+           ) do
+      {:ok, runnable_value(runnable, :trace)}
+    else
+      nil -> {:error, {:invalid_parent_context, :runnable_key}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp child_trace(nil, _origin), do: {:ok, nil}
+
+  defp child_trace(trace, %{runnable_key: runnable_key}) when is_map(trace) do
+    case Trace.child_of(trace, runnable_key) do
+      {:ok, child_trace} -> {:ok, child_trace}
+      {:error, _reason} -> {:ok, nil}
+    end
+  end
+
+  defp child_trace(_legacy_untraced, _origin), do: {:ok, nil}
+
+  defp child_command_signal(
+         child_run_id,
+         child_workflow,
+         child_trigger,
+         payload,
+         linked_parent,
+         %DateTime{} = now
+       ) do
+    Signal.start_run(child_workflow, child_trigger, payload,
+      id: child_run_id,
+      trace: Map.get(linked_parent, :child_trace),
+      occurred_at: now
+    )
+  end
 
   defp validate_child_start(child_workflow, child_trigger, payload) do
     with {:ok, definition} <- Definition.load(child_workflow),
@@ -459,7 +515,10 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          attempt when is_integer(attempt) <- origin_value(origin, :attempt),
          child_key when is_binary(child_key) <- entry_value(entry, :child_key),
          metadata when is_map(metadata) <- entry_value(entry, :metadata) || %{} do
-      {:ok, parent_context(run_id, runnable_key, step, attempt, child_key, metadata)}
+      {:ok,
+       run_id
+       |> parent_context(runnable_key, step, attempt, child_key, metadata)
+       |> Map.put(:child_trace, entry_value(entry, :trace))}
     else
       _invalid -> {:error, :conflict}
     end
@@ -492,6 +551,7 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
       child_key: child.child_key,
       origin: child.origin,
       metadata: child.metadata,
+      trace: child.trace,
       occurred_at: now
     })
   end

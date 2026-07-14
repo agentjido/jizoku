@@ -170,6 +170,7 @@ defmodule Squidie.Runtime.Journal.DynamicWork do
       nodes: nodes,
       edges: projected_dynamic_edges(data, nodes),
       metadata: Map.get(data, :metadata, %{}),
+      trace: Map.get(data, :trace),
       recorded_at: projected_recorded_at(data)
     })
   end

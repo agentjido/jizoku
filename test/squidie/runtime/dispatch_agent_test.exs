@@ -4,6 +4,7 @@ defmodule Squidie.Runtime.DispatchAgentTest do
   alias Jido.Storage.ETS
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
+  alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.DispatchProtocol.Projection
   alias Squidie.Runtime.Journal
 
@@ -381,6 +382,33 @@ defmodule Squidie.Runtime.DispatchAgentTest do
     assert DispatchAgent.run_ids(agent) == MapSet.new([@run_id])
   end
 
+  test "upgrades legacy attempts nested in dispatch checkpoints without trace" do
+    assert {:ok, scheduled_entry} =
+             DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs())
+
+    assert {:ok, thread} = Journal.append_entries(@storage, [scheduled_entry])
+    %Projection{} = projection = Projection.rebuild([scheduled_entry])
+    legacy_attempt = Map.delete(projection.attempts[@runnable_key], :trace)
+
+    checkpoint_projection = %Projection{
+      projection
+      | attempts: %{@runnable_key => legacy_attempt}
+    }
+
+    assert :ok =
+             Journal.put_checkpoint(
+               @storage,
+               {:dispatch, "default"},
+               checkpoint_projection,
+               thread.rev,
+               updated_at: @visible_at
+             )
+
+    assert {:ok, agent} = DispatchAgent.rebuild(@storage, "default")
+
+    assert %ActionAttempt{trace: nil} = agent.state.projection.attempts[@runnable_key]
+  end
+
   test "persists a checkpoint from the rebuilt dispatch agent state" do
     assert {:ok, scheduled_entry} =
              DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs())
@@ -711,8 +739,21 @@ defmodule Squidie.Runtime.DispatchAgentTest do
   end
 
   test "fails the current claim and schedules a retry attempt" do
+    trace = %{
+      trace_id: String.duplicate("a", 32),
+      span_id: String.duplicate("b", 16),
+      causation_id: @runnable_key
+    }
+
+    retry_trace = %{
+      trace_id: trace.trace_id,
+      span_id: String.duplicate("c", 16),
+      parent_span_id: trace.span_id,
+      causation_id: @runnable_key
+    }
+
     assert {:ok, scheduled_entry} =
-             DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs())
+             DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs(trace: trace))
 
     assert {:ok, %{rev: 1}} = Journal.append_entries(@storage, [scheduled_entry])
     assert {:ok, agent} = DispatchAgent.rebuild(@storage, "default")
@@ -742,19 +783,33 @@ defmodule Squidie.Runtime.DispatchAgentTest do
                error,
                now: @claimed_at,
                retry_runnable_key: retry_key,
-               retry_visible_at: retry_visible_at
+               retry_visible_at: retry_visible_at,
+               retry_trace: retry_trace
              )
 
-    assert [%{runnable_key: ^retry_key, attempt_number: 2, status: :retry_scheduled}] =
+    assert [
+             %{
+               runnable_key: ^retry_key,
+               attempt_number: 2,
+               status: :retry_scheduled,
+               trace: ^retry_trace
+             }
+           ] =
              DispatchAgent.visible_attempts(failed_agent, retry_visible_at)
 
-    assert {:ok, [_scheduled_entry, _claim_entry, failed_entry]} =
+    assert {:ok, [^scheduled_entry, claim_entry, failed_entry]} =
              Journal.load_entries(@storage, {:dispatch, "default"})
 
     assert failed_entry.type == :attempt_failed
     assert failed_entry.data.error == error
+    assert failed_entry.data.trace == trace
     assert failed_entry.data.retry_runnable_key == retry_key
     assert failed_entry.data.retry_visible_at == retry_visible_at
+    assert failed_entry.data.retry_trace == retry_trace
+
+    assert Enum.all?([scheduled_entry, claim_entry, failed_entry], fn entry ->
+             entry.data.trace == trace
+           end)
   end
 
   test "rejects lifecycle appends with a stale claim token before writing" do
@@ -771,6 +826,9 @@ defmodule Squidie.Runtime.DispatchAgentTest do
                claim_token: "token_2"
              )
 
+    completed_event = [:squidie, :runtime, :attempt, :completed]
+    Squidie.Test.TelemetryCapture.attach([completed_event])
+
     assert {:error, :stale_claim} =
              DispatchAgent.complete(
                @storage,
@@ -784,6 +842,8 @@ defmodule Squidie.Runtime.DispatchAgentTest do
 
     assert {:ok, [_scheduled_entry, _claim_entry]} =
              Journal.load_entries(@storage, {:dispatch, "default"})
+
+    refute_receive {:telemetry_event, ^completed_event, _, _}
   end
 
   test "rejects lifecycle appends after the claim lease expired before writing" do

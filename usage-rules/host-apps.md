@@ -69,6 +69,16 @@
 - Keep durable history immutable. Visibility policy derives read-side
   projections only and must not be treated as deletion or retention policy.
 
+## Observability
+
+- Use `Squidie.Telemetry.metrics/0` for the recommended metric definitions;
+  use `partition_metrics/0` only after reviewing partition cardinality.
+- Keep telemetry reporters, exporters, dashboards, alerts, sampling, and
+  structured logger integration in the host app.
+- Use trace and run identifiers for diagnostic correlation, not metric labels.
+- Reconcile durable operational truth through the read model. Runtime telemetry
+  is best-effort and is not an outbox or exactly-once delivery channel.
+
 ## Bedrock
 
 - Use Bedrock when the host needs durable backend delivery, delayed visibility,

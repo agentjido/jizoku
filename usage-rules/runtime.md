@@ -74,8 +74,28 @@
   for agents, routers, or other Jido primitives. Do not leak raw `Jido.Signal`
   into normal workflow authoring.
 - Preserve `:run_signal_received` command history for applied commands.
+- Preserve the signal ID and normalized trace through the Jido adapter and
+  durable command receipt. Create a command root trace only when one is absent.
+- Keep one durable span per runnable across schedule, claim, heartbeat,
+  completion/failure, and application. Persist child spans for new work and
+  give replay a fresh command lineage.
 - Reusing an idempotency key means duplicate delivery. A different idempotency
   key is a different command and must not be silently collapsed.
+
+## Telemetry
+
+- Emit lifecycle point events only from successful journal appends, in append
+  order. Rebuilds, checkpoints, conflicts, stale operations, and duplicate
+  no-ops must not emit lifecycle points.
+- Buffer completion event intents inside Squidie-owned Ecto step transactions;
+  flush after commit and discard on rollback or non-local exit.
+- Keep telemetry metadata on the public allowlist. Never emit payloads,
+  results, raw errors, arbitrary metadata, claim/owner values, idempotency keys,
+  credentials, or trace state.
+- Keep correlation identifiers out of built-in metric tags. Partition is an
+  explicit metric opt-in because it may be high-cardinality.
+- Treat telemetry as best-effort. Journal facts remain authoritative and
+  handler failures must not change runtime results.
 
 ## Storage
 

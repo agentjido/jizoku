@@ -7,6 +7,13 @@ defmodule Squidie.Runtime.Signal.JidoAdapterTest do
   @occurred_at ~U[2026-05-26 12:00:00Z]
   @run_id "2b81e1da-04d8-4f0e-99fa-9dbd0ff7ec5d"
   @workflow __MODULE__.CheckoutWorkflow
+  @trace %{
+    trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
+    span_id: "00f067aa0ba902b7",
+    parent_span_id: "b7ad6b7169203331",
+    causation_id: "signal-123",
+    tracestate: "vendor=value"
+  }
 
   test "converts a Squidie command signal to a Jido signal envelope" do
     assert {:ok, signal} =
@@ -67,6 +74,64 @@ defmodule Squidie.Runtime.Signal.JidoAdapterTest do
              JidoAdapter.to_jido(signal)
 
     assert {:ok, ^signal} = JidoAdapter.from_jido(jido_signal)
+  end
+
+  test "preserves the exact outer Jido id and correlation extension with partition" do
+    assert {:ok, signal} =
+             Signal.cancel_run(@run_id,
+               id: "external-command-123",
+               trace: @trace,
+               partition: "tenant_acme",
+               occurred_at: @occurred_at
+             )
+
+    assert {:ok,
+            %Jido.Signal{
+              id: "external-command-123",
+              extensions: %{"correlation" => @trace},
+              data: %{"partition" => "tenant_acme"}
+            } = jido_signal} = JidoAdapter.to_jido(signal)
+
+    assert {:ok, ^signal} = JidoAdapter.from_jido(jido_signal)
+  end
+
+  test "accepts legacy Jido signals without correlation and rejects malformed extensions safely" do
+    data = %{
+      "type" => "cancel_run",
+      "payload" => %{"run_id" => @run_id},
+      "metadata" => %{},
+      "occurred_at" => "2026-05-26T12:00:00Z"
+    }
+
+    assert {:ok, jido_signal} =
+             Jido.Signal.new("squidie.runtime.command.cancel_run", data,
+               id: "legacy-command-123",
+               source: "/squidie/runtime/commands",
+               subject: @run_id
+             )
+
+    assert {:ok, %Signal{id: "legacy-command-123", trace: nil}} =
+             JidoAdapter.from_jido(jido_signal)
+
+    malformed = %{
+      jido_signal
+      | extensions: %{
+          "correlation" => %{
+            "trace_id" => "sensitive-malformed-value",
+            "span_id" => @trace.span_id
+          }
+        }
+    }
+
+    assert {:error, {:invalid_signal_adapter, {:trace, {:trace_id, :invalid}}}} =
+             JidoAdapter.from_jido(malformed)
+
+    refute inspect(JidoAdapter.from_jido(malformed)) =~ "sensitive-malformed-value"
+
+    invalid_id = %{jido_signal | id: <<255>>}
+
+    assert {:error, {:invalid_signal_adapter, {:id, :invalid}}} =
+             JidoAdapter.from_jido(invalid_id)
   end
 
   test "converts serialized Jido signal data back to a Squidie signal" do

@@ -11,11 +11,11 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
 
   alias Jido.Agent
   alias Squidie.ReadModel.Inspection
-  alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.CommandReceipt
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
 
@@ -40,7 +40,10 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
          {:ok, storage} <- Options.storage_from_opts(opts),
          {:ok, queue} <- Options.queue_from_opts(opts),
          {:ok, now} <- Options.now_from_opts(opts),
-         {:ok, _workflow_agent} <- cancel_or_repair(storage, run_id, now, @run_append_retries) do
+         {:ok, trace} <- Trace.new_root(),
+         {:ok, signal} <- Signal.cancel_run(run_id, occurred_at: now, trace: trace),
+         {:ok, _workflow_agent} <-
+           cancel_or_repair(storage, signal_command(run_id, now, signal), @run_append_retries) do
       Inspection.snapshot(storage, run_id, queue: queue, now: now)
     end
   end
@@ -85,10 +88,6 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
     with {:ok, workflow_agent} <- rebuild_workflow_agent(storage, run_id) do
       cancel_or_ignore_duplicate(storage, workflow_agent, command, now, retries_left)
     end
-  end
-
-  defp cancel_or_repair(storage, run_id, %DateTime{} = now, retries_left) do
-    cancel_or_repair(storage, signal_command(run_id, now, nil), retries_left)
   end
 
   defp append_cancellation(
@@ -141,7 +140,7 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
   defp cancel_workflow_agent(storage, workflow_agent, command, %DateTime{} = now, retries_left) do
     with :ok <- cancellable?(storage, workflow_agent),
          {:ok, command_receipt} <- cancel_command_receipt(command),
-         {:ok, terminal_entry} <- run_terminal_entry(command.run_id, :cancelled, now) do
+         {:ok, terminal_entry} <- run_terminal_entry(command, :cancelled, now) do
       append_cancellation(
         storage,
         workflow_agent,
@@ -212,12 +211,14 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
     end
   end
 
-  defp run_terminal_entry(run_id, status, %DateTime{} = now) do
-    DispatchProtocol.new_entry(:run_terminal, %{
-      run_id: run_id,
-      status: status,
-      occurred_at: now
-    })
+  defp run_terminal_entry(%{run_id: run_id} = command, status, %DateTime{} = now) do
+    {:ok,
+     Squidie.Runtime.Journal.EntryBuilder.traced_run_terminal!(
+       run_id,
+       status,
+       command_trace(command),
+       now
+     )}
   end
 
   defp cancel_command_receipt(%{signal: %Signal{} = signal}) do
@@ -229,6 +230,8 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
         run_id: run_id,
         payload: signal.payload,
         metadata: signal.metadata,
+        signal_id: signal.id,
+        trace: signal.trace,
         idempotency_key: signal.idempotency_key
       },
       signal.occurred_at
@@ -242,6 +245,9 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
   defp signal_command(run_id, %DateTime{} = now, signal) do
     %{run_id: run_id, occurred_at: now, signal: signal}
   end
+
+  defp command_trace(%{signal: %Signal{trace: trace}}), do: trace
+  defp command_trace(_command), do: nil
 
   defp run_id(run_id) do
     Options.uuid_run_id(run_id)

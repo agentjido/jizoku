@@ -5,8 +5,10 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.Journal
+  alias Squidie.Runtime.Journal.CommandReceipt
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
+  alias Squidie.Test.TelemetryCapture
 
   @storage {Jido.Storage.ETS, table: :squidie_workflow_agent_test}
   @run_id "run_123"
@@ -18,6 +20,10 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
   @claimed_at ~U[2026-05-15 00:00:20Z]
   @completed_at ~U[2026-05-15 00:00:40Z]
   @lease_until ~U[2026-05-15 00:01:00Z]
+  @trace %{
+    trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
+    span_id: "00f067aa0ba902b7"
+  }
 
   setup do
     cleanup_storage()
@@ -53,6 +59,40 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
     assert %Projection{} = agent.state.projection
     assert WorkflowAgent.status(agent) == :running
     assert WorkflowAgent.applied_runnable_keys(agent) == MapSet.new()
+  end
+
+  test "preserves signal identity and trace in command and run projections" do
+    assert {:ok, receipt} =
+             CommandReceipt.new(
+               :start_run,
+               %{
+                 run_id: @run_id,
+                 signal_id: "signal-123",
+                 trace: @trace,
+                 payload: %{workflow: @workflow},
+                 metadata: %{}
+               },
+               @started_at
+             )
+
+    assert {:ok, started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               trace: @trace,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, _thread} = Journal.append_entries(@storage, [receipt, started])
+    TelemetryCapture.attach(Squidie.Telemetry.events())
+
+    assert {:ok, agent} = WorkflowAgent.rebuild(@storage, @run_id)
+    assert Projection.trace(agent.state.projection) == @trace
+
+    assert [command] = Projection.command_history(agent.state.projection)
+    assert command.signal_id == "signal-123"
+    assert command.trace == @trace
+    refute_receive {:telemetry_event, _, _, _}
   end
 
   test "partitioned workflow agents have isolated collision-safe identities" do
@@ -363,6 +403,35 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
     assert {:ok, agent} = WorkflowAgent.rebuild(@storage, @run_id)
 
     assert Projection.child_runs(agent.state.projection) == []
+  end
+
+  test "upgrades older top-level workflow checkpoints without trace" do
+    assert {:ok, run_started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, thread} = Journal.append_entries(@storage, [run_started])
+
+    checkpoint_projection =
+      Map.delete(
+        %Projection{run_id: @run_id, workflow: @workflow, status: :running},
+        :trace
+      )
+
+    assert :ok =
+             Journal.put_checkpoint(
+               @storage,
+               {:run, @run_id},
+               checkpoint_projection,
+               thread.rev,
+               updated_at: @visible_at
+             )
+
+    assert {:ok, agent} = WorkflowAgent.rebuild(@storage, @run_id)
+    assert Projection.trace(agent.state.projection) == nil
   end
 
   test "rebuilds failed checkpoints missing terminal_error from durable history" do

@@ -1,12 +1,13 @@
 # Observability
 
 Squidie is observable through durable runtime state first. Host applications
-inspect the journal-backed read models, graph output, explanation diagnostics,
-and their own worker logs or metrics.
+inspect the journal-backed read models, graph output, and explanation
+diagnostics for authoritative state. Squidie also emits a stable public
+`:telemetry` contract under `[:squidie, :runtime, ...]` for live measurements.
 
-Squidie does not currently expose a public `:telemetry` event contract under
-the `[:squidie, ...]` prefix. Treat telemetry event names and metric labels
-as host-app concerns until a dedicated runtime telemetry API exists.
+Telemetry is a best-effort operational signal, not a replacement for the
+journal. Squidie installs no reporter, exporter, logger integration, dashboard,
+or alert policy; the host application owns those choices.
 
 ## Runtime State Surfaces
 
@@ -202,9 +203,129 @@ For step-specific external calls, prefer logging at the host boundary or inside
 native `Squidie.Step` modules, and avoid logging secrets, claim tokens,
 payloads, or raw provider responses.
 
-## Host Telemetry
+## Runtime Telemetry
 
-Host applications can still emit their own telemetry around Squidie calls:
+`Squidie.Telemetry.events/0` returns every public event. There are three span
+boundaries:
+
+| Operation | Event prefix |
+| --- | --- |
+| Runtime command application | `[:squidie, :runtime, :command, :apply]` |
+| Worker execution poll | `[:squidie, :runtime, :executor, :execute_next]` |
+| Actual step invocation | `[:squidie, :runtime, :step, :execute]` |
+
+Each prefix emits `:start` followed by either `:stop` or `:exception`:
+
+- `:start` measurements are `system_time` and `monotonic_time`.
+- `:stop` measurements are `duration` and `monotonic_time`.
+- `:exception` measurements are `duration` and `monotonic_time`.
+- `outcome` is `:unknown` on start, `:ok` for an ordinary result, `:error`
+  when the operation returns `{:error, reason}`, and `:exception` for a raise,
+  throw, or exit.
+
+Raw error reasons, exceptions, and stacktraces are never included in span
+metadata. Step spans cover only the action invocation; durable completion,
+failure, result application, and successor planning happen outside that span
+but inside the executor span.
+
+The runtime also emits these committed lifecycle point events:
+
+| Area | Events |
+| --- | --- |
+| Commands and runs | `:command, :received`; `:run, :started`; `:run, :terminal` |
+| Runnables | `:runnable, :planned`; `:runnable, :applied` |
+| Attempts | `:attempt, :scheduled`; `:retry_scheduled`; `:claimed`; `:heartbeat`; `:completed`; `:failed` |
+| Control and branching | `:manual, :paused`; `:manual, :resolved`; `:child, :started`; `:dynamic_work, :recorded` |
+
+All point names start with `[:squidie, :runtime]`. Point measurements are
+`%{count: 1, system_time: integer}`. One `:runnable, :planned` event is emitted
+for each runnable in a committed planning fact. A failed attempt that durably
+schedules a retry emits both `:attempt, :failed` and
+`:attempt, :retry_scheduled` in journal order.
+
+### Metadata And Trace Correlation
+
+Metadata is event-specific and keys may be absent when the value is not
+available. The complete allowlist is:
+
+- bounded dimensions: `queue`, `workflow`, `step`, `outcome`, `status`,
+  `command_type`, `retry_state`, `partition`, `attempt_number`, `action`, and
+  `kind`
+- correlation fields: `run_id`, `signal_id`, `runnable_key`, `trace_id`,
+  `span_id`, `parent_span_id`, `causation_id`, `child_run_id`, and
+  `dynamic_key`
+
+Metadata values are atoms, integers, or valid non-empty strings of at most 255
+bytes. Squidie drops every non-allowlisted or invalid value. In particular,
+events never publish workflow payloads, step inputs or results, raw errors,
+arbitrary command/manual metadata, actors, comments, claim or owner values,
+idempotency keys, credentials, or trace state.
+
+Runtime commands carry an optional W3C-compatible trace. Squidie creates a root
+trace at the command boundary when one is missing, preserves it on the run, and
+persists child spans for runnable lineage. Trace IDs are 32 lowercase hexadecimal
+characters and span IDs are 16; all-zero identifiers are rejected. A runnable
+keeps the same durable span across schedule, claim, heartbeat, completion or
+failure, and result application, even when different workers execute it.
+Successors, retries, deferred continuations, compensation, child work, and
+dynamic work receive persisted child spans. Replay starts a fresh command
+lineage rather than inheriting the source run's trace.
+
+`Squidie.Runtime.Signal.JidoAdapter` preserves the Jido/CloudEvents envelope ID
+and carries trace correlation through the Jido `"correlation"` extension. It
+does not rely on process-dictionary trace state.
+
+### Metrics And Cardinality
+
+`Squidie.Telemetry.metrics/0` returns reporter-neutral `Telemetry.Metrics`
+definitions for span durations and exceptions plus command, run, runnable, and
+selected attempt counters. The defaults use bounded tags such as `workflow`,
+`step`, `queue`, `status`, `command_type`, and `outcome`. Correlation fields
+such as `run_id`, `signal_id`, `runnable_key`, and trace IDs are never built-in
+metric tags.
+
+Partition can be high-cardinality in multi-tenant systems, so it is excluded
+from the defaults. Use `Squidie.Telemetry.partition_metrics/0` only when the
+host has reviewed and accepted that cardinality. High-volume heartbeat,
+claimed-attempt, manual, child, and dynamic-work events remain available for
+custom metrics but are not in the recommended default set.
+
+A host metrics module can expose the definitions to its selected reporter:
+
+```elixir
+def metrics do
+  application_metrics() ++ Squidie.Telemetry.metrics()
+end
+```
+
+The concrete reporter module and its supervision/configuration remain
+host-owned.
+
+### Delivery And Transaction Boundaries
+
+Lifecycle point events are emitted only after the storage adapter reports a
+successful journal append. Conflicts, stale claims, semantic duplicate no-ops,
+checkpoint writes, projection rebuilds, and replaying source history do not
+emit lifecycle points. Append batches preserve event order.
+
+For a Squidie-owned `transaction: :repo` step, completion-related event intents
+are buffered until the outer Ecto transaction commits. A rollback, returned
+transaction error, raise, throw, or exit discards them. On success, buffered
+points flush before the enclosing executor `:stop` event. Heartbeats use their
+own storage path and are not held behind the step transaction.
+
+These guarantees do not extend through an arbitrary caller-owned outer
+`Repo.transaction/1` that Squidie does not control. Telemetry handlers are also
+best-effort: handler failures do not change runtime results, and a VM crash
+after commit but before emission can lose an event. Squidie does not guarantee
+exactly-once telemetry delivery; use journal-backed read models for durable
+reconciliation or add a host-owned durable outbox when that guarantee is
+required.
+
+### Host Telemetry
+
+Host applications may add their own spans around Squidie calls when they need
+application-specific dimensions:
 
 ```elixir
 :telemetry.span(

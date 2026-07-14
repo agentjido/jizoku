@@ -268,7 +268,10 @@ At minimum, production deployments should capture:
 - visible-attempt depth and journal worker throughput
 - scheduled attempts, expired claims, and manual intervention queues
 - terminal outcomes, anomalies, and operator explanations
-- host-owned telemetry and structured logs around worker boundaries
+- Squidie's public runtime telemetry for committed lifecycle counts and
+  command, executor, and step spans
+- host-owned reporters, exporters, dashboards, alerts, and structured logs
+  around worker and domain boundaries
 
 Recommended reading:
 
