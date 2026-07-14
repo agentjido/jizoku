@@ -2,14 +2,19 @@ defmodule Squidie.Telemetry.JournalEvents do
   @moduledoc false
 
   alias Squidie.Runtime.DispatchProtocol
-  alias Squidie.Runtime.Journal
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Telemetry.CommitBuffer
   alias Squidie.Telemetry.Emitter
 
-  @spec commit(Journal.storage_config(), [DispatchProtocol.Entry.t()]) :: :ok
-  def commit(storage, entries) when is_list(entries) do
-    intents = sanitized_intents(entries, storage)
+  @spec commit(
+          Squidie.Runtime.Journal.storage_config(),
+          [DispatchProtocol.Entry.t()],
+          DispatchProtocol.Projection.t() | WorkflowAgent.Projection.t() | nil
+        ) :: :ok
+  def commit(storage, entries, projection \\ nil)
+
+  def commit(storage, entries, projection) when is_list(entries) do
+    intents = sanitized_intents(entries, storage, projection)
 
     case Squidie.Runtime.Journal.Storage.commit_buffer(storage) do
       %CommitBuffer{} = buffer -> CommitBuffer.enqueue(buffer, intents)
@@ -19,7 +24,9 @@ defmodule Squidie.Telemetry.JournalEvents do
     _kind, _reason -> :ok
   end
 
-  def commit(_storage, _entries), do: :ok
+  def commit(_storage, _entries, _projection) do
+    :ok
+  end
 
   @doc "Flushes lifecycle intents after a Squidie-owned transaction commits."
   @spec flush(CommitBuffer.t()) :: :ok
@@ -33,14 +40,14 @@ defmodule Squidie.Telemetry.JournalEvents do
   @spec discard(CommitBuffer.t()) :: :ok
   def discard(%CommitBuffer{} = buffer), do: CommitBuffer.discard(buffer)
 
-  defp intents(entries, storage) when is_list(entries) do
-    context = build_context(storage, entries)
+  defp intents(entries, storage, projection) when is_list(entries) do
+    context = build_context(storage, entries, projection)
     Enum.flat_map(entries, &entry_intents(&1, context))
   end
 
-  defp sanitized_intents(entries, storage) do
+  defp sanitized_intents(entries, storage, projection) do
     entries
-    |> intents(storage)
+    |> intents(storage, projection)
     |> Enum.map(fn {event, metadata} -> {event, Emitter.sanitize_metadata(metadata)} end)
   end
 
@@ -49,43 +56,79 @@ defmodule Squidie.Telemetry.JournalEvents do
     :ok
   end
 
-  defp build_context(storage, entries) do
+  defp build_context(storage, entries, projection) do
     run_ids =
       entries
       |> Enum.map(&Map.get(&1.data, :run_id))
       |> Enum.filter(&is_binary/1)
       |> Enum.uniq()
 
+    {runs, attempts} = projection_context(projection, entries)
+
     %{
       partition: Squidie.Runtime.Journal.Storage.partition(storage),
-      runs: Map.new(run_ids, &{&1, run_context(storage, &1)}),
-      attempts: dispatch_attempts(storage, entries)
+      runs: Map.take(runs, run_ids),
+      attempts: attempts
     }
   end
 
-  defp run_context(storage, run_id) do
-    case Journal.load_entries(storage, {:run, run_id}) do
-      {:ok, entries} ->
-        projection = WorkflowAgent.Projection.rebuild(entries)
-
-        %{
-          workflow: projection.workflow,
-          planned_runnables: projection.planned_runnables
-        }
-
-      {:error, _reason} ->
-        %{}
-    end
+  defp projection_context(%WorkflowAgent.Projection{} = projection, entries) do
+    projection
+    |> WorkflowAgent.Projection.replay(entries)
+    |> workflow_context()
   end
 
-  defp dispatch_attempts(storage, [%{thread: {:dispatch, queue}} | _entries]) do
-    case Journal.load_entries(storage, {:dispatch, queue}) do
-      {:ok, entries} -> DispatchProtocol.Projection.rebuild(entries).attempts
-      {:error, _reason} -> %{}
-    end
+  defp projection_context(%DispatchProtocol.Projection{} = projection, entries) do
+    projection = DispatchProtocol.Projection.replay(projection, entries)
+    attempts = relevant_attempts(projection, entries)
+    {attempt_runs(attempts), attempts}
   end
 
-  defp dispatch_attempts(_storage, _entries), do: %{}
+  defp projection_context(nil, [%{thread: {:run, _run_id}} | _entries] = entries) do
+    entries
+    |> WorkflowAgent.Projection.rebuild()
+    |> workflow_context()
+  end
+
+  defp projection_context(nil, [%{thread: {:dispatch, _queue}} | _entries] = entries) do
+    projection = DispatchProtocol.Projection.rebuild(entries)
+    attempts = relevant_attempts(projection, entries)
+    {attempt_runs(attempts), attempts}
+  end
+
+  defp projection_context(_projection, _entries) do
+    {%{}, %{}}
+  end
+
+  defp workflow_context(projection) do
+    {%{
+       projection.run_id => %{
+         workflow: projection.workflow,
+         planned_runnables: projection.planned_runnables
+       }
+     }, %{}}
+  end
+
+  defp attempt_runs(attempts) do
+    attempts
+    |> Map.values()
+    |> Map.new(fn attempt ->
+      {attempt.run_id, %{workflow: attempt.workflow, planned_runnables: %{}}}
+    end)
+  end
+
+  defp relevant_attempts(projection, entries) do
+    Map.take(projection.attempts, entry_runnable_keys(entries))
+  end
+
+  defp entry_runnable_keys(entries) do
+    entries
+    |> Enum.flat_map(fn entry ->
+      [Map.get(entry.data, :runnable_key), Map.get(entry.data, :retry_runnable_key)]
+    end)
+    |> Enum.filter(&is_binary/1)
+    |> Enum.uniq()
+  end
 
   defp entry_intents(%{type: :run_signal_received, data: data}, context) do
     point(:command, :received, data, context, %{

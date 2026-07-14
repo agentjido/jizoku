@@ -12,6 +12,7 @@ defmodule Squidie.Runtime.DispatchProtocol.ActionAttempt do
 
   @type t :: %__MODULE__{
           run_id: String.t(),
+          workflow: String.t() | nil,
           runnable_key: String.t(),
           idempotency_key: String.t(),
           attempt_number: pos_integer(),
@@ -49,6 +50,7 @@ defmodule Squidie.Runtime.DispatchProtocol.ActionAttempt do
   ]
   defstruct [
     :run_id,
+    :workflow,
     :runnable_key,
     :idempotency_key,
     :attempt_number,

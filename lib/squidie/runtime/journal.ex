@@ -39,15 +39,16 @@ defmodule Squidie.Runtime.Journal do
     case entry_thread(entries) do
       {:ok, thread} ->
         partition = Storage.partition(storage)
+        {telemetry_projection, storage_opts} = Keyword.pop(opts, :telemetry_projection)
 
         case Storage.append_thread(
                storage,
                thread_id(thread, partition),
                Enum.map(entries, &to_jido_entry(&1, partition)),
-               opts
+               storage_opts
              ) do
           {:ok, _thread} = ok ->
-            JournalEvents.commit(storage, entries)
+            JournalEvents.commit(storage, entries, telemetry_projection)
             ok
 
           {:error, _reason} = error ->

@@ -851,10 +851,13 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
     assert [%{runnable_key: @runnable_key, status: :available}] =
              DispatchAgent.visible_attempts(recovered_dispatch_agent, @visible_at)
 
+    assert recovered_dispatch_agent.state.projection.attempts[@runnable_key].workflow == @workflow
+
     assert {:ok, [scheduled_entry]} = Journal.load_entries(@storage, {:dispatch, "default"})
 
     assert scheduled_entry.type == :attempt_scheduled
     assert scheduled_entry.data.runnable_key == @runnable_key
+    assert scheduled_entry.data.workflow == @workflow
     assert scheduled_entry.data.idempotency_key == @idempotency_key
     assert scheduled_entry.data.input == %{"payment_id" => "pay_123"}
 

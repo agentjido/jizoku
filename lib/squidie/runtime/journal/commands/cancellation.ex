@@ -98,7 +98,10 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
          retries_left
        )
        when is_list(entries) do
-    case Journal.append_entries(storage, entries, expected_rev: workflow_agent.state.thread_rev) do
+    case Journal.append_entries(storage, entries,
+           expected_rev: workflow_agent.state.thread_rev,
+           telemetry_projection: workflow_agent.state.projection
+         ) do
       {:ok, _thread} ->
         with {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, workflow_agent.state.run_id) do
           _checkpoint_result =

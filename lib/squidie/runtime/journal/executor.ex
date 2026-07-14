@@ -702,7 +702,7 @@ defmodule Squidie.Runtime.Journal.Executor do
          entries,
          retries_left
        ) do
-    case Journal.append_entries(storage, entries, expected_rev: workflow_agent.state.thread_rev) do
+    case append_run_entries_with_projection(storage, workflow_agent, entries) do
       {:ok, _thread} ->
         WorkflowAgent.rebuild(storage, workflow_agent.state.run_id)
 
@@ -752,7 +752,7 @@ defmodule Squidie.Runtime.Journal.Executor do
         ]
       end
 
-    case Journal.append_entries(storage, entries, expected_rev: workflow_agent.state.thread_rev) do
+    case append_run_entries_with_projection(storage, workflow_agent, entries) do
       {:ok, _thread} ->
         WorkflowAgent.rebuild(storage, workflow_agent.state.run_id)
 
@@ -1218,7 +1218,7 @@ defmodule Squidie.Runtime.Journal.Executor do
           [runnables_planned_entry!(attempt.run_id, [runnable], now)]
       end
 
-    case Journal.append_entries(storage, entries, expected_rev: workflow_agent.state.thread_rev) do
+    case append_run_entries_with_projection(storage, workflow_agent, entries) do
       {:ok, _thread} ->
         WorkflowAgent.rebuild(storage, workflow_agent.state.run_id)
 
@@ -1360,7 +1360,7 @@ defmodule Squidie.Runtime.Journal.Executor do
          retries_left
        )
        when retries_left > 0 do
-    case Journal.append_entries(storage, entries, expected_rev: workflow_agent.state.thread_rev) do
+    case append_run_entries_with_projection(storage, workflow_agent, entries) do
       {:ok, _thread} ->
         WorkflowAgent.rebuild(storage, workflow_agent.state.run_id)
 
@@ -1793,7 +1793,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp append_run_entries(storage, workflow_agent, entries, retries_left) when retries_left > 0 do
-    case Journal.append_entries(storage, entries, expected_rev: workflow_agent.state.thread_rev) do
+    case append_run_entries_with_projection(storage, workflow_agent, entries) do
       {:ok, _thread} ->
         WorkflowAgent.rebuild(storage, workflow_agent.state.run_id)
 
@@ -1808,6 +1808,13 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp append_run_entries(_storage, _workflow_agent, _entries, 0), do: {:error, :conflict}
+
+  defp append_run_entries_with_projection(storage, workflow_agent, entries) do
+    Journal.append_entries(storage, entries,
+      expected_rev: workflow_agent.state.thread_rev,
+      telemetry_projection: workflow_agent.state.projection
+    )
+  end
 
   defp schedule_pending_dispatches(storage, workflow_agent, dispatch_agent, %DateTime{} = now) do
     schedule_pending_dispatches(

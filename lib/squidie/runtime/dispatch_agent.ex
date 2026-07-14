@@ -652,6 +652,7 @@ defmodule Squidie.Runtime.DispatchAgent do
       true ->
         DispatchProtocol.new_entry(:attempt_scheduled, %{
           run_id: run_id,
+          workflow: runnable_value(runnable, :workflow),
           runnable_key: runnable_key,
           idempotency_key: runnable_value(runnable, :idempotency_key),
           attempt_number: runnable_value(runnable, :attempt_number),
@@ -697,7 +698,11 @@ defmodule Squidie.Runtime.DispatchAgent do
          }
        ) do
     with :ok <- validate_agent_partition(storage, agent),
-         {:ok, thread} <- Journal.append_entries(storage, entries, expected_rev: thread_rev) do
+         {:ok, thread} <-
+           Journal.append_entries(storage, entries,
+             expected_rev: thread_rev,
+             telemetry_projection: projection
+           ) do
       scheduled_agent = apply_dispatch_entries(agent, projection, entries, thread.rev)
 
       emit_live_wakeups(
@@ -863,7 +868,11 @@ defmodule Squidie.Runtime.DispatchAgent do
          entry
        ) do
     with :ok <- validate_agent_partition(storage, agent),
-         {:ok, thread} <- Journal.append_entries(storage, [entry], expected_rev: thread_rev) do
+         {:ok, thread} <-
+           Journal.append_entries(storage, [entry],
+             expected_rev: thread_rev,
+             telemetry_projection: projection
+           ) do
       {:ok, apply_dispatch_entry(agent, projection, entry, thread.rev)}
     end
   end

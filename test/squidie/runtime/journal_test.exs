@@ -13,6 +13,46 @@ defmodule Squidie.Runtime.JournalTest do
   alias Squidie.Telemetry.JournalEvents
   alias Squidie.Test.TelemetryCapture
 
+  defmodule LoadTrackingStorage do
+    @behaviour Jido.Storage
+
+    @impl Jido.Storage
+    def get_checkpoint(key, opts) do
+      ETS.get_checkpoint(key, delegate_opts(opts))
+    end
+
+    @impl Jido.Storage
+    def put_checkpoint(key, data, opts) do
+      ETS.put_checkpoint(key, data, delegate_opts(opts))
+    end
+
+    @impl Jido.Storage
+    def delete_checkpoint(key, opts) do
+      ETS.delete_checkpoint(key, delegate_opts(opts))
+    end
+
+    @impl Jido.Storage
+    def load_thread(thread_id, opts) do
+      send(Keyword.fetch!(opts, :test_pid), {:storage_load_thread, thread_id})
+      ETS.load_thread(thread_id, delegate_opts(opts))
+    end
+
+    @impl Jido.Storage
+    def append_thread(thread_id, entries, opts) do
+      send(Keyword.fetch!(opts, :test_pid), {:storage_append_opts, opts})
+      ETS.append_thread(thread_id, entries, delegate_opts(opts))
+    end
+
+    @impl Jido.Storage
+    def delete_thread(thread_id, opts) do
+      ETS.delete_thread(thread_id, delegate_opts(opts))
+    end
+
+    defp delegate_opts(opts) do
+      Keyword.delete(opts, :test_pid)
+    end
+  end
+
   @storage {ETS, table: :squidie_journal_test}
   @run_id "run_123"
   @second_run_id "run_456"
@@ -567,6 +607,28 @@ defmodule Squidie.Runtime.JournalTest do
     refute_receive {:telemetry_event, _, _, _}
   end
 
+  test "emits committed lifecycle points without rereading durable threads" do
+    storage =
+      {LoadTrackingStorage, table: :squidie_journal_test, test_pid: self()}
+
+    entry =
+      entry!(:run_started, %{
+        run_id: @run_id,
+        workflow: @workflow,
+        occurred_at: @started_at
+      })
+
+    assert {:ok, %{rev: 1}} =
+             Journal.append_entries(storage, [entry],
+               expected_rev: 0,
+               telemetry_projection: Squidie.Runtime.WorkflowAgent.Projection.new()
+             )
+
+    assert_receive {:storage_append_opts, append_opts}
+    refute Keyword.has_key?(append_opts, :telemetry_projection)
+    refute_receive {:storage_load_thread, _thread_id}
+  end
+
   test "emits failure and retry scheduling once without exposing errors" do
     failed_event = [:squidie, :runtime, :attempt, :failed]
     retry_event = [:squidie, :runtime, :attempt, :retry_scheduled]
@@ -600,6 +662,9 @@ defmodule Squidie.Runtime.JournalTest do
                entry!(:attempt_claimed, claimed_attrs(trace: @trace))
              ])
 
+    assert {:ok, dispatch_projection} =
+             Journal.rebuild_dispatch_projection(@storage, @queue)
+
     TelemetryCapture.attach([failed_event, retry_event])
 
     failed_entry =
@@ -617,7 +682,10 @@ defmodule Squidie.Runtime.JournalTest do
         occurred_at: @completed_at
       })
 
-    assert {:ok, %{rev: 3}} = Journal.append_entries(@storage, [failed_entry])
+    assert {:ok, %{rev: 3}} =
+             Journal.append_entries(@storage, [failed_entry],
+               telemetry_projection: dispatch_projection
+             )
 
     assert_receive {:telemetry_event, ^failed_event, %{count: 1}, failed_metadata}
     assert failed_metadata.runnable_key == @runnable_key
@@ -636,20 +704,23 @@ defmodule Squidie.Runtime.JournalTest do
   test "maps committed run lifecycle facts to exact sanitized point schemas" do
     runnable = Map.delete(scheduled_attrs(trace: @trace), :occurred_at)
 
-    assert {:ok, _thread} =
-             Journal.append_entries(@storage, [
-               entry!(:run_started, %{
-                 run_id: @run_id,
-                 workflow: @workflow,
-                 trace: @trace,
-                 occurred_at: @started_at
-               }),
-               entry!(:runnables_planned, %{
-                 run_id: @run_id,
-                 runnables: [runnable],
-                 occurred_at: @started_at
-               })
-             ])
+    run_entries = [
+      entry!(:run_started, %{
+        run_id: @run_id,
+        workflow: @workflow,
+        trace: @trace,
+        occurred_at: @started_at
+      }),
+      entry!(:runnables_planned, %{
+        run_id: @run_id,
+        runnables: [runnable],
+        occurred_at: @started_at
+      })
+    ]
+
+    assert {:ok, _thread} = Journal.append_entries(@storage, run_entries)
+
+    workflow_projection = Squidie.Runtime.WorkflowAgent.Projection.rebuild(run_entries)
 
     events = [
       [:squidie, :runtime, :runnable, :applied],
@@ -718,7 +789,8 @@ defmodule Squidie.Runtime.JournalTest do
       })
     ]
 
-    assert {:ok, %{rev: 8}} = Journal.append_entries(@storage, entries)
+    assert {:ok, %{rev: 8}} =
+             Journal.append_entries(@storage, entries, telemetry_projection: workflow_projection)
 
     assert_receive {:telemetry_event, [:squidie, :runtime, :runnable, :applied], %{count: 1},
                     applied_metadata}
@@ -848,6 +920,7 @@ defmodule Squidie.Runtime.JournalTest do
     Map.merge(
       %{
         run_id: @run_id,
+        workflow: @workflow,
         runnable_key: @runnable_key,
         idempotency_key: @idempotency_key,
         attempt_number: 1,

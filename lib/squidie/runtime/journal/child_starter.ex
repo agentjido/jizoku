@@ -337,8 +337,7 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
         parent_run_id,
         child,
         now,
-        rev,
-        entries,
+        %{rev: rev, entries: entries, projection: projection},
         retries_left
       )
     else
@@ -352,8 +351,7 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          parent_run_id,
          child,
          now,
-         rev,
-         entries,
+         %{rev: rev, entries: entries, projection: projection},
          retries_left
        ) do
     case child_link_state(entries, child) do
@@ -371,6 +369,7 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
           child,
           now,
           rev,
+          projection,
           retries_left
         )
     end
@@ -383,10 +382,14 @@ defmodule Squidie.Runtime.Journal.ChildStarter do
          child,
          now,
          rev,
+         projection,
          retries_left
        ) do
     with {:ok, entry} <- child_link_entry(parent_run_id, child, now) do
-      case Journal.append_entries(storage, [entry], expected_rev: rev) do
+      case Journal.append_entries(storage, [entry],
+             expected_rev: rev,
+             telemetry_projection: projection
+           ) do
         {:ok, _thread} ->
           parent_from_child_link(entry)
 

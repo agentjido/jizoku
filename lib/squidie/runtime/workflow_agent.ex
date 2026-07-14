@@ -214,7 +214,9 @@ defmodule Squidie.Runtime.WorkflowAgent do
       storage,
       dispatch_agent,
       run_id,
-      pending_dispatches(workflow_agent, dispatch_agent),
+      workflow_agent
+      |> pending_dispatches(dispatch_agent)
+      |> Enum.map(&Map.put(&1, :workflow, workflow_agent.state.projection.workflow)),
       opts
     )
   end
@@ -367,7 +369,11 @@ defmodule Squidie.Runtime.WorkflowAgent do
          entry
        ) do
     with :ok <- validate_agent_partition(storage, agent),
-         {:ok, thread} <- Journal.append_entries(storage, [entry], expected_rev: thread_rev) do
+         {:ok, thread} <-
+           Journal.append_entries(storage, [entry],
+             expected_rev: thread_rev,
+             telemetry_projection: projection
+           ) do
       {:ok, apply_workflow_entry(agent, projection, entry, thread.rev)}
     end
   end

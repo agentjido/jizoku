@@ -298,7 +298,10 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
        ) do
     with {:ok, entries} <-
            resolution_entries(workflow_agent, storage, queue, attrs, command, manual_state) do
-      case Journal.append_entries(storage, entries, expected_rev: workflow_agent.state.thread_rev) do
+      case Journal.append_entries(storage, entries,
+             expected_rev: workflow_agent.state.thread_rev,
+             telemetry_projection: workflow_agent.state.projection
+           ) do
         {:ok, _thread} ->
           WorkflowAgent.rebuild(storage, run_id)
 
@@ -350,7 +353,10 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
              now,
              manual_state
            ) do
-      case Journal.append_entries(storage, entries, expected_rev: workflow_agent.state.thread_rev) do
+      case Journal.append_entries(storage, entries,
+             expected_rev: workflow_agent.state.thread_rev,
+             telemetry_projection: workflow_agent.state.projection
+           ) do
         {:ok, _thread} ->
           WorkflowAgent.rebuild(storage, run_id)
 

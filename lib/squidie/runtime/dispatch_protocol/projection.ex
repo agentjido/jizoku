@@ -395,6 +395,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   defp build_attempt(data) do
     %ActionAttempt{
       run_id: data.run_id,
+      workflow: Map.get(data, :workflow),
       runnable_key: data.runnable_key,
       idempotency_key: data.idempotency_key,
       attempt_number: data.attempt_number,
