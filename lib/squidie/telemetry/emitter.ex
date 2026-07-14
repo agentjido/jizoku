@@ -29,6 +29,11 @@ defmodule Squidie.Telemetry.Emitter do
 
   @max_metadata_value_bytes 255
 
+  @doc """
+  Emits a supported lifecycle point event with sanitized metadata.
+
+  Unsupported event names are ignored.
+  """
   @spec point([atom()], map()) :: :ok
   def point(event, metadata) when is_map(metadata) do
     if Telemetry.point_event?(event) do
@@ -44,6 +49,12 @@ defmodule Squidie.Telemetry.Emitter do
 
   def point(_event, _metadata), do: :ok
 
+  @doc """
+  Instruments an operation for a supported runtime span prefix.
+
+  Unsupported prefixes execute the operation without telemetry. Results and
+  raised, thrown, or exited terms retain their original behavior.
+  """
   @spec span([atom()], map(), (-> result)) :: result when result: term()
   def span(prefix, metadata, operation) when is_map(metadata) and is_function(operation, 0) do
     if Telemetry.span_prefix?(prefix) do
@@ -53,7 +64,11 @@ defmodule Squidie.Telemetry.Emitter do
     end
   end
 
-  @doc false
+  @doc """
+  Filters metadata to the runtime allowlist and expands valid trace fields.
+
+  Empty, oversized, malformed, and unsupported values are omitted.
+  """
   @spec sanitize_metadata(map()) :: map()
   def sanitize_metadata(metadata) when is_map(metadata) do
     metadata

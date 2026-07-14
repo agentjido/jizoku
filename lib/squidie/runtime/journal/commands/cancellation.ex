@@ -238,10 +238,6 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
     )
   end
 
-  defp cancel_command_receipt(%{run_id: run_id, occurred_at: %DateTime{} = now}) do
-    CommandReceipt.new(:cancel_run, %{run_id: run_id, payload: %{run_id: run_id}}, now)
-  end
-
   defp signal_command(run_id, %DateTime{} = now, signal) do
     %{run_id: run_id, occurred_at: now, signal: signal}
   end
