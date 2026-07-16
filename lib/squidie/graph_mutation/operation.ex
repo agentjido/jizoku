@@ -8,6 +8,7 @@ defmodule Squidie.GraphMutation.Operation do
 
   @type kind :: :node | :edge
   @type mode :: :addition | :removal
+  @type public_mode :: :add | :remove
 
   @fields [:kind, :id, :action, :input, :queue, :from, :to]
   @field_names Map.new(@fields, &{Atom.to_string(&1), &1})
@@ -53,6 +54,17 @@ defmodule Squidie.GraphMutation.Operation do
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = operation) do
     Map.take(operation, serialization_fields(operation))
+  end
+
+  @doc """
+  Converts an operation to a redacted report summary.
+  """
+  @spec to_public_map(t(), public_mode()) :: map()
+  def to_public_map(%__MODULE__{} = operation, mode) when mode in [:add, :remove] do
+    operation
+    |> to_map()
+    |> Map.delete(:input)
+    |> Map.put(:operation, mode)
   end
 
   @doc """

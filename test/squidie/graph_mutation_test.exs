@@ -84,9 +84,15 @@ defmodule Squidie.GraphMutationTest do
     first = mutation_input()
 
     second =
-      first
-      |> Map.update!(:additions, &Enum.reverse/1)
-      |> put_in([:additions, Access.at(1), :input], %{amount: 10, account: "acct-1"})
+      Map.update!(first, :additions, fn additions ->
+        Enum.map(Enum.reverse(additions), fn
+          %{id: "node-a"} = operation ->
+            Map.put(operation, :input, %{amount: 10, account: "acct-1"})
+
+          operation ->
+            operation
+        end)
+      end)
 
     assert {:ok, first} = GraphMutation.normalize(first)
     assert {:ok, second} = GraphMutation.normalize(second)
@@ -133,6 +139,17 @@ defmodule Squidie.GraphMutationTest do
              ],
              removals: [%{kind: :node, id: "obsolete"}]
            }
+  end
+
+  test "normalizes, serializes, and canonicalizes edge removals" do
+    input = mutation_input(%{removals: [%{kind: :edge, id: "obsolete-edge"}]})
+
+    assert {:ok, mutation} = GraphMutation.normalize(input)
+    assert mutation.removals == [%Operation{kind: :edge, id: "obsolete-edge"}]
+    assert GraphMutation.to_map(mutation).removals == [%{kind: :edge, id: "obsolete-edge"}]
+
+    assert {:squidie_graph_mutation, 1, _mutation_id, _version, _origin, _additions,
+            [{:edge, "obsolete-edge"}]} = GraphMutation.canonical_content(mutation)
   end
 
   defp mutation_input(overrides \\ %{}) do
