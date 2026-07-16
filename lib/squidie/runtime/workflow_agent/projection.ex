@@ -1,4 +1,37 @@
 # credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
+defmodule Squidie.Runtime.WorkflowAgent.Projection.GraphState do
+  @moduledoc false
+
+  @type provenance_value :: :legacy_eager | :dependency_ordered
+  @type provenance :: %{
+          required(:nodes) => %{optional(String.t()) => provenance_value()},
+          required(:edges) => %{optional(String.t()) => provenance_value()}
+        }
+  @type string_set :: MapSet.t(String.t()) | %MapSet{}
+
+  @type t :: %__MODULE__{
+          version: non_neg_integer(),
+          provenance: provenance(),
+          active_node_ids: string_set(),
+          active_edge_ids: string_set(),
+          reserved_node_ids: string_set(),
+          reserved_edge_ids: string_set(),
+          tombstoned_node_ids: string_set(),
+          tombstoned_edge_ids: string_set(),
+          mutation_history: %{optional(String.t()) => map()}
+        }
+
+  defstruct version: 0,
+            provenance: %{nodes: %{}, edges: %{}},
+            active_node_ids: MapSet.new(),
+            active_edge_ids: MapSet.new(),
+            reserved_node_ids: MapSet.new(),
+            reserved_edge_ids: MapSet.new(),
+            tombstoned_node_ids: MapSet.new(),
+            tombstoned_edge_ids: MapSet.new(),
+            mutation_history: %{}
+end
+
 defmodule Squidie.Runtime.WorkflowAgent.Projection do
   @moduledoc """
   Rebuildable workflow-agent projection over one run-thread journal.
@@ -11,6 +44,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.DynamicEdge
   alias Squidie.Runtime.Trace
+  alias Squidie.Runtime.WorkflowAgent.Projection.GraphState
 
   @type anomaly :: %{
           required(:reason) => atom(),
@@ -51,6 +85,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
           command_history: [map()],
           child_runs: [map()],
           dynamic_work: [map()],
+          graph: GraphState.t(),
           manual_state: manual_state() | nil,
           terminal_status: atom() | nil,
           terminal_at: DateTime.t() | nil,
@@ -77,6 +112,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
             command_history: [],
             child_runs: [],
             dynamic_work: [],
+            graph: %GraphState{},
             manual_state: nil,
             terminal_status: nil,
             terminal_at: nil,
@@ -244,10 +280,18 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   @doc false
   @spec upgrade(t()) :: t()
   def upgrade(%__MODULE__{} = projection) do
+    dynamic_work =
+      projection
+      |> Map.get(:dynamic_work, [])
+      |> Enum.map(&upgrade_legacy_dynamic_work/1)
+
+    legacy_graph_state = legacy_graph_state(dynamic_work)
+
     projection
     |> Map.put_new(:command_history, [])
     |> Map.put_new(:child_runs, [])
-    |> Map.put_new(:dynamic_work, [])
+    |> Map.put(:dynamic_work, dynamic_work)
+    |> Map.put_new(:graph, legacy_graph_state)
     |> Map.put_new(:terminal_error, nil)
     |> Map.put_new(:trace, nil)
   end
@@ -522,11 +566,14 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
         projection
 
       true ->
-        %__MODULE__{
-          projection
-          | run_id: projection.run_id || data.run_id,
-            dynamic_work: [dynamic_work | existing_work]
-        }
+        projection =
+          %__MODULE__{
+            projection
+            | run_id: projection.run_id || data.run_id,
+              dynamic_work: [dynamic_work | existing_work]
+          }
+
+        put_legacy_graph_state(projection, dynamic_work)
     end
   end
 
@@ -544,9 +591,83 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       nodes: nodes,
       edges: dynamic_edges(data, nodes),
       metadata: Map.get(data, :metadata, %{}),
+      provenance: :legacy_eager,
       trace: Map.get(data, :trace),
       recorded_at: dynamic_recorded_at(data, entry)
     })
+  end
+
+  defp upgrade_legacy_dynamic_work(work) when is_map(work) do
+    Map.put_new(work, :provenance, :legacy_eager)
+  end
+
+  defp upgrade_legacy_dynamic_work(work) do
+    work
+  end
+
+  defp legacy_graph_state(dynamic_work) do
+    Enum.reduce(dynamic_work, empty_legacy_graph_state(), fn work, state ->
+      if legacy_dynamic_work?(work) do
+        merge_legacy_graph_state(state, work)
+      else
+        state
+      end
+    end)
+  end
+
+  defp empty_legacy_graph_state do
+    %GraphState{}
+  end
+
+  defp legacy_dynamic_work?(work) when is_map(work) do
+    is_binary(Map.get(work, :dynamic_key)) and is_list(Map.get(work, :nodes)) and
+      is_list(Map.get(work, :edges))
+  end
+
+  defp legacy_dynamic_work?(_work) do
+    false
+  end
+
+  defp merge_legacy_graph_state(%GraphState{} = state, work) do
+    node_ids = legacy_identity_ids(Map.get(work, :nodes, []))
+    edge_ids = legacy_identity_ids(Map.get(work, :edges, []))
+
+    %GraphState{
+      state
+      | version: state.version + 1,
+        provenance: %{
+          nodes: put_legacy_provenance(state.provenance.nodes, node_ids),
+          edges: put_legacy_provenance(state.provenance.edges, edge_ids)
+        },
+        active_node_ids: MapSet.union(state.active_node_ids, node_ids),
+        active_edge_ids: MapSet.union(state.active_edge_ids, edge_ids),
+        reserved_node_ids: MapSet.union(state.reserved_node_ids, node_ids),
+        reserved_edge_ids: MapSet.union(state.reserved_edge_ids, edge_ids)
+    }
+  end
+
+  defp put_legacy_graph_state(%__MODULE__{} = projection, work) do
+    graph = merge_legacy_graph_state(projection.graph, work)
+
+    %__MODULE__{
+      projection
+      | graph: graph
+    }
+  end
+
+  defp legacy_identity_ids(items) do
+    Enum.reduce(items, MapSet.new(), fn item, ids ->
+      case item do
+        %{id: id} when is_binary(id) and id != "" -> MapSet.put(ids, id)
+        _invalid_item -> ids
+      end
+    end)
+  end
+
+  defp put_legacy_provenance(provenance, ids) do
+    Enum.reduce(ids, provenance, fn id, entries ->
+      Map.put(entries, id, :legacy_eager)
+    end)
   end
 
   defp normalize_dynamic_node(node) when is_map(node) do
