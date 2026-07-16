@@ -11,6 +11,10 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection.GraphState do
 
   @type t :: %__MODULE__{
           version: non_neg_integer(),
+          topology: %{
+            required(:nodes) => %{optional(String.t()) => map()},
+            required(:edges) => %{optional(String.t()) => map()}
+          },
           provenance: provenance(),
           active_node_ids: string_set(),
           active_edge_ids: string_set(),
@@ -22,6 +26,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection.GraphState do
         }
 
   defstruct version: 0,
+            topology: %{nodes: %{}, edges: %{}},
             provenance: %{nodes: %{}, edges: %{}},
             active_node_ids: MapSet.new(),
             active_edge_ids: MapSet.new(),
@@ -41,6 +46,8 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   durable ordering between dispatch results and workflow state transitions.
   """
 
+  alias Squidie.GraphMutation
+  alias Squidie.GraphMutation.Operation
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.DynamicEdge
   alias Squidie.Runtime.Trace
@@ -50,6 +57,8 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
           required(:reason) => atom(),
           required(:entry_type) => atom(),
           optional(:child_run_id) => String.t(),
+          optional(:mutation_id) => String.t(),
+          optional(:node_id) => String.t(),
           optional(:runnable_key) => String.t(),
           optional(:run_id) => String.t(),
           optional(:step) => String.t()
@@ -286,12 +295,13 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       |> Enum.map(&upgrade_legacy_dynamic_work/1)
 
     legacy_graph_state = legacy_graph_state(dynamic_work)
+    graph = upgrade_graph_state(Map.get(projection, :graph), legacy_graph_state)
 
     projection
     |> Map.put_new(:command_history, [])
     |> Map.put_new(:child_runs, [])
     |> Map.put(:dynamic_work, dynamic_work)
-    |> Map.put_new(:graph, legacy_graph_state)
+    |> Map.put(:graph, graph)
     |> Map.put_new(:terminal_error, nil)
     |> Map.put_new(:trace, nil)
   end
@@ -341,6 +351,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       projection
       |> Map.put(:planned_runnables, add_planned_runnables(projection.planned_runnables, data))
       |> Map.put(:run_id, projection.run_id || Map.fetch!(data, :run_id))
+      |> validate_runnable_intent_fingerprints(entry, data)
       |> refresh_status()
     else
       add_anomaly(projection, entry, :malformed_entry)
@@ -376,6 +387,17 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
        ) do
     if dynamic_work_data?(data) do
       put_dynamic_work(projection, entry, data)
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :dynamic_graph_mutated, data: data} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if dynamic_graph_mutation_data?(data) do
+      put_graph_mutation(projection, entry, data)
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
@@ -461,6 +483,46 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     case runnable_key(runnable) do
       key when is_binary(key) and key != "" -> Map.put_new(acc, key, normalize_runnable(runnable))
       _missing_key -> acc
+    end
+  end
+
+  defp validate_runnable_intent_fingerprints(projection, entry, data) do
+    data
+    |> Map.get(:runnables, [])
+    |> Enum.reduce(projection, fn runnable, current_projection ->
+      validate_runnable_intent_fingerprint(current_projection, entry, runnable)
+    end)
+  end
+
+  defp validate_runnable_intent_fingerprint(projection, entry, runnable) do
+    case map_value(runnable, :graph_mutation) do
+      nil ->
+        projection
+
+      metadata when is_map(metadata) ->
+        validate_graph_mutation_runnable(projection, entry, runnable, metadata)
+
+      _invalid_metadata ->
+        add_runnable_intent_anomaly(projection, entry, runnable, nil, nil)
+    end
+  end
+
+  defp validate_graph_mutation_runnable(projection, entry, runnable, metadata) do
+    mutation_id = map_value(metadata, :mutation_id)
+    node_id = map_value(metadata, :node_id)
+    actual_fingerprint = map_value(metadata, :intent_fingerprint)
+
+    with history when is_map(history) <-
+           Map.get(projection.graph.mutation_history, mutation_id),
+         fingerprints when is_map(fingerprints) <-
+           Map.get(history, :runnable_intent_fingerprints),
+         expected_fingerprint when is_binary(expected_fingerprint) <-
+           Map.get(fingerprints, node_id),
+         true <- actual_fingerprint == expected_fingerprint do
+      projection
+    else
+      _mismatch ->
+        add_runnable_intent_anomaly(projection, entry, runnable, mutation_id, node_id)
     end
   end
 
@@ -605,6 +667,14 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     work
   end
 
+  defp upgrade_graph_state(%GraphState{} = graph, _legacy_graph_state) do
+    Map.put_new(graph, :topology, %{nodes: %{}, edges: %{}})
+  end
+
+  defp upgrade_graph_state(_missing_graph, legacy_graph_state) do
+    legacy_graph_state
+  end
+
   defp legacy_graph_state(dynamic_work) do
     Enum.reduce(dynamic_work, empty_legacy_graph_state(), fn work, state ->
       if legacy_dynamic_work?(work) do
@@ -668,6 +738,151 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     Enum.reduce(ids, provenance, fn id, entries ->
       Map.put(entries, id, :legacy_eager)
     end)
+  end
+
+  defp dynamic_graph_mutation_data?(data) when is_map(data) do
+    required_present?(data, [
+      :run_id,
+      :mutation_id,
+      :expected_version,
+      :result_version,
+      :origin
+    ]) and is_integer(Map.get(data, :result_version)) and Map.get(data, :result_version) >= 0
+  end
+
+  defp dynamic_graph_mutation_data?(_data) do
+    false
+  end
+
+  defp put_graph_mutation(%__MODULE__{} = projection, entry, data) do
+    with true <- is_map(Map.get(data, :runnable_intent_fingerprints, %{})),
+         {:ok, mutation} <- normalize_graph_mutation(data) do
+      replay_graph_mutation(projection, entry, data, mutation)
+    else
+      _invalid -> add_anomaly(projection, entry, :malformed_graph_operations)
+    end
+  end
+
+  defp normalize_graph_mutation(data) do
+    data
+    |> Map.take([:mutation_id, :expected_version, :origin, :additions, :removals])
+    |> GraphMutation.normalize()
+  end
+
+  defp replay_graph_mutation(projection, entry, data, mutation) do
+    fingerprint = GraphMutation.fingerprint(mutation)
+
+    case Map.get(projection.graph.mutation_history, mutation.mutation_id) do
+      %{fingerprint: ^fingerprint} ->
+        projection
+
+      nil ->
+        apply_new_graph_mutation(projection, entry, data, mutation, fingerprint)
+
+      _conflicting_history ->
+        add_anomaly(projection, entry, :conflicting_graph_mutation)
+    end
+  end
+
+  defp apply_new_graph_mutation(
+         %__MODULE__{} = projection,
+         entry,
+         data,
+         mutation,
+         fingerprint
+       ) do
+    if continuous_graph_version?(projection.graph, data, mutation) do
+      graph =
+        projection.graph
+        |> apply_graph_operations(mutation)
+        |> put_mutation_history(entry, data, mutation, fingerprint)
+
+      %__MODULE__{
+        projection
+        | run_id: projection.run_id || Map.fetch!(data, :run_id),
+          graph: graph
+      }
+    else
+      add_anomaly(projection, entry, :discontinuous_graph_version)
+    end
+  end
+
+  defp continuous_graph_version?(graph, data, mutation) do
+    mutation.expected_version == graph.version and
+      Map.get(data, :result_version) == graph.version + 1
+  end
+
+  defp apply_graph_operations(%GraphState{} = graph, mutation) do
+    graph = Enum.reduce(mutation.additions, graph, &add_graph_operation/2)
+    Enum.reduce(mutation.removals, graph, &remove_graph_operation/2)
+  end
+
+  defp add_graph_operation(%Operation{kind: :node} = operation, %GraphState{} = graph) do
+    id = operation.id
+    topology = Map.update!(graph.topology, :nodes, &Map.put(&1, id, Operation.to_map(operation)))
+    provenance = Map.update!(graph.provenance, :nodes, &Map.put(&1, id, :dependency_ordered))
+
+    %GraphState{
+      graph
+      | topology: topology,
+        provenance: provenance,
+        active_node_ids: MapSet.put(graph.active_node_ids, id),
+        reserved_node_ids: MapSet.put(graph.reserved_node_ids, id)
+    }
+  end
+
+  defp add_graph_operation(%Operation{kind: :edge} = operation, %GraphState{} = graph) do
+    id = operation.id
+    topology = Map.update!(graph.topology, :edges, &Map.put(&1, id, Operation.to_map(operation)))
+    provenance = Map.update!(graph.provenance, :edges, &Map.put(&1, id, :dependency_ordered))
+
+    %GraphState{
+      graph
+      | topology: topology,
+        provenance: provenance,
+        active_edge_ids: MapSet.put(graph.active_edge_ids, id),
+        reserved_edge_ids: MapSet.put(graph.reserved_edge_ids, id)
+    }
+  end
+
+  defp remove_graph_operation(%Operation{kind: :node, id: id}, %GraphState{} = graph) do
+    %GraphState{
+      graph
+      | topology: Map.update!(graph.topology, :nodes, &Map.delete(&1, id)),
+        active_node_ids: MapSet.delete(graph.active_node_ids, id),
+        reserved_node_ids: MapSet.put(graph.reserved_node_ids, id),
+        tombstoned_node_ids: MapSet.put(graph.tombstoned_node_ids, id)
+    }
+  end
+
+  defp remove_graph_operation(%Operation{kind: :edge, id: id}, %GraphState{} = graph) do
+    %GraphState{
+      graph
+      | topology: Map.update!(graph.topology, :edges, &Map.delete(&1, id)),
+        active_edge_ids: MapSet.delete(graph.active_edge_ids, id),
+        reserved_edge_ids: MapSet.put(graph.reserved_edge_ids, id),
+        tombstoned_edge_ids: MapSet.put(graph.tombstoned_edge_ids, id)
+    }
+  end
+
+  defp put_mutation_history(%GraphState{} = graph, entry, data, mutation, fingerprint) do
+    result_version = Map.fetch!(data, :result_version)
+
+    history =
+      mutation
+      |> GraphMutation.to_map()
+      |> Map.merge(%{
+        result_version: result_version,
+        fingerprint: fingerprint,
+        runnable_intent_fingerprints: Map.get(data, :runnable_intent_fingerprints, %{}),
+        occurred_at: entry.occurred_at
+      })
+
+    %GraphState{
+      graph
+      | version: result_version,
+        mutation_history: Map.put(graph.mutation_history, mutation.mutation_id, history)
+    }
   end
 
   defp normalize_dynamic_node(node) when is_map(node) do
@@ -927,8 +1142,31 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
         entry_type: entry.type
       }
       |> maybe_put_run_id(Map.get(data, :run_id))
+      |> maybe_put_mutation_id(Map.get(data, :mutation_id))
       |> maybe_put_runnable_key(Map.get(data, :runnable_key))
       |> maybe_put_step(Map.get(data, :step))
+
+    %__MODULE__{projection | anomalies: [anomaly | projection.anomalies]}
+  end
+
+  defp add_runnable_intent_anomaly(
+         %__MODULE__{} = projection,
+         %Entry{} = entry,
+         runnable,
+         mutation_id,
+         node_id
+       ) do
+    data = data_map(entry)
+
+    anomaly =
+      %{
+        reason: :runnable_intent_fingerprint_mismatch,
+        entry_type: entry.type
+      }
+      |> maybe_put_run_id(Map.get(data, :run_id))
+      |> maybe_put_mutation_id(mutation_id)
+      |> maybe_put_node_id(node_id)
+      |> maybe_put_runnable_key(runnable_key(runnable))
 
     %__MODULE__{projection | anomalies: [anomaly | projection.anomalies]}
   end
@@ -966,6 +1204,22 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
 
   defp maybe_put_child_run_id(anomaly, child_run_id) do
     Map.put(anomaly, :child_run_id, child_run_id)
+  end
+
+  defp maybe_put_mutation_id(anomaly, nil) do
+    anomaly
+  end
+
+  defp maybe_put_mutation_id(anomaly, mutation_id) do
+    Map.put(anomaly, :mutation_id, mutation_id)
+  end
+
+  defp maybe_put_node_id(anomaly, nil) do
+    anomaly
+  end
+
+  defp maybe_put_node_id(anomaly, node_id) do
+    Map.put(anomaly, :node_id, node_id)
   end
 
   defp maybe_put_runnable_key(anomaly, nil), do: anomaly

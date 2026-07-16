@@ -225,6 +225,60 @@ defmodule Squidie.Runtime.DispatchProtocolTest do
     assert legacy_entry.data.edges == []
   end
 
+  test "normalizes dynamic graph mutation facts on the run thread" do
+    assert {:ok, entry} =
+             DispatchProtocol.new_entry(:dynamic_graph_mutated, %{
+               run_id: @run_id,
+               mutation_id: :mutation_1,
+               expected_version: 4,
+               result_version: 5,
+               origin: :charge_card,
+               additions: [
+                 %{
+                   "kind" => "node",
+                   "id" => :deliver_digest,
+                   "action" => :deliver,
+                   "input" => %{"account_id" => "acct_123"},
+                   "queue" => :priority
+                 },
+                 %{
+                   kind: :edge,
+                   id: :charge_to_digest,
+                   from: :charge_card,
+                   to: :deliver_digest
+                 },
+                 :stale_operation
+               ],
+               removals: [%{"kind" => "edge", "id" => :old_edge}],
+               runnable_intent_fingerprints: %{deliver_digest: :intent_1},
+               occurred_at: @started_at
+             })
+
+    assert entry.thread == {:run, @run_id}
+    assert entry.data.mutation_id == "mutation_1"
+    assert entry.data.origin == "charge_card"
+
+    assert entry.data.additions == [
+             %{
+               kind: :node,
+               id: "deliver_digest",
+               action: "deliver",
+               input: %{"account_id" => "acct_123"},
+               queue: "priority"
+             },
+             %{
+               kind: :edge,
+               id: "charge_to_digest",
+               from: "charge_card",
+               to: "deliver_digest"
+             },
+             :stale_operation
+           ]
+
+    assert entry.data.removals == [%{kind: :edge, id: "old_edge"}]
+    assert entry.data.runnable_intent_fingerprints == %{"deliver_digest" => "intent_1"}
+  end
+
   test "normalizes manual step lifecycle entries on the run thread" do
     assert {:ok, paused_entry} =
              DispatchProtocol.new_entry(:manual_step_paused, %{

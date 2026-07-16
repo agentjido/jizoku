@@ -18,6 +18,16 @@ defmodule Squidie.Runtime.DispatchProtocol do
 
   alias Squidie.Runtime.DispatchProtocol.Entry
 
+  @graph_operation_field_names %{
+    "kind" => :kind,
+    "id" => :id,
+    "action" => :action,
+    "input" => :input,
+    "queue" => :queue,
+    "from" => :from,
+    "to" => :to
+  }
+
   @type entry_type ::
           :run_signal_received
           | :run_started
@@ -25,6 +35,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
           | :runnable_applied
           | :child_run_started
           | :dynamic_work_recorded
+          | :dynamic_graph_mutated
           | :manual_step_paused
           | :manual_step_resolved
           | :run_terminal
@@ -47,6 +58,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
     :runnable_applied,
     :child_run_started,
     :dynamic_work_recorded,
+    :dynamic_graph_mutated,
     :manual_step_paused,
     :manual_step_resolved,
     :run_terminal
@@ -80,6 +92,14 @@ defmodule Squidie.Runtime.DispatchProtocol do
       :occurred_at
     ],
     dynamic_work_recorded: [:run_id, :dynamic_key, :origin, :nodes, :occurred_at],
+    dynamic_graph_mutated: [
+      :run_id,
+      :mutation_id,
+      :expected_version,
+      :result_version,
+      :origin,
+      :occurred_at
+    ],
     manual_step_paused: [:run_id, :step, :kind, :occurred_at],
     manual_step_resolved: [:run_id, :step, :action, :occurred_at],
     run_terminal: [:run_id, :status, :occurred_at],
@@ -203,6 +223,19 @@ defmodule Squidie.Runtime.DispatchProtocol do
     |> Map.update(:status, :recorded, &normalize_dynamic_value/1)
   end
 
+  defp normalize_attrs(attrs, :dynamic_graph_mutated) do
+    attrs
+    |> Map.update(:mutation_id, nil, &normalize_graph_identifier/1)
+    |> Map.update(:origin, nil, &normalize_graph_identifier/1)
+    |> Map.update(:additions, [], &normalize_graph_operations/1)
+    |> Map.update(:removals, [], &normalize_graph_operations/1)
+    |> Map.update(
+      :runnable_intent_fingerprints,
+      %{},
+      &normalize_runnable_intent_fingerprints/1
+    )
+  end
+
   defp normalize_attrs(attrs, type) when type in @run_index_entry_types do
     attrs
     |> Map.update(:workflow, nil, &normalize_workflow/1)
@@ -302,6 +335,76 @@ defmodule Squidie.Runtime.DispatchProtocol do
   defp normalize_dynamic_value(nil), do: nil
   defp normalize_dynamic_value(value) when is_atom(value), do: value
   defp normalize_dynamic_value(value), do: normalize_thread_id(value)
+
+  defp normalize_graph_operations(operations) when is_list(operations) do
+    Enum.map(operations, &normalize_graph_operation/1)
+  end
+
+  defp normalize_graph_operations(operations) do
+    operations
+  end
+
+  defp normalize_graph_operation(operation) when is_map(operation) do
+    operation
+    |> Map.new(fn {key, value} ->
+      {normalize_graph_operation_key(key), value}
+    end)
+    |> normalize_graph_operation_field(:kind, &normalize_graph_operation_kind/1)
+    |> normalize_graph_operation_field(:id, &normalize_graph_identifier/1)
+    |> normalize_graph_operation_field(:action, &normalize_graph_identifier/1)
+    |> normalize_graph_operation_field(:queue, &normalize_graph_identifier/1)
+    |> normalize_graph_operation_field(:from, &normalize_graph_identifier/1)
+    |> normalize_graph_operation_field(:to, &normalize_graph_identifier/1)
+  end
+
+  defp normalize_graph_operation(operation) do
+    operation
+  end
+
+  defp normalize_graph_operation_key(key) when is_binary(key) do
+    Map.get(@graph_operation_field_names, key, key)
+  end
+
+  defp normalize_graph_operation_key(key) do
+    key
+  end
+
+  defp normalize_graph_operation_field(operation, key, normalizer) do
+    case Map.fetch(operation, key) do
+      {:ok, value} -> Map.put(operation, key, normalizer.(value))
+      :error -> operation
+    end
+  end
+
+  defp normalize_graph_operation_kind(kind) when kind in [:node, "node"] do
+    :node
+  end
+
+  defp normalize_graph_operation_kind(kind) when kind in [:edge, "edge"] do
+    :edge
+  end
+
+  defp normalize_graph_operation_kind(kind) do
+    kind
+  end
+
+  defp normalize_graph_identifier(nil) do
+    nil
+  end
+
+  defp normalize_graph_identifier(identifier) do
+    normalize_thread_id(identifier)
+  end
+
+  defp normalize_runnable_intent_fingerprints(fingerprints) when is_map(fingerprints) do
+    Map.new(fingerprints, fn {node_id, fingerprint} ->
+      {normalize_graph_identifier(node_id), normalize_graph_identifier(fingerprint)}
+    end)
+  end
+
+  defp normalize_runnable_intent_fingerprints(fingerprints) do
+    fingerprints
+  end
 
   defp redact_metadata(metadata) when is_map(metadata) do
     Map.new(metadata, fn {key, value} ->
