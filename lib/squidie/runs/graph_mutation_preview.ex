@@ -106,7 +106,15 @@ defmodule Squidie.Runs.GraphMutationPreview do
       case DispatchAgent.rebuild(storage, queue) do
         {:ok, agent} ->
           current = Map.values(agent.state.projection.attempts)
-          {:cont, {:ok, current ++ attempts}}
+
+          updated_attempts =
+            current
+            |> Enum.reverse()
+            |> Enum.reduce(attempts, fn attempt, accumulated ->
+              [attempt | accumulated]
+            end)
+
+          {:cont, {:ok, updated_attempts}}
 
         {:error, reason} ->
           {:halt, {:error, reason}}
