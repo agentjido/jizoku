@@ -249,10 +249,15 @@ defmodule Squidie.Runtime.Journal.GraphMutation.Topology do
     {ready_node_ids, blocked_node_ids} =
       Enum.reduce(predecessors, {MapSet.new(), MapSet.new()}, fn
         {node_id, node_predecessors}, {ready, blocked} ->
-          if MapSet.subset?(node_predecessors, applied_node_ids) do
-            {MapSet.put(ready, node_id), blocked}
-          else
-            {ready, MapSet.put(blocked, node_id)}
+          cond do
+            MapSet.member?(applied_node_ids, node_id) ->
+              {ready, blocked}
+
+            MapSet.subset?(node_predecessors, applied_node_ids) ->
+              {MapSet.put(ready, node_id), blocked}
+
+            true ->
+              {ready, MapSet.put(blocked, node_id)}
           end
       end)
 

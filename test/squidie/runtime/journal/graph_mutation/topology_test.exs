@@ -26,8 +26,9 @@ defmodule Squidie.Runtime.Journal.GraphMutation.TopologyTest do
     assert result.predecessors["left"] == MapSet.new(["origin"])
     assert result.predecessors["right"] == MapSet.new(["origin"])
     assert result.predecessors["join"] == MapSet.new(["left", "right"])
-    assert result.ready_node_ids == MapSet.new(["left", "right"])
+    assert result.ready_node_ids == MapSet.new(["right"])
     assert result.blocked_node_ids == MapSet.new(["join"])
+    refute MapSet.member?(result.ready_node_ids, "left")
   end
 
   test "rejects an unknown edge endpoint" do
@@ -91,8 +92,9 @@ defmodule Squidie.Runtime.Journal.GraphMutation.TopologyTest do
              Topology.evaluate(candidate, context(graph: fan_in_graph()))
 
     assert result.predecessors["join"] == MapSet.new(["left"])
-    assert result.ready_node_ids == MapSet.new(["join", "left", "right"])
+    assert result.ready_node_ids == MapSet.new(["join", "right"])
     assert result.blocked_node_ids == MapSet.new()
+    refute MapSet.member?(result.ready_node_ids, "left")
     refute MapSet.member?(result.active_edge_ids, "right-join")
   end
 
