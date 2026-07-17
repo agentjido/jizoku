@@ -14,6 +14,7 @@ defmodule Squidie do
   alias Squidie.ReadModel.Timeline
   alias Squidie.Runs.DynamicWorkPreview
   alias Squidie.Runs.GraphInspection
+  alias Squidie.Runs.GraphMutationPreview
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.Journal.ChildStarter
@@ -396,6 +397,34 @@ defmodule Squidie do
          {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides) do
       Inspection.timeline(snapshot)
     end
+  end
+
+  @doc """
+  Validates a versioned graph mutation against current durable run state.
+
+  Preview is read-only. It resolves added actions and validates dependency and
+  lifecycle invariants without appending journal facts or checkpoints.
+  """
+  @spec preview_graph_mutation(String.t(), map(), keyword()) ::
+          {:ok, Squidie.GraphMutation.Preview.t()} | {:error, term()}
+  def preview_graph_mutation(run_id, attrs, overrides \\ [])
+
+  def preview_graph_mutation(run_id, attrs, overrides) when is_list(overrides) do
+    with :ok <- Routing.public_graph_mutation_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides),
+         {:ok, run_id} <- Options.thread_part(run_id, :run_id) do
+      GraphMutationPreview.preview(
+        storage,
+        run_id,
+        attrs,
+        Routing.journal_graph_mutation_options(overrides)
+      )
+    end
+  end
+
+  def preview_graph_mutation(_run_id, _attrs, _overrides) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
   end
 
   @doc """
