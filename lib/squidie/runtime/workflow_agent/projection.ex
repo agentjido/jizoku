@@ -208,6 +208,33 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   @doc false
+  @spec dispatchable_runnable_keys(t()) :: MapSet.t(String.t())
+  def dispatchable_runnable_keys(%__MODULE__{} = projection) do
+    ready_node_ids = ready_dependency_node_ids(projection)
+
+    projection
+    |> planned_runnables()
+    |> Enum.reduce(MapSet.new(), fn runnable, keys ->
+      if dispatchable_runnable?(projection.graph, runnable, ready_node_ids) do
+        MapSet.put(keys, runnable_key(runnable))
+      else
+        keys
+      end
+    end)
+  end
+
+  @doc false
+  @spec terminal_runnable?(t(), map()) :: boolean()
+  def terminal_runnable?(%__MODULE__{graph: graph}, runnable) when is_map(runnable) do
+    node_id = map_value(runnable, :step)
+
+    case Map.get(graph.provenance.nodes, node_id) do
+      :dependency_ordered -> MapSet.member?(graph.active_node_ids, node_id)
+      _declared_or_legacy -> true
+    end
+  end
+
+  @doc false
   @spec applied_results(t()) :: %{optional(String.t()) => map() | nil}
   def applied_results(%__MODULE__{} = projection) do
     Map.get(projection, :applied_results, %{})
@@ -217,6 +244,66 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   @spec applied_result(t(), String.t()) :: {:ok, map() | nil} | :error
   def applied_result(%__MODULE__{} = projection, runnable_key) when is_binary(runnable_key) do
     Map.fetch(applied_results(projection), runnable_key)
+  end
+
+  defp dispatchable_runnable?(graph, runnable, ready_node_ids) do
+    node_id = map_value(runnable, :step)
+
+    case Map.get(graph.provenance.nodes, node_id) do
+      :dependency_ordered ->
+        MapSet.member?(graph.active_node_ids, node_id) and
+          MapSet.member?(ready_node_ids, node_id)
+
+      _declared_or_legacy ->
+        true
+    end
+  end
+
+  defp ready_dependency_node_ids(%__MODULE__{} = projection) do
+    applied_node_ids = applied_node_ids(projection)
+    predecessors = active_predecessors(projection.graph)
+
+    Enum.reduce(predecessors, MapSet.new(), fn {node_id, dependencies}, ready ->
+      if not MapSet.member?(applied_node_ids, node_id) and
+           MapSet.subset?(dependencies, applied_node_ids) do
+        MapSet.put(ready, node_id)
+      else
+        ready
+      end
+    end)
+  end
+
+  defp applied_node_ids(%__MODULE__{} = projection) do
+    projection
+    |> planned_runnables()
+    |> Enum.reduce(MapSet.new(), fn runnable, node_ids ->
+      runnable_key = runnable_key(runnable)
+      node_id = map_value(runnable, :step)
+
+      if is_binary(node_id) and MapSet.member?(projection.applied_runnable_keys, runnable_key) do
+        MapSet.put(node_ids, node_id)
+      else
+        node_ids
+      end
+    end)
+  end
+
+  defp active_predecessors(graph) do
+    predecessors =
+      graph.active_node_ids
+      |> Enum.filter(&(Map.get(graph.provenance.nodes, &1) == :dependency_ordered))
+      |> Map.new(&{&1, MapSet.new()})
+
+    Enum.reduce(graph.topology.edges, predecessors, fn {edge_id, edge}, grouped ->
+      target = map_value(edge, :to)
+      source = map_value(edge, :from)
+
+      if MapSet.member?(graph.active_edge_ids, edge_id) and Map.has_key?(grouped, target) do
+        Map.update!(grouped, target, &MapSet.put(&1, source))
+      else
+        grouped
+      end
+    end)
   end
 
   @doc false
