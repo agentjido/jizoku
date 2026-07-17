@@ -171,6 +171,7 @@ defmodule Squidie.Runtime.WorkflowAgent do
       ) do
     dispatched_keys = DispatchAgent.runnable_keys(dispatch_agent)
     applied_keys = Projection.applied_runnable_keys(projection)
+    dispatchable_keys = Projection.dispatchable_runnable_keys(projection)
 
     projection
     |> Projection.planned_runnables()
@@ -178,6 +179,7 @@ defmodule Squidie.Runtime.WorkflowAgent do
       key = runnable_key(runnable)
 
       normalize_queue(runnable_queue(runnable) || queue) != queue or
+        not MapSet.member?(dispatchable_keys, key) or
         MapSet.member?(dispatched_keys, key) or
         MapSet.member?(applied_keys, key)
     end)
