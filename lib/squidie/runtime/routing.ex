@@ -58,6 +58,15 @@ defmodule Squidie.Runtime.Routing do
     :repo,
     :action_registry
   ]
+  @journal_graph_mutation_options [
+    :runtime,
+    :journal_storage,
+    :queue,
+    :partition,
+    :now,
+    :action_registry,
+    :limits
+  ]
 
   @doc """
   Resolves the configured read model from explicit overrides or app config.
@@ -166,6 +175,22 @@ defmodule Squidie.Runtime.Routing do
   @spec public_dynamic_work_options(keyword()) :: :ok | {:error, term()}
   def public_dynamic_work_options(opts) do
     validate_public_options(opts, @journal_dynamic_work_options)
+  end
+
+  @doc """
+  Validates public graph-mutation preview overrides.
+  """
+  @spec public_graph_mutation_options(keyword()) :: :ok | {:error, term()}
+  def public_graph_mutation_options(opts) do
+    validate_public_options(opts, @journal_graph_mutation_options)
+  end
+
+  @doc """
+  Builds journal options for graph-mutation previews.
+  """
+  @spec journal_graph_mutation_options(keyword()) :: keyword()
+  def journal_graph_mutation_options(overrides) do
+    configured_journal_options(overrides, @journal_graph_mutation_options)
   end
 
   @doc """

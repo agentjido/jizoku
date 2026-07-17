@@ -26,6 +26,10 @@ defmodule Squidie.GraphMutation.ContractsTest do
              result_version: 5,
              duplicate?: false,
              status: :applicable,
+             active_node_ids: [],
+             ready_node_ids: [],
+             blocked_node_ids: [],
+             tombstoned_node_ids: [],
              applied_operations: [
                %{
                  operation: :add,
