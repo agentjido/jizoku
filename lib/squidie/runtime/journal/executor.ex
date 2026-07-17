@@ -1428,6 +1428,7 @@ defmodule Squidie.Runtime.Journal.Executor do
     planned_keys =
       workflow_agent
       |> WorkflowAgent.planned_runnables()
+      |> Enum.filter(&Projection.terminal_runnable?(workflow_agent.state.projection, &1))
       |> latest_planned_runnable_keys()
       |> MapSet.new()
 
