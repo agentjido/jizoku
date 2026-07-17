@@ -7,5 +7,6 @@ defmodule Squidie.GraphMutation.Preview do
   """
 
   use Squidie.GraphMutation.Outcome,
-    statuses: [:applicable, :duplicate, :invalid]
+    statuses: [:applicable, :duplicate, :invalid],
+    graph_state?: true
 end

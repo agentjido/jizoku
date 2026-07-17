@@ -9,7 +9,10 @@ defmodule Squidie.GraphMutation.Outcome do
   @doc """
   Defines a graph mutation outcome struct for the supplied statuses.
   """
-  defmacro __using__(statuses: statuses) do
+  defmacro __using__(opts) do
+    statuses = Keyword.fetch!(opts, :statuses)
+    graph_state? = Keyword.get(opts, :graph_state?, false)
+
     status_type =
       Enum.reduce(statuses, fn status, union ->
         {:|, [], [status, union]}
@@ -23,18 +26,6 @@ defmodule Squidie.GraphMutation.Outcome do
       @type reconciliation :: :not_required | :required | :completed
       @type operation_summary :: map()
 
-      @type t :: %__MODULE__{
-              mutation_id: String.t(),
-              expected_version: non_neg_integer(),
-              base_version: non_neg_integer(),
-              result_version: non_neg_integer(),
-              duplicate?: boolean(),
-              status: status(),
-              applied_operations: [operation_summary()],
-              reconciliation: reconciliation(),
-              warnings: [atom()]
-            }
-
       @enforce_keys [
         :mutation_id,
         :expected_version,
@@ -42,17 +33,64 @@ defmodule Squidie.GraphMutation.Outcome do
         :result_version,
         :status
       ]
-      defstruct [
-        :mutation_id,
-        :expected_version,
-        :base_version,
-        :result_version,
-        :status,
-        duplicate?: false,
-        applied_operations: [],
-        reconciliation: :not_required,
-        warnings: []
-      ]
+
+      if unquote(graph_state?) do
+        @type t :: %__MODULE__{
+                mutation_id: String.t(),
+                expected_version: non_neg_integer(),
+                base_version: non_neg_integer(),
+                result_version: non_neg_integer(),
+                duplicate?: boolean(),
+                status: status(),
+                applied_operations: [operation_summary()],
+                active_node_ids: [String.t()],
+                ready_node_ids: [String.t()],
+                blocked_node_ids: [String.t()],
+                tombstoned_node_ids: [String.t()],
+                reconciliation: reconciliation(),
+                warnings: [atom()]
+              }
+
+        defstruct [
+          :mutation_id,
+          :expected_version,
+          :base_version,
+          :result_version,
+          :status,
+          duplicate?: false,
+          applied_operations: [],
+          active_node_ids: [],
+          ready_node_ids: [],
+          blocked_node_ids: [],
+          tombstoned_node_ids: [],
+          reconciliation: :not_required,
+          warnings: []
+        ]
+      else
+        @type t :: %__MODULE__{
+                mutation_id: String.t(),
+                expected_version: non_neg_integer(),
+                base_version: non_neg_integer(),
+                result_version: non_neg_integer(),
+                duplicate?: boolean(),
+                status: status(),
+                applied_operations: [operation_summary()],
+                reconciliation: reconciliation(),
+                warnings: [atom()]
+              }
+
+        defstruct [
+          :mutation_id,
+          :expected_version,
+          :base_version,
+          :result_version,
+          :status,
+          duplicate?: false,
+          applied_operations: [],
+          reconciliation: :not_required,
+          warnings: []
+        ]
+      end
 
       @doc """
       Builds an outcome from a normalized mutation and outcome attributes.
