@@ -37,6 +37,9 @@ defmodule Squidie.Runtime.Journal.GraphMutation.ReconcilerTest do
     @impl Jido.Storage
     def append_thread(thread_id, entries, opts) do
       cond do
+        thread_id == Keyword.get(opts, :reject_conflict_thread_id) ->
+          {:error, :conflict}
+
         thread_id == Keyword.get(opts, :conflict_thread_id) ->
           append_before_conflict(thread_id, entries, opts)
 
@@ -158,6 +161,35 @@ defmodule Squidie.Runtime.Journal.GraphMutation.ReconcilerTest do
     assert {:ok, repeated} = Reconciler.reconcile(@storage, @run_id, now: @now)
     assert Enum.all?(repeated.queues, &(&1.scheduled_runnables == []))
     assert dispatch_revisions() == revisions
+  end
+
+  test "rejects invalid reconciliation options before reading durable state" do
+    assert Reconciler.reconcile(@storage, @run_id, now: :invalid) ==
+             {:error, {:invalid_option, {:now, :invalid}}}
+
+    assert Reconciler.reconcile(@storage, @run_id, queue: "invalid queue") ==
+             {:error, {:invalid_option, {:queue, :invalid}}}
+  end
+
+  test "rejects an invalid durable runnable queue without writing dispatch state" do
+    invalid_runnable = runnable("invalid-queue", "invalid queue")
+
+    assert {:ok, _thread} =
+             Journal.append_entries(@storage, [runnables_planned_entry([invalid_runnable])])
+
+    assert Reconciler.reconcile(@storage, @run_id, now: @now) ==
+             {:error, {:invalid_option, {:queue, :invalid}}}
+  end
+
+  test "returns missing runs and bounded non-committing conflicts unchanged" do
+    assert Reconciler.reconcile(@storage, "missing-run", now: @now) == {:error, :not_found}
+
+    conflicting_storage =
+      {FaultInjectingStorage,
+       delegate: @storage, reject_conflict_thread_id: Journal.thread_id({:dispatch, @ready_queue})}
+
+    assert Reconciler.reconcile(conflicting_storage, @run_id, now: @now) ==
+             {:error, :conflict}
   end
 
   defp append_run_entries do
