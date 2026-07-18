@@ -10,6 +10,123 @@ defmodule Squidie.Runtime.Journal.Storage.EctoTest do
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Storage
 
+  defmodule BarrierStorage do
+    @behaviour Jido.Storage
+
+    @impl Jido.Storage
+    def get_checkpoint(key, opts) do
+      {adapter, delegate_opts} = delegate(opts)
+      adapter.get_checkpoint(key, delegate_opts)
+    end
+
+    @impl Jido.Storage
+    def put_checkpoint(key, data, opts) do
+      {adapter, delegate_opts} = delegate(opts)
+      adapter.put_checkpoint(key, data, delegate_opts)
+    end
+
+    @impl Jido.Storage
+    def delete_checkpoint(key, opts) do
+      {adapter, delegate_opts} = delegate(opts)
+      adapter.delete_checkpoint(key, delegate_opts)
+    end
+
+    @impl Jido.Storage
+    def load_thread(thread_id, opts) do
+      {adapter, delegate_opts} = delegate(opts)
+      adapter.load_thread(thread_id, delegate_opts)
+    end
+
+    @impl Jido.Storage
+    def append_thread(thread_id, entries, opts) do
+      wait_at_barrier(thread_id, opts)
+      {adapter, delegate_opts} = delegate(opts)
+
+      adapter.append_thread(
+        thread_id,
+        entries,
+        Keyword.merge(delegate_opts, Keyword.take(opts, [:expected_rev]))
+      )
+    end
+
+    @impl Jido.Storage
+    def delete_thread(thread_id, opts) do
+      {adapter, delegate_opts} = delegate(opts)
+      adapter.delete_thread(thread_id, delegate_opts)
+    end
+
+    defp wait_at_barrier(thread_id, opts) do
+      target = Keyword.get(opts, :barrier_thread_id)
+      ref = Keyword.get(opts, :barrier_ref)
+      key = {__MODULE__, ref}
+
+      if thread_id == target and is_nil(Process.get(key)) do
+        Process.put(key, true)
+        barrier_pid = Keyword.fetch!(opts, :barrier_pid)
+        send(barrier_pid, {:append_ready, ref, self()})
+
+        receive do
+          {:append_release, ^ref} -> :ok
+        after
+          5_000 -> raise "append barrier timed out"
+        end
+      end
+    end
+
+    defp delegate(opts) do
+      case Keyword.fetch!(opts, :delegate) do
+        {adapter, delegate_opts} -> {adapter, delegate_opts}
+        adapter when is_atom(adapter) -> {adapter, []}
+      end
+    end
+  end
+
+  defmodule MutationOriginAction do
+    use Squidie.Step, name: :mutation_origin
+
+    @impl Squidie.Step
+    def run(_input, _context) do
+      {:ok, %{origin: true}}
+    end
+  end
+
+  defmodule MutationAddedAction do
+    use Squidie.Step, name: :mutation_added
+
+    @impl Squidie.Step
+    def run(_input, _context) do
+      {:ok, %{added: true}}
+    end
+  end
+
+  defmodule MutationHoldAction do
+    use Squidie.Step, name: :mutation_hold
+
+    @impl Squidie.Step
+    def run(_input, _context) do
+      {:ok, %{hold: true}}
+    end
+  end
+
+  defmodule MutationWorkflow do
+    use Squidie.Workflow
+
+    alias Squidie.Runtime.Journal.Storage.EctoTest.MutationHoldAction
+    alias Squidie.Runtime.Journal.Storage.EctoTest.MutationOriginAction
+
+    workflow do
+      trigger :manual do
+        manual()
+      end
+
+      step :origin, MutationOriginAction
+      step :hold, MutationHoldAction
+
+      transition :origin, on: :ok, to: :hold
+      transition :hold, on: :ok, to: :complete
+    end
+  end
+
   @storage_adapter Squidie.Runtime.Journal.Storage.Ecto
 
   @storage {@storage_adapter, repo: Repo}
@@ -83,6 +200,74 @@ defmodule Squidie.Runtime.Journal.Storage.EctoTest do
 
     assert {:ok, %{rev: 1, entries: [_entry]}} =
              @storage_adapter.load_thread(@thread_id, repo: Repo)
+  end
+
+  test "allows only one public graph mutation writer at a shared semantic version" do
+    run_id = "0190a4f1-0a7c-7cb1-80c5-b4f8b1d23999"
+    now = ~U[2026-07-18 11:00:00Z]
+
+    assert {:ok, _snapshot} =
+             Squidie.start(MutationWorkflow, %{},
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               run_id: run_id,
+               now: now
+             )
+
+    assert {:ok, _snapshot} =
+             Squidie.execute_next(
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               owner_id: "mutation-origin",
+               now: now
+             )
+
+    parent = self()
+    barrier_ref = make_ref()
+
+    barrier_storage =
+      {BarrierStorage,
+       delegate: @storage,
+       barrier_thread_id: Journal.thread_id({:run, run_id}),
+       barrier_pid: parent,
+       barrier_ref: barrier_ref}
+
+    tasks =
+      for suffix <- ["left", "right"] do
+        Task.async(fn ->
+          Sandbox.allow(Repo, parent, self())
+
+          Squidie.apply_graph_mutation(
+            run_id,
+            mutation(suffix),
+            graph_mutation_options(barrier_storage, now)
+          )
+        end)
+      end
+
+    task_pids =
+      for _task <- tasks do
+        assert_receive {:append_ready, ^barrier_ref, task_pid}, 5_000
+        task_pid
+      end
+
+    Enum.each(task_pids, &send(&1, {:append_release, barrier_ref}))
+    results = Enum.map(tasks, &Task.await(&1, 5_000))
+
+    assert Enum.count(results, &match?({:ok, %{status: :committed}}, &1)) == 1
+
+    assert Enum.count(
+             results,
+             &match?(
+               {:error, {:invalid_graph_mutation, {:expected_version, {:stale, 1}}}},
+               &1
+             )
+           ) == 1
+
+    assert {:ok, entries} = Journal.load_entries(@storage, {:run, run_id})
+    assert Enum.count(entries, &(&1.type == :dynamic_graph_mutated)) == 1
   end
 
   test "deletes persisted threads and their entries" do
@@ -297,6 +482,46 @@ defmodule Squidie.Runtime.Journal.Storage.EctoTest do
       visible_at: @visible_at,
       occurred_at: @started_at
     }
+  end
+
+  defp mutation(suffix) do
+    %{
+      mutation_id: "ecto-mutation-#{suffix}",
+      expected_version: 0,
+      origin: "origin",
+      additions: [
+        %{
+          kind: :node,
+          id: "node-#{suffix}",
+          action: "added",
+          input: %{},
+          queue: "dynamic-#{suffix}"
+        },
+        %{
+          kind: :edge,
+          id: "origin-#{suffix}",
+          from: "origin",
+          to: "node-#{suffix}"
+        }
+      ],
+      removals: []
+    }
+  end
+
+  defp graph_mutation_options(storage, now) do
+    [
+      runtime: :journal,
+      journal_storage: storage,
+      queue: "default",
+      now: now,
+      limits: %{
+        max_nodes_per_mutation: 10,
+        max_edges_per_mutation: 10,
+        max_active_nodes_per_run: 10,
+        max_active_edges_per_run: 10
+      },
+      action_registry: %{"added" => MutationAddedAction}
+    ]
   end
 
   defp insert_thread!(opts) do

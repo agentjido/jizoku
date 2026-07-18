@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runs.GraphMutationPreview do
   @moduledoc false
 
@@ -20,6 +21,14 @@ defmodule Squidie.Runs.GraphMutationPreview do
   @spec preview(term(), String.t(), term(), keyword()) ::
           {:ok, Preview.t()} | {:error, term()}
   def preview(storage, run_id, attrs, opts) when is_list(opts) do
+    with {:ok, evaluation} <- evaluate(storage, run_id, attrs, opts) do
+      {:ok, outcome(evaluation.mutation, evaluation.context, evaluation.result)}
+    end
+  end
+
+  @doc false
+  @spec evaluate(term(), String.t(), term(), keyword()) :: {:ok, map()} | {:error, term()}
+  def evaluate(storage, run_id, attrs, opts) when is_list(opts) do
     with {:ok, mutation} <- GraphMutation.normalize(attrs),
          {:ok, limits} <- limits(opts),
          {:ok, registry} <- action_registry(opts),
@@ -30,7 +39,15 @@ defmodule Squidie.Runs.GraphMutationPreview do
          {:ok, context} <- context(storage, workflow_agent, definition, limits, queue),
          {:ok, result} <-
            Materializer.evaluate(run_id, mutation, context, registry, queue, now) do
-      {:ok, outcome(mutation, context, result)}
+      {:ok,
+       %{
+         mutation: mutation,
+         context: context,
+         result: result,
+         workflow_agent: workflow_agent,
+         queue: queue,
+         now: now
+       }}
     end
   end
 
