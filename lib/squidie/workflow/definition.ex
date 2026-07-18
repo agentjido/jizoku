@@ -860,8 +860,6 @@ defmodule Squidie.Workflow.Definition do
     end
   end
 
-  defp canonical_atom_list(nil), do: nil
-
   defp canonical_atom_list(values) when is_list(values) do
     Enum.sort_by(values, &Atom.to_string/1)
   end

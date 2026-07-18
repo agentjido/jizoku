@@ -247,8 +247,6 @@ defmodule Squidie.Workflow.GuardrailRegistry do
     end)
   end
 
-  defp guardrail_reference_errors(_steps, _registry), do: []
-
   defp step_reference_errors(step, index, registry) do
     Enum.flat_map(@placements, &placement_reference_errors(step, index, &1, registry))
   end

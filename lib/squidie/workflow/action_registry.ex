@@ -580,13 +580,11 @@ defmodule Squidie.Workflow.ActionRegistry do
   defp valid_action_key?(action) when is_binary(action), do: action != ""
   defp valid_action_key?(_action), do: false
 
-  defp module?(module) when is_atom(module) do
+  defp module?(module) do
     module
     |> Atom.to_string()
     |> String.starts_with?("Elixir.")
   end
-
-  defp module?(_module), do: false
 
   defp error(path, code, message, details) do
     Map.new(path: path, code: code, message: message, details: details)

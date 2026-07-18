@@ -131,8 +131,6 @@ defmodule Squidie.Workflow.Validation do
     |> Enum.uniq_by(& &1.name)
   end
 
-  def workflow_payload!([]), do: []
-
   @doc """
   Derives workflow retry declarations from per-step retry configuration.
   """

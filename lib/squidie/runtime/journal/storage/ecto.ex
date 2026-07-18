@@ -302,16 +302,28 @@ defmodule Squidie.Runtime.Journal.Storage.Ecto do
   end
 
   defp reconstruct_thread(%JournalThread{} = thread, entries) do
+    {first_entry, last_entry, entry_count} = entry_bounds(entries)
+
     %Thread{
       id: thread.id,
       rev: thread.rev,
       entries: entries,
-      created_at: thread.created_at_ms || (List.first(entries) && List.first(entries).at),
-      updated_at:
-        thread.updated_at_ms || if(entries == [], do: nil, else: Enum.at(entries, -1).at),
+      created_at: thread.created_at_ms || (first_entry && first_entry.at),
+      updated_at: thread.updated_at_ms || (last_entry && last_entry.at),
       metadata: thread.metadata || %{},
-      stats: %{entry_count: length(entries)}
+      stats: %{entry_count: entry_count}
     }
+  end
+
+  defp entry_bounds([]), do: {nil, nil, 0}
+
+  defp entry_bounds([first_entry | entries]) do
+    {last_entry, entry_count} =
+      Enum.reduce(entries, {first_entry, 1}, fn entry, {_last_entry, count} ->
+        {entry, count + 1}
+      end)
+
+    {first_entry, last_entry, entry_count}
   end
 
   defp validate_and_reconstruct_thread(%JournalThread{} = thread, entries) do
