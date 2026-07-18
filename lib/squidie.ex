@@ -25,6 +25,8 @@ defmodule Squidie do
   alias Squidie.Runtime.Journal.DynamicWork
   alias Squidie.Runtime.Journal.EntryBuilder
   alias Squidie.Runtime.Journal.Executor
+  alias Squidie.Runtime.Journal.GraphMutation
+  alias Squidie.Runtime.Journal.GraphMutation.Reconciler
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.Journal.WorkflowDefinitionLoader
   alias Squidie.Runtime.Routing
@@ -424,6 +426,69 @@ defmodule Squidie do
   end
 
   def preview_graph_mutation(_run_id, _attrs, _overrides) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
+  end
+
+  @doc """
+  Atomically applies a versioned graph mutation and repairs ready dispatches.
+
+  The mutation fact and every new runnable intent commit to the run thread in
+  one optimistic append before any dispatch-thread write. If that commit
+  succeeds but dispatch repair fails, the returned report has status
+  `:committed_needs_reconciliation`.
+  """
+  @spec apply_graph_mutation(String.t(), map(), keyword()) ::
+          {:ok, Squidie.GraphMutation.Report.t()} | {:error, term()}
+  def apply_graph_mutation(run_id, attrs, overrides \\ [])
+
+  def apply_graph_mutation(run_id, attrs, overrides) when is_list(overrides) do
+    with :ok <- Routing.public_graph_mutation_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides),
+         {:ok, run_id} <- Options.thread_part(run_id, :run_id) do
+      GraphMutation.apply(
+        storage,
+        run_id,
+        attrs,
+        Routing.journal_graph_mutation_options(overrides)
+      )
+    end
+  end
+
+  def apply_graph_mutation(_run_id, _attrs, _overrides) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
+  end
+
+  @doc """
+  Repairs missing graph dispatch markers and ready attempts from durable facts.
+
+  Reconciliation never appends graph mutations or invents topology. It is safe
+  to repeat after conflicts, restarts, and partial post-commit scheduling.
+  """
+  @spec reconcile_dynamic_graph(String.t(), keyword()) ::
+          {:ok, Squidie.GraphMutation.Reconciliation.t()} | {:error, term()}
+  def reconcile_dynamic_graph(run_id, overrides \\ [])
+
+  def reconcile_dynamic_graph(run_id, overrides) when is_list(overrides) do
+    with :ok <- Routing.public_graph_reconciliation_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides),
+         {:ok, run_id} <- Options.thread_part(run_id, :run_id),
+         {:ok, reconciliation} <-
+           Reconciler.reconcile(
+             storage,
+             run_id,
+             Routing.journal_graph_reconciliation_options(overrides)
+           ) do
+      {:ok,
+       Squidie.GraphMutation.Reconciliation.new(
+         reconciliation.workflow_agent,
+         reconciliation.queues
+       )}
+    end
+  end
+
+  def reconcile_dynamic_graph(_run_id, _overrides) do
     {:error, {:invalid_option, {:opts, :invalid}}}
   end
 

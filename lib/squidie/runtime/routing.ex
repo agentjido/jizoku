@@ -67,6 +67,14 @@ defmodule Squidie.Runtime.Routing do
     :action_registry,
     :limits
   ]
+  @journal_graph_reconciliation_options [
+    :runtime,
+    :journal_storage,
+    :queue,
+    :partition,
+    :now,
+    :action_registry
+  ]
 
   @doc """
   Resolves the configured read model from explicit overrides or app config.
@@ -186,11 +194,27 @@ defmodule Squidie.Runtime.Routing do
   end
 
   @doc """
+  Validates public graph-reconciliation overrides.
+  """
+  @spec public_graph_reconciliation_options(keyword()) :: :ok | {:error, term()}
+  def public_graph_reconciliation_options(opts) do
+    validate_public_options(opts, @journal_graph_reconciliation_options)
+  end
+
+  @doc """
   Builds journal options for graph-mutation previews.
   """
   @spec journal_graph_mutation_options(keyword()) :: keyword()
   def journal_graph_mutation_options(overrides) do
     configured_journal_options(overrides, @journal_graph_mutation_options)
+  end
+
+  @doc """
+  Builds journal options for graph reconciliation.
+  """
+  @spec journal_graph_reconciliation_options(keyword()) :: keyword()
+  def journal_graph_reconciliation_options(overrides) do
+    configured_journal_options(overrides, @journal_graph_reconciliation_options)
   end
 
   @doc """
