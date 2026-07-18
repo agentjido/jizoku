@@ -62,7 +62,8 @@ inside a host application's supervision tree and infrastructure.
 - rebuilds workflow and dispatch agent projections into a read-only inspection
   snapshot for the journal-backed runtime, including pending dispatches,
   unapplied results, scheduled attempts, visible attempts, expired claims,
-  manual intervention state, terminal state, and projection anomalies
+  manual intervention state, terminal state, versioned graph state, and
+  projection anomalies
 
 `Squidie.ReadModel.Explanation`
 
@@ -152,6 +153,12 @@ flowchart TB
    no-ops.
 7. If more work is required, successor runnable intent is appended before later
    workers can claim it.
+
+Versioned graph mutations append the mutation and planned runnable intents to
+the run thread atomically. Dispatch facts are a later repairable projection:
+dependency-ready nodes are scheduled after the run commit, while blocked and
+tombstoned nodes remain unscheduled. `Squidie.reconcile_dynamic_graph/2`
+rebuilds both sides and idempotently repairs missing queue markers or attempts.
 
 Delivered cron payloads use `Squidie.Runtime.Runner.perform/2` to start runs
 through the configured journal runtime. Step execution is claimed through

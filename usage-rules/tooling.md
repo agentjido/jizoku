@@ -35,6 +35,11 @@
   when scheduling dynamic work.
 - Render dynamic edges as visual structure only unless a later API explicitly
   reports dependency ordering for scheduled dynamic nodes.
+- Use `graph_version`, provenance and active/tombstoned identity fields,
+  ready/blocked node IDs, redacted `mutation_history`, and
+  `reconciliation_status` from graph inspection for versioned mutation UIs.
+- Offer a repair action only when `reconciliation_status == :required`; invoke
+  `Squidie.reconcile_dynamic_graph/2` instead of editing dispatch storage.
 - Keep list responses redacted by default; fetch detailed history only when the
   caller asks for it.
 - Use `definition_version` from list, inspection, graph, and explanation

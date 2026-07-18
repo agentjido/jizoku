@@ -303,6 +303,77 @@ defmodule Squidie.Runs.GraphInspectionTest do
     refute Map.has_key?(overlay, :metadata)
   end
 
+  test "graph mutation state normalizes legacy keys and drops malformed or sensitive data" do
+    snapshot = %Snapshot{
+      run_id: @run_id,
+      workflow: "MissingWorkflow",
+      queue: "default",
+      status: :running,
+      reason: :run_started,
+      terminal?: false,
+      terminal_status: nil,
+      thread_revisions: %{run: 2, dispatch: 0},
+      graph_version: 3,
+      graph_provenance: %{
+        "nodes" => [
+          %{"id" => "safe", "provenance" => "dependency_ordered", "input" => "secret"},
+          %{"id" => 1, "provenance" => "legacy_eager"},
+          :malformed
+        ],
+        "edges" => [%{"id" => "safe-edge", "provenance" => "legacy_eager"}]
+      },
+      active_node_ids: ["safe", 1],
+      active_edge_ids: ["safe-edge"],
+      ready_node_ids: ["safe"],
+      blocked_node_ids: :malformed,
+      tombstoned_node_ids: ["removed"],
+      tombstoned_edge_ids: ["removed-edge"],
+      mutation_history: [
+        %{
+          "mutation_id" => "mutation-safe",
+          "origin" => "host",
+          "expected_version" => 2,
+          "result_version" => 3,
+          "added_node_ids" => ["safe"],
+          "input" => %{"token" => "secret"}
+        },
+        :malformed
+      ],
+      reconciliation_status: "required"
+    }
+
+    payload =
+      snapshot
+      |> GraphInspection.from_snapshot(source: :read_model)
+      |> GraphInspection.to_map()
+
+    assert payload.graph_version == 3
+
+    assert payload.graph_provenance == %{
+             nodes: [%{id: "safe", provenance: :dependency_ordered}],
+             edges: [%{id: "safe-edge", provenance: :legacy_eager}]
+           }
+
+    assert payload.active_node_ids == ["safe"]
+    assert payload.active_edge_ids == ["safe-edge"]
+    assert payload.blocked_node_ids == []
+    assert payload.tombstoned_node_ids == ["removed"]
+    assert payload.tombstoned_edge_ids == ["removed-edge"]
+    assert payload.reconciliation_status == :required
+
+    assert payload.mutation_history == [
+             %{
+               mutation_id: "mutation-safe",
+               origin: "host",
+               expected_version: 2,
+               result_version: 3,
+               added_node_ids: ["safe"]
+             }
+           ]
+
+    refute inspect(payload) =~ "secret"
+  end
+
   test "dynamic work graph inspection tolerates non-list dynamic work shapes" do
     snapshot = %Snapshot{
       run_id: @run_id,

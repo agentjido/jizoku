@@ -15,6 +15,7 @@ defmodule Squidie.ReadModel.Inspection do
   """
 
   alias Jido.Agent
+  alias Squidie.ReadModel.Inspection.GraphState
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.ReadModel.Timeline
   alias Squidie.Runtime.Deadline
@@ -64,13 +65,16 @@ defmodule Squidie.ReadModel.Inspection do
          {:ok, now} <- snapshot_time(opts),
          {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
          {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue) do
+      graph_state = GraphState.from_agent(storage, workflow_agent, queue)
+
       {:ok,
        build_snapshot(
          workflow_agent,
          dispatch_agent,
          Storage.partition(storage),
          queue,
-         now
+         now,
+         graph_state
        )}
     end
   end
@@ -98,7 +102,8 @@ defmodule Squidie.ReadModel.Inspection do
          } = dispatch_agent,
          partition,
          queue,
-         %DateTime{} = now
+         %DateTime{} = now,
+         graph_state
        ) do
     pending_dispatches = WorkflowAgent.pending_dispatches(workflow_agent, dispatch_agent)
     pending_results = WorkflowAgent.pending_results(workflow_agent, dispatch_agent)
@@ -165,6 +170,16 @@ defmodule Squidie.ReadModel.Inspection do
       parent_run: parent_run(workflow_projection),
       child_runs: WorkflowAgent.Projection.child_runs(workflow_projection),
       dynamic_work: WorkflowAgent.Projection.dynamic_work(workflow_projection),
+      graph_version: graph_state.graph_version,
+      graph_provenance: graph_state.graph_provenance,
+      active_node_ids: graph_state.active_node_ids,
+      active_edge_ids: graph_state.active_edge_ids,
+      ready_node_ids: graph_state.ready_node_ids,
+      blocked_node_ids: graph_state.blocked_node_ids,
+      tombstoned_node_ids: graph_state.tombstoned_node_ids,
+      tombstoned_edge_ids: graph_state.tombstoned_edge_ids,
+      mutation_history: graph_state.mutation_history,
+      reconciliation_status: graph_state.reconciliation_status,
       guardrails: guardrail_decisions(normalized_planned_runnables, attempt_snapshots),
       replayed_from_run_id: workflow_projection.replayed_from_run_id,
       queue: queue,

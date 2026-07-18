@@ -40,6 +40,16 @@ The map shape is:
   child_links: [],
   dynamic_work: [],
   dynamic_work_overlays: [],
+  graph_version: 1,
+  graph_provenance: %{nodes: [...], edges: [...]},
+  active_node_ids: ["dynamic_a"],
+  active_edge_ids: ["origin:dynamic_a"],
+  ready_node_ids: ["dynamic_a"],
+  blocked_node_ids: [],
+  tombstoned_node_ids: [],
+  tombstoned_edge_ids: [],
+  mutation_history: [...],
+  reconciliation_status: :completed,
   anomalies: []
 }
 ```
@@ -58,6 +68,13 @@ rather than from loading a workflow module.
 `current_node_ids` preserves parallel runnable nodes in dependency workflows.
 `terminal?` is true when the run is in a terminal state such as `:completed`,
 `:failed`, or `:cancelled`.
+
+Versioned mutation fields are redacted operator evidence. Provenance is limited
+to `:legacy_eager` and `:dependency_ordered`; mutation history contains stable
+identity, version, origin, timestamp, and changed IDs but never runnable input,
+action options, errors, metadata, or trace state. Identity lists and history
+are bounded. `reconciliation_status` is `:not_required`, `:completed`,
+`:required`, or `:unknown` when a queue read failed.
 
 ## Node Shape
 

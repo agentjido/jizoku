@@ -191,6 +191,54 @@ defmodule Squidie.GraphMutationApplyTest do
     assert report.warnings == [:reconciliation_required]
     assert scheduled_steps() == []
 
+    assert {:ok, pending_snapshot} =
+             Squidie.inspect_run(@run_id,
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: @queue,
+               now: @now
+             )
+
+    assert pending_snapshot.graph_version == 1
+    assert pending_snapshot.active_node_ids == ["child"]
+    assert pending_snapshot.ready_node_ids == ["child"]
+    assert pending_snapshot.blocked_node_ids == []
+    assert pending_snapshot.reconciliation_status == :required
+
+    assert [
+             %{
+               mutation_id: "mutation-apply",
+               origin: "origin",
+               expected_version: 0,
+               result_version: 1,
+               added_node_ids: ["child"],
+               added_edge_ids: ["origin-child"],
+               removed_node_ids: [],
+               removed_edge_ids: []
+             }
+           ] = pending_snapshot.mutation_history
+
+    refute inspect(pending_snapshot.mutation_history) =~ "account-123"
+
+    assert {:ok, pending_graph} =
+             Squidie.inspect_run_graph(@run_id,
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: @queue,
+               now: @now
+             )
+
+    pending_payload = Squidie.Runs.GraphInspection.to_map(pending_graph)
+
+    assert pending_payload.graph_version == 1
+
+    assert pending_payload.graph_provenance.nodes == [
+             %{id: "child", provenance: :dependency_ordered}
+           ]
+
+    assert pending_payload.reconciliation_status == :required
+    refute inspect(pending_payload) =~ "account-123"
+
     assert {:ok, %Reconciliation{} = reconciliation} =
              Squidie.reconcile_dynamic_graph(@run_id,
                runtime: :journal,
@@ -204,6 +252,16 @@ defmodule Squidie.GraphMutationApplyTest do
     assert reconciliation.repaired_queue_ids == [@dynamic_queue]
     assert reconciliation.scheduled_node_ids == ["child"]
     assert scheduled_steps() == ["child"]
+
+    assert {:ok, reconciled_snapshot} =
+             Squidie.inspect_run(@run_id,
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: @queue,
+               now: @now
+             )
+
+    assert reconciled_snapshot.reconciliation_status == :completed
 
     assert {:ok, %Reconciliation{} = repeated} =
              Squidie.reconcile_dynamic_graph(@run_id,

@@ -25,6 +25,63 @@ defmodule MinimalHostApp.Smoke do
   @journal_run_queue_prefix "minimal-host-app-journal-smoke"
   @journal_run_storage {Squidie.Runtime.Journal.Storage.Ecto, repo: Repo}
 
+  defmodule FaultInjectingStorage do
+    @moduledoc false
+    @behaviour Jido.Storage
+
+    @impl Jido.Storage
+    def get_checkpoint(key, opts) do
+      {adapter, delegate_opts} = delegate(opts)
+      adapter.get_checkpoint(key, delegate_opts)
+    end
+
+    @impl Jido.Storage
+    def put_checkpoint(key, data, opts) do
+      {adapter, delegate_opts} = delegate(opts)
+      adapter.put_checkpoint(key, data, delegate_opts)
+    end
+
+    @impl Jido.Storage
+    def delete_checkpoint(key, opts) do
+      {adapter, delegate_opts} = delegate(opts)
+      adapter.delete_checkpoint(key, delegate_opts)
+    end
+
+    @impl Jido.Storage
+    def load_thread(thread_id, opts) do
+      {adapter, delegate_opts} = delegate(opts)
+      adapter.load_thread(thread_id, delegate_opts)
+    end
+
+    @impl Jido.Storage
+    def append_thread(thread_id, entries, opts) do
+      if thread_id == Keyword.get(opts, :fail_append_thread_id) do
+        {:error, :append_failed}
+      else
+        {adapter, delegate_opts} = delegate(opts)
+
+        adapter.append_thread(
+          thread_id,
+          entries,
+          Keyword.merge(delegate_opts, Keyword.take(opts, [:expected_rev]))
+        )
+      end
+    end
+
+    @impl Jido.Storage
+    def delete_thread(thread_id, opts) do
+      {adapter, delegate_opts} = delegate(opts)
+      adapter.delete_thread(thread_id, delegate_opts)
+    end
+
+    defp delegate(opts) do
+      case Keyword.fetch!(opts, :delegate) do
+        {adapter, delegate_opts} -> {adapter, delegate_opts}
+        adapter when is_atom(adapter) -> {adapter, []}
+      end
+    end
+  end
+
   @spec run!() :: Squidie.ReadModel.Inspection.Snapshot.t()
   def run! do
     RuntimeHarness.ensure_runtime_started()
@@ -108,6 +165,7 @@ defmodule MinimalHostApp.Smoke do
             replay: Squidie.ReadModel.Inspection.Snapshot.t()
           },
           dynamic_work_inspection: map(),
+          graph_mutation_inspection: map(),
           journal_cron_digest: Squidie.ReadModel.Inspection.Snapshot.t(),
           command_signals: map(),
           jido_command_signals: map(),
@@ -136,6 +194,7 @@ defmodule MinimalHostApp.Smoke do
     journal_replay = run_journal_replay!()
     journal_command_signals = run_journal_command_signals!()
     dynamic_work_inspection = run_dynamic_work_inspection!()
+    graph_mutation_inspection = run_graph_mutation_inspection!()
     journal_cron_digest = run_journal_cron_digest!()
     command_signals = run_signal_construction!()
     jido_command_signals = run_jido_signal_adapter!(command_signals)
@@ -165,6 +224,7 @@ defmodule MinimalHostApp.Smoke do
         journal_replay: journal_replay,
         journal_command_signals: journal_command_signals,
         dynamic_work_inspection: dynamic_work_inspection,
+        graph_mutation_inspection: graph_mutation_inspection,
         journal_cron_digest: journal_cron_digest,
         command_signals: command_signals,
         jido_command_signals: jido_command_signals,
@@ -720,6 +780,47 @@ defmodule MinimalHostApp.Smoke do
       else
         {:error, reason} ->
           raise "dynamic work inspection smoke test failed: #{inspect(reason)}"
+      end
+    end)
+  end
+
+  @doc """
+  Applies a versioned dependency graph mutation and repairs a failed dispatch append.
+  """
+  @spec run_graph_mutation_inspection!() :: map()
+  def run_graph_mutation_inspection! do
+    RuntimeHarness.ensure_runtime_started()
+    queue = journal_run_queue()
+    dynamic_queue = queue
+
+    with_journal_runtime_config(queue, fn ->
+      with {:ok, started_run} <-
+             Squidie.start(
+               MinimalHostApp.Workflows.DependencyRecovery,
+               :dependency_recovery,
+               %{
+                 account_id: "acct_graph_demo",
+                 invoice_id: "inv_graph_demo",
+                 attempt_id: "attempt_graph_demo"
+               }
+             ),
+           {:ok, _producer_run} <- await_graph_mutation_origin(started_run.run_id, 3),
+           {:ok, report} <- apply_smoke_graph_mutation(started_run.run_id, dynamic_queue),
+           :ok <- ensure_pending_graph_mutation(started_run.run_id, report),
+           {:ok, reconciliation} <- Squidie.reconcile_dynamic_graph(started_run.run_id),
+           :ok <- ensure_graph_reconciliation(reconciliation, dynamic_queue),
+           {:ok, completed_run} <-
+             drain_graph_mutation_run(
+               started_run.run_id,
+               [queue, dynamic_queue],
+               @journal_run_attempts * 2
+             ),
+           {:ok, graph} <- Squidie.inspect_run_graph(completed_run.run_id),
+           :ok <- ensure_completed_graph_mutation(graph) do
+        Squidie.Runs.GraphInspection.to_map(graph)
+      else
+        {:error, reason} ->
+          raise "graph mutation inspection smoke test failed: #{inspect(reason)}"
       end
     end)
   end
@@ -1617,6 +1718,155 @@ defmodule MinimalHostApp.Smoke do
     %{
       "payment.notify_customer" => Steps.NotifyCustomer
     }
+  end
+
+  defp await_graph_mutation_origin(_run_id, 0) do
+    {:error, :missing_graph_mutation_origin}
+  end
+
+  defp await_graph_mutation_origin(run_id, attempts_remaining) do
+    with {:ok, %Squidie.ReadModel.Inspection.Snapshot{} = run} <-
+           Squidie.execute_next(journal_run_execute_options()) do
+      if Enum.any?(run.attempts, &(&1.step == "load_account" and &1.applied?)) do
+        {:ok, run}
+      else
+        await_graph_mutation_origin(run_id, attempts_remaining - 1)
+      end
+    end
+  end
+
+  defp apply_smoke_graph_mutation(run_id, dynamic_queue) do
+    failing_storage =
+      {FaultInjectingStorage,
+       delegate: @journal_run_storage,
+       fail_append_thread_id: Journal.thread_id({:dispatch, dynamic_queue})}
+
+    Squidie.apply_graph_mutation(run_id, graph_mutation_attrs(dynamic_queue),
+      runtime: :journal,
+      journal_storage: failing_storage,
+      limits: graph_mutation_limits(),
+      action_registry: graph_mutation_action_registry()
+    )
+  end
+
+  defp graph_mutation_attrs(dynamic_queue) do
+    %{
+      mutation_id: "minimal-host-graph-mutation",
+      expected_version: 0,
+      origin: "load_account",
+      additions: [
+        graph_mutation_node("dynamic-chain", dynamic_queue),
+        graph_mutation_node("dynamic-parallel", dynamic_queue),
+        graph_mutation_node("dynamic-join", dynamic_queue),
+        %{kind: :edge, id: "load-account-chain", from: "load_account", to: "dynamic-chain"},
+        %{
+          kind: :edge,
+          id: "load-account-parallel",
+          from: "load_account",
+          to: "dynamic-parallel"
+        },
+        %{kind: :edge, id: "chain-join", from: "dynamic-chain", to: "dynamic-join"},
+        %{kind: :edge, id: "parallel-join", from: "dynamic-parallel", to: "dynamic-join"}
+      ],
+      removals: []
+    }
+  end
+
+  defp graph_mutation_node(id, queue) do
+    %{
+      kind: :node,
+      id: id,
+      action: "digest.record_delivery",
+      input: %{channel: "email", digest_date: "2026-07-18"},
+      queue: queue
+    }
+  end
+
+  defp graph_mutation_limits do
+    %{
+      max_nodes_per_mutation: 10,
+      max_edges_per_mutation: 10,
+      max_active_nodes_per_run: 10,
+      max_active_edges_per_run: 10
+    }
+  end
+
+  defp graph_mutation_action_registry do
+    %{
+      "digest.record_delivery" => Steps.RecordDigestDelivery
+    }
+  end
+
+  defp ensure_pending_graph_mutation(run_id, report) do
+    with :committed_needs_reconciliation <- report.status,
+         :required <- report.reconciliation,
+         {:ok, snapshot} <- Squidie.inspect_run(run_id),
+         {:ok, graph} <- Squidie.inspect_run_graph(run_id) do
+      payload = Squidie.Runs.GraphInspection.to_map(graph)
+
+      if snapshot.graph_version == 1 and
+           snapshot.ready_node_ids == ["dynamic-chain", "dynamic-parallel"] and
+           snapshot.blocked_node_ids == ["dynamic-join"] and
+           snapshot.reconciliation_status == :required and
+           payload.reconciliation_status == :required do
+        :ok
+      else
+        {:error, :unexpected_pending_graph_mutation}
+      end
+    else
+      _unexpected -> {:error, :unexpected_pending_graph_mutation}
+    end
+  end
+
+  defp ensure_graph_reconciliation(reconciliation, dynamic_queue) do
+    if reconciliation.status == :reconciled and
+         reconciliation.repaired_queue_ids == [dynamic_queue] and
+         reconciliation.scheduled_node_ids == ["dynamic-chain", "dynamic-parallel"] do
+      :ok
+    else
+      {:error, :unexpected_graph_reconciliation}
+    end
+  end
+
+  defp drain_graph_mutation_run(_run_id, _queues, 0) do
+    {:error, :timeout}
+  end
+
+  defp drain_graph_mutation_run(run_id, queues, attempts_remaining) do
+    case Squidie.inspect_run(run_id) do
+      {:ok, %Squidie.ReadModel.Inspection.Snapshot{terminal?: true} = run} ->
+        {:ok, run}
+
+      {:ok, %Squidie.ReadModel.Inspection.Snapshot{}} ->
+        Enum.each(queues, fn queue ->
+          _result =
+            Squidie.execute_next(
+              owner_id: "minimal-host-app-graph-mutation-smoke",
+              queue: queue
+            )
+        end)
+
+        drain_graph_mutation_run(run_id, queues, attempts_remaining - 1)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp ensure_completed_graph_mutation(graph) do
+    payload = Squidie.Runs.GraphInspection.to_map(graph)
+
+    if payload.terminal? and payload.graph_version == 1 and
+         payload.active_node_ids == ["dynamic-chain", "dynamic-join", "dynamic-parallel"] and
+         payload.ready_node_ids == [] and payload.blocked_node_ids == [] and
+         payload.reconciliation_status == :completed and
+         Enum.map(payload.mutation_history, & &1.mutation_id) == [
+           "minimal-host-graph-mutation"
+         ] do
+      :ok
+    else
+      {:error, :unexpected_completed_graph_mutation}
+    end
   end
 
   defp journal_run_queue do

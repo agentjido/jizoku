@@ -9,6 +9,7 @@ defmodule Squidie.Inspection.GraphInspection do
 
   alias Squidie.Inspection.GraphInspection.Edge
   alias Squidie.Inspection.GraphInspection.Node
+  alias Squidie.ReadModel.Inspection.GraphState
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.Workflow.Definition
 
@@ -30,6 +31,16 @@ defmodule Squidie.Inspection.GraphInspection do
           child_links: [map()],
           dynamic_work: [map()],
           dynamic_work_overlays: [map()],
+          graph_version: non_neg_integer(),
+          graph_provenance: map(),
+          active_node_ids: [String.t()],
+          active_edge_ids: [String.t()],
+          ready_node_ids: [String.t()],
+          blocked_node_ids: [String.t()],
+          tombstoned_node_ids: [String.t()],
+          tombstoned_edge_ids: [String.t()],
+          mutation_history: [map()],
+          reconciliation_status: :not_required | :required | :completed | :unknown,
           anomalies: [map()]
         }
 
@@ -51,7 +62,17 @@ defmodule Squidie.Inspection.GraphInspection do
     edges: [],
     anomalies: [],
     dynamic_work: [],
-    dynamic_work_overlays: []
+    dynamic_work_overlays: [],
+    graph_version: 0,
+    graph_provenance: %{nodes: [], edges: []},
+    active_node_ids: [],
+    active_edge_ids: [],
+    ready_node_ids: [],
+    blocked_node_ids: [],
+    tombstoned_node_ids: [],
+    tombstoned_edge_ids: [],
+    mutation_history: [],
+    reconciliation_status: :not_required
   ]
 
   @doc """
@@ -66,6 +87,7 @@ defmodule Squidie.Inspection.GraphInspection do
     current_node_id = List.first(current_node_ids)
     initial_nodes = snapshot_nodes(snapshot, definition, include_details?)
     nodes = mark_current_nodes(initial_nodes, current_node_ids)
+    graph_state = GraphState.sanitize(Map.from_struct(snapshot))
 
     %__MODULE__{
       run_id: snapshot.run_id,
@@ -83,6 +105,16 @@ defmodule Squidie.Inspection.GraphInspection do
       child_links: child_links(snapshot.child_runs),
       dynamic_work: snapshot.dynamic_work,
       dynamic_work_overlays: dynamic_work_overlays(snapshot.dynamic_work),
+      graph_version: graph_state.graph_version,
+      graph_provenance: graph_state.graph_provenance,
+      active_node_ids: graph_state.active_node_ids,
+      active_edge_ids: graph_state.active_edge_ids,
+      ready_node_ids: graph_state.ready_node_ids,
+      blocked_node_ids: graph_state.blocked_node_ids,
+      tombstoned_node_ids: graph_state.tombstoned_node_ids,
+      tombstoned_edge_ids: graph_state.tombstoned_edge_ids,
+      mutation_history: graph_state.mutation_history,
+      reconciliation_status: graph_state.reconciliation_status,
       anomalies: sanitize_anomalies(snapshot.anomalies)
     }
   end
@@ -113,6 +145,16 @@ defmodule Squidie.Inspection.GraphInspection do
       child_links: graph.child_links,
       dynamic_work: graph.dynamic_work,
       dynamic_work_overlays: graph.dynamic_work_overlays,
+      graph_version: graph.graph_version,
+      graph_provenance: graph.graph_provenance,
+      active_node_ids: graph.active_node_ids,
+      active_edge_ids: graph.active_edge_ids,
+      ready_node_ids: graph.ready_node_ids,
+      blocked_node_ids: graph.blocked_node_ids,
+      tombstoned_node_ids: graph.tombstoned_node_ids,
+      tombstoned_edge_ids: graph.tombstoned_edge_ids,
+      mutation_history: graph.mutation_history,
+      reconciliation_status: graph.reconciliation_status,
       anomalies: graph.anomalies
     }
   end
