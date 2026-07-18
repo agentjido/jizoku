@@ -30,6 +30,11 @@
   scheduling is explicitly implemented.
 - Treat scheduled dynamic nodes as replay-unsafe by default unless a future
   API persists a stronger host-owned recovery policy.
+- Treat `:dynamic_graph_mutated` plus its planned runnables as one run-thread
+  commit. Dispatch follows that commit and is repaired idempotently through
+  `reconcile_dynamic_graph/2` after partial failure.
+- Fence graph mutations with their semantic graph version, keep mutation IDs
+  idempotent, and never schedule blocked or tombstoned nodes.
 
 ## Execution
 

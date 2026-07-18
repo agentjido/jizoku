@@ -40,6 +40,10 @@ itself.
 - Use `Squidie.preview_dynamic_work/3` when dashboards or visual editors need
   to validate candidate dynamic work and inspect the graph overlay before
   appending.
+- Use `Squidie.preview_graph_mutation/3` before proposing dependency-ordered
+  graph changes. Commit with `Squidie.apply_graph_mutation/3`, and call
+  `Squidie.reconcile_dynamic_graph/2` when the report or inspection state says
+  reconciliation is required.
 - Use `Squidie.preview_spec/3` or `Squidie.preview_spec/4` when visual editors
   need execution-style node output for a runtime-authored draft. Pass a
   host-owned `:action_registry`; preview calls only registry entries that opt

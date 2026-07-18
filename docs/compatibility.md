@@ -42,6 +42,15 @@ storage adapter that provides the same ordered append, optimistic conflict,
 checkpoint, rebuild, and error-shape guarantees. See [Storage
 strategy](storage_strategy.md).
 
+## Dynamic Graph Compatibility
+
+Legacy `preview_dynamic_work/3`, `record_dynamic_work/3`, and
+`schedule_dynamic_work/3` contracts keep eager scheduling and inspection-only
+edge semantics. Versioned dependency ordering is opt-in through
+`preview_graph_mutation/3` and `apply_graph_mutation/3`. Inspection normalizes
+legacy atom- or string-keyed graph records and drops malformed entries without
+exposing their untrusted fields.
+
 ## Version Evaluation Policy
 
 Before a new version is called supported, the team should:

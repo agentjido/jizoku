@@ -17,6 +17,9 @@
   duplicate delivery, stale claims, and terminal-state ordering when relevant.
 - For stateful or concurrency-sensitive changes, prove stale reads are either
   eliminated, revalidated under the same lock, or safe by idempotent design.
+- For versioned graph mutations, cover stale versions, duplicate IDs,
+  dependency chains and fan-in, concurrent writers, post-commit dispatch
+  repair, tombstones, terminal completion, and redacted inspection.
 - For telemetry or audit-history changes, test terminal-event symmetry and
   ordering relative to durable commits.
 - Prove trace lineage across worker handoff and reconstruction. Assert exact

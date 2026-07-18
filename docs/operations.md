@@ -17,6 +17,19 @@ Squidie does not currently claim:
 - replacing every backend-specific worker lease or heartbeat system
 - dynamic cron registration after boot
 
+## Dynamic Graph Reconciliation
+
+`Squidie.apply_graph_mutation/3` commits graph intent before dispatch. A
+successful report normally has `reconciliation: :completed`. If it returns
+`status: :committed_needs_reconciliation`, or inspection reports
+`reconciliation_status: :required`, the graph commit is durable but one or more
+ready attempts are missing. Call `Squidie.reconcile_dynamic_graph/2`; the
+operation is idempotent and safe to retry after conflicts or worker restarts.
+
+Do not edit queue journals manually. Use graph version and mutation history for
+operator evidence, and treat `:unknown` inspection status as a storage/read
+failure that should be investigated before applying another mutation.
+
 ## Idempotent Step Design
 
 Any step that talks to an external system should be idempotent at that

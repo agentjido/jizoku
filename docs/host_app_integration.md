@@ -689,6 +689,9 @@ The example app wires:
   runtime
 - a Jido command-signal round trip that proves durable trace lineage across a
   worker handoff and captures a committed lifecycle telemetry event
+- a versioned graph mutation with dependency chain and fan-in readiness,
+  injected post-commit dispatch failure, explicit reconciliation, redacted
+  inspection, and terminal completion
 - cron activation smoke paths that deliver `Squidie.Executor.Payload.cron/3`
   through `Squidie.Runtime.Runner.perform/1`
 - Squidie through `MinimalHostApp.WorkflowRuns`
