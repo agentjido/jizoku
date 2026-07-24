@@ -5,6 +5,54 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.3.6] - 2026-07-24
+
+### Changed
+- `67e8c39` chore(deps)(deps-dev): bump postgrex from 0.22.2 to 0.22.3
+- `18b61d6` chore(ci)(deps): bump trufflesecurity/trufflehog from 3.95.8 to 3.95.9
+- `dce16a3` Merge pull request #391 from dark-trench/dependabot/github_actions/main/trufflesecurity/trufflehog-3.95.9
+- `19c079c` Merge pull request #390 from dark-trench/dependabot/hex/main/postgrex-0.22.3
+- `aec72c4` feat(runtime): add partition-aware workflow isolation
+- `3946a94` Merge pull request #404 from dark-trench/feat/393-partition-aware-isolation
+- `8d46850` feat(runtime): add durable tracing and telemetry
+- `16778bf` fix(runtime): resolve telemetry CI failures
+- `41e3b7d` fix(runtime): bound telemetry append work
+- `bf56ec4` fix(runtime): address review feedback
+- `948f3d6` Merge pull request #405 from dark-trench/feat/runtime-trace-telemetry
+- `9f0d85a` feat(runtime): add graph mutation contracts
+- `1d9fb26` Merge pull request #406 from dark-trench/feat/395-graph-mutation-contracts
+- `0d76152` feat(runtime): add graph mutation outcome contracts
+- `8fa3426` Merge pull request #407 from dark-trench/feat/395-graph-mutation-outcomes
+- `9dc7be6` feat(runtime): add legacy graph projection state
+- `d79cb1a` Merge pull request #408 from dark-trench/feat/395-legacy-graph-projection
+- `1e74179` feat(runtime): replay dynamic graph mutations
+- `f216193` Merge pull request #409 from dark-trench/feat/395-mutation-fact-replay
+- `817bd17` feat(runtime): validate graph mutation lifecycle
+- `9e5ed1d` Merge pull request #410 from dark-trench/feat/395-mutation-validator
+- `f66f3ee` feat(runtime): evaluate graph mutation topology
+- `1c56119` fix(runtime): exclude applied nodes from readiness
+- `fd75349` Merge pull request #411 from dark-trench/feat/395-mutation-topology
+- `905c10c` feat(runtime): materialize graph mutation actions
+- `431ae62` feat(runtime): preview graph mutations
+- `33c6b7f` feat(runtime): gate dependency ordered dispatch
+- `f2d6bd3` Merge pull request #415 from dark-trench/feat/395-action-materialization-main
+- `837f08b` fix(runtime): avoid quadratic preview accumulation
+- `8e497b2` Merge pull request #416 from dark-trench/feat/395-graph-mutation-preview-main
+- `98e92ee` Merge pull request #417 from dark-trench/feat/395-dependency-aware-runtime-main
+- `0e65a5e` feat(runtime): reconcile dynamic graph dispatch
+- `650775b` test(runtime): cover reconciliation failures
+- `867b7c8` Merge pull request #418 from dark-trench/feat/395-graph-reconciliation
+- `6e6d444` feat(runtime): apply versioned graph mutations
+- `a6f4d40` Merge pull request #419 from dark-trench/feat/395-atomic-graph-mutation
+- `316a8e8` feat(runtime): expose versioned graph inspection
+- `57b3e7f` Merge pull request #420 from dark-trench/feat/395-graph-mutation-inspection
+- `741851a` chore(deps)(deps-dev): bump ex_dna from 1.5.3 to 1.5.4
+- `310cf27` chore(deps)(deps): bump req from 0.6.2 to 0.6.3
+- `c0a355f` chore(deps)(deps-dev): bump ex_slop from 0.4.2 to 0.4.3
+- `f6f5f14` Merge pull request #423 from dark-trench/dependabot/hex/main/ex_slop-0.4.3
+- `673ef4a` Merge pull request #422 from dark-trench/dependabot/hex/main/req-0.6.3
+- `fce34ac` Merge pull request #421 from dark-trench/dependabot/hex/main/ex_dna-1.5.4
+
 ## [0.3.5] - 2026-07-11
 
 ### Changed
