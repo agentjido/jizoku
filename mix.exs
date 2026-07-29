@@ -145,7 +145,7 @@ defmodule Squidie.MixProject do
       {:spark, "~> 2.7"},
       {:ex_dna, "~> 1.5", only: [:dev, :test], runtime: false},
       {:ex_slop, "~> 0.4.2", only: [:dev, :test], runtime: false},
-      {:postgrex, "~> 0.20", only: :test},
+      {:postgrex, "~> 0.20"},
       {:reach, "~> 2.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

@@ -70,6 +70,27 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  hex-package:
+    name: Hex Package
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: dev
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Elixir
+        uses: ./.github/actions/setup-elixir
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Verify package and documentation
+        run: |
+          mix hex.build --output /tmp/squidie-hex-package.tar
+          mix docs
+
   example-host-app:
     name: Example Host App
     runs-on: ubuntu-latest
