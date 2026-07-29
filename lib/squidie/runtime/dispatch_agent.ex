@@ -601,7 +601,7 @@ defmodule Squidie.Runtime.DispatchAgent do
         overlay_entries =
           overlay_entry_chunks
           |> Enum.reverse()
-          |> Enum.flat_map(& &1)
+          |> Enum.concat()
 
         {:ok, overlay_entries}
 
