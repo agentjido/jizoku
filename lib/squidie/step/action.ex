@@ -52,7 +52,7 @@ defmodule Squidie.Step.Action do
 
   defp exception_origin([{module, function, arity_or_args, metadata} | _stacktrace]) do
     maybe_put_origin_line(
-      Map.new()
+      %{}
       |> Map.put(:module, inspect(module))
       |> Map.put(:function, Atom.to_string(function))
       |> Map.put(:arity, stacktrace_arity(arity_or_args)),
