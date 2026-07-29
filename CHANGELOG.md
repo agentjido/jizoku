@@ -5,6 +5,15 @@ All notable changes to Squidie will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [0.3.7] - 2026-07-29
+
+### Changed
+- `05abac0` chore(ci)(deps): bump trufflesecurity/trufflehog from 3.95.9 to 3.96.0 (#424)
+- `b357d47` chore(deps)(deps-dev): bump ex_slop from 0.4.3 to 0.4.4 (#425)
+- `610b440` chore(deps)(deps-dev): bump reach from 2.7.5 to 2.8.2 (#426)
+- `59f9ea3` fix(deps): update vulnerable Cowboy dependencies (#427)
+- `6d6b9b9` fix(release): validate Hex package before publishing (#428)
+
 ## [0.3.6] - 2026-07-24
 
 ### Changed
