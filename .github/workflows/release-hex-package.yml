@@ -109,10 +109,16 @@ jobs:
 
       - name: Verify release
         env:
+          HEX_API_KEY: ${{ secrets.HEX_SECRET_KEY }}
           RELEASE_VERSION: ${{ inputs.version }}
           EXISTING_RELEASE: ${{ steps.release_state.outputs.existing_release }}
         run: |
           set -euo pipefail
+
+          if [ -z "${HEX_API_KEY:-}" ]; then
+            echo "::error::HEX_SECRET_KEY is not configured"
+            exit 1
+          fi
 
           package_version="$(elixir -e 'Mix.start(); Code.require_file("mix.exs"); Mix.Project.get!(); IO.write(Mix.Project.config()[:version])')"
 
@@ -125,6 +131,7 @@ jobs:
             mix precommit
           fi
 
+          mix hex.publish --dry-run --yes
           mix hex.build --unpack --output /tmp/squidie-hex-package
 
       - name: Commit release metadata
