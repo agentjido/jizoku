@@ -273,25 +273,25 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
     assert journal_state() == before_recovery
   end
 
-  test "agent recovery stops at a fence before scheduling or applying" do
+  test "agent recovery fails closed on an invalid fence before scheduling or applying" do
     seed_recoverable_journal()
     append_continuation_fence()
     before_recovery = journal_state()
 
-    assert {:error, {:continuation_repair_required, @run_id}} =
+    assert {:error, {:unsafe_continuation, :trigger_mismatch}} =
              AgentRecovery.recover(@storage, @run_id, "default", now: @completed_at)
 
     assert journal_state() == before_recovery
   end
 
-  test "executor stops at a fence before every ordinary recovery branch" do
+  test "executor fails closed on an invalid fence before every ordinary recovery branch" do
     for scenario <- [:planned, :completed, :failed, :deferred] do
       cleanup_storage()
       seed_executor_scenario(scenario)
       append_continuation_fence()
       before_recovery = journal_state()
 
-      assert {:error, {:continuation_repair_required, @run_id}} =
+      assert {:error, {:unsafe_continuation, :trigger_mismatch}} =
                Executor.execute_next(
                  runtime: :journal,
                  journal_storage: @storage,
