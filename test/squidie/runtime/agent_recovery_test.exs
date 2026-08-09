@@ -304,6 +304,34 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
     assert WorkflowAgent.pending_dispatches(workflow_agent, scheduled_agent) == []
   end
 
+  test "targeted recovery does not abort an unauthenticated fence after dynamic work" do
+    seed_planned_journal(@run_id, @charge_key)
+    append_continuation_fence()
+    assert {:ok, run_thread} = Journal.load_thread(@storage, {:run, @run_id})
+
+    assert {:ok, _thread} =
+             Journal.append_entries(
+               @storage,
+               [
+                 entry!(:dynamic_work_recorded, %{
+                   run_id: @run_id,
+                   dynamic_key: "dynamic-1",
+                   origin: %{runnable_key: "origin"},
+                   nodes: [],
+                   occurred_at: @completed_at
+                 })
+               ],
+               expected_rev: run_thread.rev
+             )
+
+    before_recovery = journal_state()
+
+    assert {:error, {:unsafe_continuation, :trigger_mismatch}} =
+             AgentRecovery.recover(@storage, @run_id, "default", now: @completed_at)
+
+    assert journal_state() == before_recovery
+  end
+
   test "agent recovery fails closed on an invalid fence before scheduling or applying" do
     seed_recoverable_journal()
     append_continuation_fence()

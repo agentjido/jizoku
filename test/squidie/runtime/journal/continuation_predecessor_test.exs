@@ -7,6 +7,7 @@ defmodule Squidie.Runtime.Journal.ContinuationPredecessorTest do
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Commands.Continuation
+  alias Squidie.Runtime.Journal.Commands.ContinuationRecovery
   alias Squidie.Runtime.Journal.Commands.Starter
   alias Squidie.Runtime.Journal.Storage
   alias Squidie.Runtime.WorkflowAgent
@@ -717,6 +718,248 @@ defmodule Squidie.Runtime.Journal.ContinuationPredecessorTest do
              Continuation.commit_predecessor(@storage, @run_id, "default")
 
     assert journal_state() == before_rejection
+  end
+
+  test "recovery aborts a fence after a competing predecessor terminal wins" do
+    _fence = seed_fenced_predecessor()
+
+    append_run_entry(
+      Squidie.Runtime.Journal.EntryBuilder.traced_run_terminal!(
+        @run_id,
+        :cancelled,
+        @trace,
+        @now
+      )
+    )
+
+    assert {:ok, {:aborted, %{abort: %{abort_reason: :predecessor_terminal}, created?: true}}} =
+             ContinuationRecovery.resolve_fenced_run(
+               @storage,
+               @run_id,
+               "default",
+               now: @now
+             )
+
+    assert {:ok, predecessor_agent} = WorkflowAgent.rebuild(@storage, @run_id)
+    assert predecessor_agent.state.projection.status == :cancelled
+    assert predecessor_agent.state.projection.continuation_request == nil
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @successor_run_id})
+  end
+
+  test "recovery aborts a fence after durable dynamic work changes the predecessor" do
+    _fence = seed_fenced_predecessor()
+
+    append_run_fact(:dynamic_work_recorded, %{
+      run_id: @run_id,
+      dynamic_key: "dynamic-1",
+      origin: %{runnable_key: "origin"},
+      nodes: [],
+      occurred_at: @now
+    })
+
+    assert {:ok, {:aborted, %{abort: %{abort_reason: :predecessor_changed}, created?: true}}} =
+             ContinuationRecovery.resolve_fenced_run(
+               @storage,
+               @run_id,
+               "default",
+               now: @now
+             )
+
+    assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+    assert DispatchAgent.active_continuation_fence(dispatch_agent, @run_id) == nil
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @successor_run_id})
+  end
+
+  test "recovery aborts a fence after a durable graph mutation changes the predecessor" do
+    _fence = seed_fenced_predecessor()
+
+    append_run_fact(:dynamic_graph_mutated, %{
+      run_id: @run_id,
+      mutation_id: "mutation-add",
+      expected_version: 0,
+      result_version: 1,
+      origin: "record_cursor",
+      additions: [],
+      removals: [],
+      runnable_intent_fingerprints: %{},
+      occurred_at: @now
+    })
+
+    assert {:ok, {:aborted, %{abort: %{abort_reason: :predecessor_changed}, created?: true}}} =
+             ContinuationRecovery.resolve_fenced_run(
+               @storage,
+               @run_id,
+               "default",
+               now: @now
+             )
+
+    assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+    assert DispatchAgent.active_continuation_fence(dispatch_agent, @run_id) == nil
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @successor_run_id})
+  end
+
+  test "recovery does not abort a trigger-mismatched fence after dynamic work" do
+    _fence = seed_fenced_predecessor(%{trigger: "other"})
+
+    append_run_fact(:dynamic_work_recorded, %{
+      run_id: @run_id,
+      dynamic_key: "dynamic-1",
+      origin: %{runnable_key: "origin"},
+      nodes: [],
+      occurred_at: @now
+    })
+
+    before_resolution = journal_state()
+
+    assert {:error, {:unsafe_continuation, :trigger_mismatch}} =
+             ContinuationRecovery.resolve_fenced_run(
+               @storage,
+               @run_id,
+               "default",
+               now: @now
+             )
+
+    assert journal_state() == before_resolution
+  end
+
+  test "recovery does not abort a trigger-mismatched fence after a terminal wins" do
+    _fence = seed_fenced_predecessor(%{trigger: "other"})
+
+    append_run_entry(
+      Squidie.Runtime.Journal.EntryBuilder.traced_run_terminal!(
+        @run_id,
+        :cancelled,
+        @trace,
+        @now
+      )
+    )
+
+    before_resolution = journal_state()
+
+    assert {:error, {:conflicting_continuation_terminal, :cancelled}} =
+             ContinuationRecovery.resolve_fenced_run(
+               @storage,
+               @run_id,
+               "default",
+               now: @now
+             )
+
+    assert journal_state() == before_resolution
+  end
+
+  test "recovery bounds abort CAS conflicts and remains retryable" do
+    _fence = seed_fenced_predecessor()
+
+    append_run_fact(:dynamic_work_recorded, %{
+      run_id: @run_id,
+      dynamic_key: "dynamic-1",
+      origin: %{runnable_key: "origin"},
+      nodes: [],
+      occurred_at: @now
+    })
+
+    storage =
+      recording_storage(fn _thread_id, kinds ->
+        if kinds == [:run_continuation_aborted] do
+          {:return, {:error, :conflict}}
+        else
+          :continue
+        end
+      end)
+
+    assert {:error, :conflict} =
+             ContinuationRecovery.resolve_fenced_run(
+               storage,
+               @run_id,
+               "default",
+               now: @now
+             )
+
+    for _attempt <- 1..25 do
+      assert_receive {:storage_append, _thread_id, [:run_continuation_aborted]}
+    end
+
+    refute_receive {:storage_append, _thread_id, [:run_continuation_aborted]}
+
+    assert {:ok, {:aborted, %{created?: true}}} =
+             ContinuationRecovery.resolve_fenced_run(
+               @storage,
+               @run_id,
+               "default",
+               now: @now
+             )
+  end
+
+  test "recovery leaves dynamic work fenced when the workflow projection is anomalous" do
+    _fence = seed_fenced_predecessor()
+
+    append_run_fact(:dynamic_work_recorded, %{
+      run_id: @run_id,
+      dynamic_key: "dynamic-1",
+      origin: %{runnable_key: "origin"},
+      nodes: [],
+      occurred_at: @now
+    })
+
+    append_run_entry(%Entry{
+      type: :dynamic_work_recorded,
+      thread: {:run, @run_id},
+      data: %{
+        run_id: @run_id,
+        dynamic_key: "malformed-dynamic",
+        origin: %{},
+        nodes: :not_a_list,
+        occurred_at: @now
+      },
+      occurred_at: @now
+    })
+
+    before_resolution = journal_state()
+
+    assert {:error, {:unsafe_continuation, {:workflow_anomalies, [_anomaly]}}} =
+             ContinuationRecovery.resolve_fenced_run(
+               @storage,
+               @run_id,
+               "default",
+               now: @now
+             )
+
+    assert journal_state() == before_resolution
+    assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+    assert DispatchAgent.active_continuation_fence(dispatch_agent, @run_id)
+  end
+
+  test "recovery leaves dynamic work fenced when the dispatch projection is anomalous" do
+    _fence = seed_fenced_predecessor()
+
+    append_run_fact(:dynamic_work_recorded, %{
+      run_id: @run_id,
+      dynamic_key: "dynamic-1",
+      origin: %{runnable_key: "origin"},
+      nodes: [],
+      occurred_at: @now
+    })
+
+    append_dispatch_entry(%Entry{
+      type: :run_continuation_fenced,
+      thread: {:dispatch, "default"},
+      data: %{run_id: @run_id},
+      occurred_at: @now
+    })
+
+    before_resolution = journal_state()
+
+    assert {:error, {:unsafe_continuation, :dynamic_work}} =
+             ContinuationRecovery.resolve_fenced_run(
+               @storage,
+               @run_id,
+               "default",
+               now: @now
+             )
+
+    assert journal_state() == before_resolution
+    assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+    assert DispatchAgent.active_continuation_fence(dispatch_agent, @run_id)
   end
 
   test "rejects a persisted compensation runnable without mutation" do

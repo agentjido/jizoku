@@ -69,6 +69,36 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
     {:error, {:invalid_continuation, :invalid}}
   end
 
+  @doc false
+  @spec abort_reason(Journal.storage_config(), Agent.t(), Agent.t()) ::
+          {:ok, DispatchProtocol.Projection.continuation_abort_reason()} | :not_abortable
+  def abort_reason(
+        storage,
+        %Agent{
+          agent_module: DispatchAgent,
+          state: %{queue: queue}
+        } = dispatch_agent,
+        %Agent{
+          agent_module: WorkflowAgent,
+          state: %{run_id: run_id, projection: %Projection{} = projection}
+        } = workflow_agent
+      ) do
+    with {:ok, fence} <- continuation_fence(dispatch_agent, run_id),
+         {:ok, intent} <- ContinuationIntent.from_fence(fence),
+         :ok <- validate_static_boundary(storage, workflow_agent, intent, queue),
+         :ok <- ContinuationIntent.validate_current_target(intent),
+         :ok <- validate_abort_integrity(dispatch_agent, projection, run_id),
+         {:ok, reason} <- durable_abort_reason(projection) do
+      {:ok, reason}
+    else
+      _not_abortable -> :not_abortable
+    end
+  end
+
+  def abort_reason(_storage, _dispatch_agent, _workflow_agent) do
+    :not_abortable
+  end
+
   defp commit_predecessor(_storage, _run_id, _queue, 0) do
     {:error, :conflict}
   end
@@ -185,6 +215,18 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
     end
   end
 
+  defp validate_abort_integrity(dispatch_agent, projection, run_id) do
+    with :ok <- workflow_without_anomalies(projection) do
+      dispatch_agent.state.projection
+      |> DispatchProtocol.Projection.continuation_blockers(run_id)
+      |> Enum.filter(&(&1.reason == :dispatch_anomaly))
+      |> case do
+        [] -> :ok
+        blockers -> unsafe({:dispatch_blockers, blockers})
+      end
+    end
+  end
+
   defp validate_workflow_boundary(
          storage,
          %Agent{agent_module: WorkflowAgent, state: %{projection: %Projection{} = projection}}
@@ -263,6 +305,24 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
       unsafe(:compensation)
     else
       :ok
+    end
+  end
+
+  defp durable_abort_reason(%Projection{} = projection) do
+    case {projection.continuation_request, Projection.terminal_status(projection)} do
+      {nil, terminal_status} when terminal_status not in [nil, :continued] ->
+        {:ok, :predecessor_terminal}
+
+      {nil, nil} ->
+        if Projection.dynamic_work(projection) != [] or
+             map_size(projection.graph.mutation_history) > 0 do
+          {:ok, :predecessor_changed}
+        else
+          :not_abortable
+        end
+
+      _continuation_state ->
+        :not_abortable
     end
   end
 

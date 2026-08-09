@@ -209,6 +209,33 @@ defmodule Squidie.Runtime.DispatchAgent do
   end
 
   @doc false
+  @spec continuation_repair(Agent.t(), String.t()) :: map() | nil
+  def continuation_repair(
+        %Agent{agent_module: __MODULE__, state: %State{projection: projection}},
+        run_id
+      )
+      when is_binary(run_id) do
+    Projection.continuation_repair(projection, run_id)
+  end
+
+  @doc false
+  @spec continuation_abort(Agent.t(), String.t()) :: map() | nil
+  def continuation_abort(
+        %Agent{agent_module: __MODULE__, state: %State{projection: projection}},
+        run_id
+      )
+      when is_binary(run_id) do
+    Projection.continuation_abort(projection, run_id)
+  end
+
+  @doc false
+  @spec continuation_abort_update(Agent.t(), map(), boolean()) :: continuation_abort_update()
+  def continuation_abort_update(%Agent{agent_module: __MODULE__} = agent, abort, created?)
+      when is_map(abort) and is_boolean(created?) do
+    %{agent: agent, abort: abort, created?: created?}
+  end
+
+  @doc false
   @spec continuation_fences(Agent.t()) :: [map()]
   def continuation_fences(%Agent{agent_module: __MODULE__, state: %State{projection: projection}}) do
     projection.continuation_fences
@@ -813,7 +840,7 @@ defmodule Squidie.Runtime.DispatchAgent do
          _thread_rev,
          _entry
        ) do
-    {:ok, %{agent: agent, abort: existing, created?: false}}
+    {:ok, continuation_abort_update(agent, existing, false)}
   end
 
   defp persist_continuation_abort(
@@ -828,7 +855,7 @@ defmodule Squidie.Runtime.DispatchAgent do
            persist_dispatch_entry(storage, agent, projection, thread_rev, entry),
          %{} = abort <-
            Projection.continuation_abort(aborted_agent.state.projection, entry.data.run_id) do
-      {:ok, %{agent: aborted_agent, abort: abort, created?: true}}
+      {:ok, continuation_abort_update(aborted_agent, abort, true)}
     else
       nil -> {:error, {:invalid_continuation_abort, :not_retained}}
       {:error, _reason} = error -> error
