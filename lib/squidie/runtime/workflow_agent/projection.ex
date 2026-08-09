@@ -93,6 +93,12 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
           applied_at: %{optional(String.t()) => DateTime.t()},
           command_history: [map()],
           child_runs: [map()],
+          continued_from_run_id: String.t() | nil,
+          continued_from_key: String.t() | nil,
+          continued_to_run_id: String.t() | nil,
+          continued_to_key: String.t() | nil,
+          continuation_request: map() | nil,
+          continuation_origin: map() | nil,
           dynamic_work: [map()],
           graph: GraphState.t(),
           manual_state: manual_state() | nil,
@@ -120,6 +126,12 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
             applied_at: %{},
             command_history: [],
             child_runs: [],
+            continued_from_run_id: nil,
+            continued_from_key: nil,
+            continued_to_run_id: nil,
+            continued_to_key: nil,
+            continuation_request: nil,
+            continuation_origin: nil,
             dynamic_work: [],
             graph: %GraphState{},
             manual_state: nil,
@@ -356,6 +368,26 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   @doc false
+  @spec continuation(t()) :: %{
+          required(:continued_from) => map() | nil,
+          required(:continued_to) => map() | nil
+        }
+  def continuation(%__MODULE__{} = projection) do
+    %{
+      continued_from:
+        continuation_edge(
+          Map.get(projection, :continued_from_run_id),
+          Map.get(projection, :continued_from_key)
+        ),
+      continued_to:
+        continuation_edge(
+          Map.get(projection, :continued_to_run_id),
+          Map.get(projection, :continued_to_key)
+        )
+    }
+  end
+
+  @doc false
   @spec dynamic_work(t()) :: [map()]
   def dynamic_work(%__MODULE__{} = projection) do
     dynamic_work = Map.get(projection, :dynamic_work, [])
@@ -387,6 +419,12 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     projection
     |> Map.put_new(:command_history, [])
     |> Map.put_new(:child_runs, [])
+    |> Map.put_new(:continued_from_run_id, nil)
+    |> Map.put_new(:continued_from_key, nil)
+    |> Map.put_new(:continued_to_run_id, nil)
+    |> Map.put_new(:continued_to_key, nil)
+    |> Map.put_new(:continuation_request, nil)
+    |> Map.put_new(:continuation_origin, nil)
     |> Map.put(:dynamic_work, dynamic_work)
     |> Map.put(:graph, graph)
     |> Map.put_new(:terminal_error, nil)
@@ -463,6 +501,28 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
        ) do
     if child_run_data?(data) do
       put_child_run(projection, entry, data)
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :run_continuation_requested, data: data} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if continuation_request_data?(data) do
+      put_continuation_request(projection, entry, data)
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :run_continued_from, data: data} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if continuation_origin_data?(data) do
+      put_continuation_origin(projection, entry, data)
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
@@ -643,6 +703,122 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       data,
       [:run_id, :child_run_id, :child_workflow, :child_trigger, :child_key, :origin]
     ) and is_map(Map.fetch!(data, :origin)) and is_map(Map.get(data, :metadata, %{}))
+  end
+
+  defp continuation_request_data?(data) do
+    required_present?(data, [
+      :run_id,
+      :successor_run_id,
+      :continuation_key,
+      :workflow,
+      :trigger,
+      :input,
+      :definition,
+      :definition_fingerprint
+    ]) and
+      Map.has_key?(data, :definition_version) and
+      valid_continuation_request_identifiers?(data) and
+      is_map(Map.fetch!(data, :input)) and
+      valid_continuation_definition?(data)
+  end
+
+  defp continuation_origin_data?(data) do
+    required_present?(data, [:run_id, :predecessor_run_id, :continuation_key]) and
+      non_empty_binary?(Map.fetch!(data, :run_id)) and
+      non_empty_binary?(Map.fetch!(data, :predecessor_run_id)) and
+      non_empty_binary?(Map.fetch!(data, :continuation_key))
+  end
+
+  defp valid_continuation_request_identifiers?(data) do
+    non_empty_binary?(Map.fetch!(data, :run_id)) and
+      non_empty_binary?(Map.fetch!(data, :successor_run_id)) and
+      non_empty_binary?(Map.fetch!(data, :continuation_key)) and
+      non_empty_binary?(Map.fetch!(data, :workflow)) and
+      non_empty_binary?(Map.fetch!(data, :trigger))
+  end
+
+  defp valid_continuation_definition?(data) do
+    Map.fetch!(data, :definition) == :current and
+      optional_non_empty_binary?(Map.fetch!(data, :definition_version)) and
+      non_empty_binary?(Map.fetch!(data, :definition_fingerprint))
+  end
+
+  defp put_continuation_request(%__MODULE__{} = projection, entry, data) do
+    request =
+      Map.take(data, [
+        :run_id,
+        :successor_run_id,
+        :continuation_key,
+        :workflow,
+        :trigger,
+        :input,
+        :definition,
+        :definition_version,
+        :definition_fingerprint
+      ])
+
+    case Map.get(projection, :continuation_request) do
+      nil ->
+        projection
+        |> Map.put(:run_id, projection.run_id || data.run_id)
+        |> Map.put(:continued_to_run_id, data.successor_run_id)
+        |> Map.put(:continued_to_key, data.continuation_key)
+        |> Map.put(:continuation_request, request)
+
+      ^request ->
+        projection
+
+      _conflict ->
+        add_anomaly(projection, entry, :conflicting_continuation)
+    end
+  end
+
+  defp put_continuation_origin(%__MODULE__{} = projection, entry, data) do
+    origin = Map.take(data, [:run_id, :predecessor_run_id, :continuation_key])
+
+    case Map.get(projection, :continuation_origin) do
+      nil ->
+        projection
+        |> Map.put(:run_id, projection.run_id || data.run_id)
+        |> Map.put(:continued_from_run_id, data.predecessor_run_id)
+        |> Map.put(:continued_from_key, data.continuation_key)
+        |> Map.put(:continuation_origin, origin)
+
+      ^origin ->
+        projection
+
+      _conflict ->
+        add_anomaly(projection, entry, :conflicting_continuation)
+    end
+  end
+
+  defp continuation_edge(nil, _continuation_key) do
+    nil
+  end
+
+  defp continuation_edge(run_id, continuation_key)
+       when is_binary(run_id) and is_binary(continuation_key) do
+    %{run_id: run_id, continuation_key: continuation_key}
+  end
+
+  defp continuation_edge(_run_id, _continuation_key) do
+    nil
+  end
+
+  defp optional_non_empty_binary?(nil) do
+    true
+  end
+
+  defp optional_non_empty_binary?(value) do
+    non_empty_binary?(value)
+  end
+
+  defp non_empty_binary?(value) when is_binary(value) do
+    value != ""
+  end
+
+  defp non_empty_binary?(_value) do
+    false
   end
 
   defp put_child_run(%__MODULE__{} = projection, entry, data) do

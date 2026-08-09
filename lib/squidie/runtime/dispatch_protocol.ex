@@ -34,6 +34,8 @@ defmodule Squidie.Runtime.DispatchProtocol do
           | :runnables_planned
           | :runnable_applied
           | :child_run_started
+          | :run_continuation_requested
+          | :run_continued_from
           | :dynamic_work_recorded
           | :dynamic_graph_mutated
           | :manual_step_paused
@@ -57,6 +59,8 @@ defmodule Squidie.Runtime.DispatchProtocol do
     :runnables_planned,
     :runnable_applied,
     :child_run_started,
+    :run_continuation_requested,
+    :run_continued_from,
     :dynamic_work_recorded,
     :dynamic_graph_mutated,
     :manual_step_paused,
@@ -89,6 +93,23 @@ defmodule Squidie.Runtime.DispatchProtocol do
       :child_trigger,
       :child_key,
       :origin,
+      :occurred_at
+    ],
+    run_continuation_requested: [
+      :run_id,
+      :successor_run_id,
+      :continuation_key,
+      :workflow,
+      :trigger,
+      :input,
+      :definition,
+      :definition_fingerprint,
+      :occurred_at
+    ],
+    run_continued_from: [
+      :run_id,
+      :predecessor_run_id,
+      :continuation_key,
       :occurred_at
     ],
     dynamic_work_recorded: [:run_id, :dynamic_key, :origin, :nodes, :occurred_at],
@@ -210,6 +231,18 @@ defmodule Squidie.Runtime.DispatchProtocol do
     |> Map.update(:child_key, nil, &normalize_thread_id/1)
     |> Map.update(:origin, nil, &normalize_origin/1)
     |> Map.put_new(:metadata, %{})
+  end
+
+  defp normalize_attrs(attrs, :run_continuation_requested) do
+    attrs
+    |> Map.put_new(:definition_version, nil)
+    |> Map.update(:continuation_key, nil, &normalize_thread_id/1)
+    |> Map.update(:workflow, nil, &normalize_workflow/1)
+    |> Map.update(:trigger, nil, &normalize_thread_id/1)
+  end
+
+  defp normalize_attrs(attrs, :run_continued_from) do
+    Map.update(attrs, :continuation_key, nil, &normalize_thread_id/1)
   end
 
   defp normalize_attrs(attrs, :dynamic_work_recorded) do
