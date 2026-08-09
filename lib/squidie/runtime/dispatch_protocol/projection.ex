@@ -57,6 +57,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
           optional(:claim_id) => String.t(),
           optional(:claim_token_hash) => String.t()
         }
+  @type continuation_abort_reason :: :predecessor_changed | :predecessor_terminal
 
   @type string_set :: MapSet.t(String.t()) | %MapSet{}
 
@@ -250,6 +251,17 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   end
 
   @doc false
+  @spec active_continuation_fence(t(), String.t()) :: map() | nil
+  def active_continuation_fence(%__MODULE__{} = projection, run_id)
+      when is_binary(run_id) do
+    if continuation_fenced?(projection, run_id) do
+      continuation_fence(projection, run_id)
+    else
+      nil
+    end
+  end
+
+  @doc false
   @spec continuation_repair(t(), String.t()) :: map() | nil
   def continuation_repair(%__MODULE__{continuation_repairs: repairs}, run_id)
       when is_binary(run_id) do
@@ -259,12 +271,16 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @doc false
   @spec continuation_abort(t(), String.t()) :: map() | nil
   def continuation_abort(
-        %__MODULE__{} = projection,
+        %__MODULE__{
+          continuation_fences: fences,
+          continuation_repairs: repairs,
+          continuation_aborts: aborts
+        },
         run_id
       )
       when is_binary(run_id) do
-    if MapSet.member?(resolved_continuation_abort_ids(projection), run_id) do
-      Map.get(projection.continuation_aborts, run_id)
+    if not Map.has_key?(repairs, run_id) and matching_continuation_abort?(fences, aborts, run_id) do
+      Map.get(aborts, run_id)
     else
       nil
     end
@@ -308,6 +324,18 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @spec valid_continuation_fence?(term()) :: boolean()
   def valid_continuation_fence?(data) do
     continuation_fence_data?(data)
+  end
+
+  @doc false
+  @spec valid_continuation_abort?(term()) :: boolean()
+  def valid_continuation_abort?(data) do
+    continuation_abort_data?(data)
+  end
+
+  @doc false
+  @spec valid_continuation_abort_reason?(term()) :: boolean()
+  def valid_continuation_abort_reason?(reason) do
+    valid_abort_reason?(reason)
   end
 
   @doc false

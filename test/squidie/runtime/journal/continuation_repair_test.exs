@@ -190,6 +190,28 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
     assert_repair_complete()
   end
 
+  test "does not resurrect a continuation after its fence is aborted" do
+    _fence = seed_fenced_predecessor()
+    assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+
+    assert {:ok, %{created?: true}} =
+             DispatchAgent.abort_continuation_fence(
+               @storage,
+               dispatch_agent,
+               @run_id,
+               :predecessor_changed,
+               now: @now
+             )
+
+    before_repair = journal_state(@storage, "default")
+
+    assert {:error, {:continuation_fence_not_found, @run_id}} =
+             Continuation.repair_fenced_run(@storage, @run_id, "default")
+
+    assert journal_state(@storage, "default") == before_repair
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @successor_run_id})
+  end
+
   test "executor repairs a pending continuation before executing its successor" do
     _fence = seed_fenced_predecessor()
 

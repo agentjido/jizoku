@@ -95,7 +95,7 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
   end
 
   defp continuation_fence(dispatch_agent, run_id) do
-    case DispatchAgent.continuation_fence(dispatch_agent, run_id) do
+    case DispatchAgent.active_continuation_fence(dispatch_agent, run_id) do
       nil -> {:error, {:continuation_fence_not_found, run_id}}
       fence -> {:ok, fence}
     end

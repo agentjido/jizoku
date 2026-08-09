@@ -69,6 +69,11 @@ defmodule Squidie.Runtime.DispatchAgent do
           required(:repair) => map(),
           required(:created?) => boolean()
         }
+  @type continuation_abort_update :: %{
+          required(:agent) => Agent.t(),
+          required(:abort) => map(),
+          required(:created?) => boolean()
+        }
   @type storage_config :: Journal.storage_config()
 
   @doc """
@@ -194,6 +199,16 @@ defmodule Squidie.Runtime.DispatchAgent do
   end
 
   @doc false
+  @spec active_continuation_fence(Agent.t(), String.t()) :: map() | nil
+  def active_continuation_fence(
+        %Agent{agent_module: __MODULE__, state: %State{projection: projection}},
+        run_id
+      )
+      when is_binary(run_id) do
+    Projection.active_continuation_fence(projection, run_id)
+  end
+
+  @doc false
   @spec continuation_fences(Agent.t()) :: [map()]
   def continuation_fences(%Agent{agent_module: __MODULE__, state: %State{projection: projection}}) do
     projection.continuation_fences
@@ -289,6 +304,56 @@ defmodule Squidie.Runtime.DispatchAgent do
 
   def acknowledge_continuation_repair(_storage, _agent, _run_id, _opts) do
     {:error, {:invalid_continuation_repair, :invalid}}
+  end
+
+  @doc false
+  @spec abort_continuation_fence(
+          storage_config(),
+          Agent.t(),
+          String.t(),
+          Projection.continuation_abort_reason(),
+          keyword()
+        ) :: {:ok, continuation_abort_update()} | {:error, term()}
+  def abort_continuation_fence(storage, agent, run_id, abort_reason, opts \\ [])
+
+  def abort_continuation_fence(
+        storage,
+        %Agent{
+          agent_module: __MODULE__,
+          state: %State{
+            queue: queue,
+            projection: %Projection{} = projection,
+            thread_rev: thread_rev
+          }
+        } = agent,
+        run_id,
+        abort_reason,
+        opts
+      )
+      when is_binary(queue) and is_binary(run_id) and run_id != "" and
+             is_integer(thread_rev) and thread_rev >= 0 and is_atom(abort_reason) and
+             is_list(opts) do
+    with :ok <- validate_agent_partition(storage, agent),
+         true <- Projection.valid_continuation_abort_reason?(abort_reason),
+         {:ok, mode} <- continuation_abort_mode(projection, run_id),
+         {:ok, abort_entry} <-
+           continuation_abort_entry(projection, run_id, queue, abort_reason, opts) do
+      persist_continuation_abort(
+        mode,
+        storage,
+        agent,
+        projection,
+        thread_rev,
+        abort_entry
+      )
+    else
+      false -> {:error, {:invalid_continuation_abort, :invalid}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def abort_continuation_fence(_storage, _agent, _run_id, _abort_reason, _opts) do
+    {:error, {:invalid_continuation_abort, :invalid}}
   end
 
   @doc """
@@ -616,6 +681,35 @@ defmodule Squidie.Runtime.DispatchAgent do
     end
   end
 
+  defp continuation_abort_entry(
+         %Projection{} = projection,
+         run_id,
+         queue,
+         abort_reason,
+         opts
+       ) do
+    case Projection.continuation_fence(projection, run_id) do
+      %{queue: ^queue} = fence ->
+        with {:ok, now} <- lifecycle_now(opts),
+             {:ok, entry} <-
+               fence
+               |> Map.merge(%{abort_reason: abort_reason, occurred_at: now})
+               |> then(&DispatchProtocol.new_entry(:run_continuation_aborted, &1)),
+             true <- Projection.valid_continuation_abort?(entry.data) do
+          {:ok, entry}
+        else
+          {:error, {:invalid_option, :now}} = error -> error
+          _invalid -> {:error, {:invalid_continuation_abort, :invalid}}
+        end
+
+      nil ->
+        {:error, {:continuation_fence_not_found, run_id}}
+
+      _wrong_queue ->
+        {:error, {:invalid_continuation_abort, :wrong_queue}}
+    end
+  end
+
   defp normalize_continuation_repair_entry_result({:ok, entry}) do
     {:ok, entry}
   end
@@ -677,10 +771,78 @@ defmodule Squidie.Runtime.DispatchAgent do
 
       existing ->
         if Projection.same_continuation_fence?(existing, fence) do
-          {:ok, {:existing, existing}}
+          existing_continuation_fence_mode(projection, fence.run_id, existing)
         else
           {:error, :conflicting_continuation_fence}
         end
+    end
+  end
+
+  defp existing_continuation_fence_mode(projection, run_id, existing) do
+    case Projection.continuation_abort(projection, run_id) do
+      %{} -> {:error, {:continuation_already_aborted, run_id}}
+      nil -> {:ok, {:existing, existing}}
+    end
+  end
+
+  defp continuation_abort_mode(%Projection{} = projection, run_id) do
+    case {
+      Projection.continuation_abort(projection, run_id),
+      Projection.continuation_repair(projection, run_id),
+      Projection.active_continuation_fence(projection, run_id)
+    } do
+      {%{} = abort, _repair, _fence} ->
+        {:ok, {:existing, abort}}
+
+      {nil, %{}, _fence} ->
+        {:error, {:continuation_already_repaired, run_id}}
+
+      {nil, nil, %{} = _fence} ->
+        {:ok, :new}
+
+      {nil, nil, nil} ->
+        {:error, {:continuation_fence_not_found, run_id}}
+    end
+  end
+
+  defp persist_continuation_abort(
+         {:existing, existing},
+         _storage,
+         %Agent{} = agent,
+         %Projection{},
+         _thread_rev,
+         _entry
+       ) do
+    {:ok, %{agent: agent, abort: existing, created?: false}}
+  end
+
+  defp persist_continuation_abort(
+         :new,
+         storage,
+         %Agent{} = agent,
+         %Projection{} = projection,
+         thread_rev,
+         entry
+       ) do
+    with {:ok, aborted_agent} <-
+           persist_dispatch_entry(storage, agent, projection, thread_rev, entry),
+         %{} = abort <-
+           Projection.continuation_abort(aborted_agent.state.projection, entry.data.run_id) do
+      {:ok, %{agent: aborted_agent, abort: abort, created?: true}}
+    else
+      nil -> {:error, {:invalid_continuation_abort, :not_retained}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp continuation_repair_mode(%Projection{} = projection, run_id) do
+    case {
+      Projection.continuation_abort(projection, run_id),
+      Projection.continuation_repair(projection, run_id)
+    } do
+      {%{}, _repair} -> {:error, {:continuation_already_aborted, run_id}}
+      {nil, nil} -> {:ok, :new}
+      {nil, existing} -> {:ok, {:existing, existing}}
     end
   end
 
@@ -712,13 +874,6 @@ defmodule Squidie.Runtime.DispatchAgent do
          fence: Projection.continuation_fence(fenced_agent.state.projection, entry.data.run_id),
          created?: true
        }}
-    end
-  end
-
-  defp continuation_repair_mode(%Projection{} = projection, run_id) do
-    case Projection.continuation_repair(projection, run_id) do
-      nil -> {:ok, :new}
-      existing -> {:ok, {:existing, existing}}
     end
   end
 
@@ -764,7 +919,7 @@ defmodule Squidie.Runtime.DispatchAgent do
   end
 
   defp ensure_run_not_continuation_fenced(%Projection{} = projection, run_id) do
-    if Projection.continuation_fence(projection, run_id) do
+    if Projection.active_continuation_fence(projection, run_id) do
       {:error, :continuation_fenced}
     else
       :ok
