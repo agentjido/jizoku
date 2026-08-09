@@ -169,7 +169,7 @@ defmodule Squidie.Runtime.WorkflowAgent do
           state: %{partition: partition, queue: queue}
         } = dispatch_agent
       ) do
-    if DispatchAgent.continuation_fence(dispatch_agent, run_id) do
+    if DispatchAgent.active_continuation_fence(dispatch_agent, run_id) do
       []
     else
       pending_dispatches_for_active_run(projection, dispatch_agent, queue)

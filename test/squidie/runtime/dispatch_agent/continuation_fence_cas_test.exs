@@ -815,6 +815,201 @@ defmodule Squidie.Runtime.DispatchAgent.ContinuationFenceCASTest do
     assert dispatch_entries() == before_call
   end
 
+  test "persists a continuation abort and reuses the first receipt after restart" do
+    fenced_agent = fenced_agent()
+    assert :ok = DispatchAgent.put_checkpoint(@storage, fenced_agent)
+
+    assert {:ok, %{agent: aborted_agent, abort: abort, created?: true}} =
+             DispatchAgent.abort_continuation_fence(
+               @storage,
+               fenced_agent,
+               @run_id,
+               :predecessor_changed,
+               now: @now
+             )
+
+    assert abort ==
+             Map.merge(continuation_fence(), %{
+               queue: "default",
+               abort_reason: :predecessor_changed,
+               occurred_at: @now
+             })
+
+    assert DispatchAgent.active_continuation_fence(aborted_agent, @run_id) == nil
+    before_conflict = dispatch_entries()
+
+    assert {:error, :conflicting_continuation_fence} =
+             DispatchAgent.fence_run_for_continuation(
+               @storage,
+               aborted_agent,
+               continuation_fence(input: %{cursor: "page-99"}),
+               now: @now
+             )
+
+    assert dispatch_entries() == before_conflict
+    assert {:ok, rebuilt_agent} = DispatchAgent.rebuild(@storage, "default")
+    before_duplicate = dispatch_entries()
+
+    assert {:ok, %{abort: ^abort, created?: false}} =
+             DispatchAgent.abort_continuation_fence(
+               @storage,
+               rebuilt_agent,
+               @run_id,
+               :predecessor_terminal,
+               now: DateTime.add(@now, 1, :second)
+             )
+
+    assert dispatch_entries() == before_duplicate
+  end
+
+  test "abort releases predecessor scheduling but permanently suppresses the successor" do
+    fenced_agent = fenced_agent()
+
+    assert {:ok, %{agent: aborted_agent}} =
+             DispatchAgent.abort_continuation_fence(
+               @storage,
+               fenced_agent,
+               @run_id,
+               :predecessor_changed,
+               now: @now
+             )
+
+    assert {:ok, %{agent: scheduled_agent, runnables: [%{runnable_key: @runnable_key}]}} =
+             DispatchAgent.schedule_attempts(
+               @storage,
+               aborted_agent,
+               @run_id,
+               [scheduled_runnable()],
+               now: @now
+             )
+
+    successor_run_id = continuation_fence().successor_run_id
+    successor_runnable_key = "#{successor_run_id}:monitor:1"
+
+    assert {:ok, %{agent: successor_scheduled_agent}} =
+             DispatchAgent.schedule_attempts(
+               @storage,
+               scheduled_agent,
+               successor_run_id,
+               [
+                 Map.merge(scheduled_runnable(), %{
+                   run_id: successor_run_id,
+                   runnable_key: successor_runnable_key,
+                   idempotency_key: "successor-monitor"
+                 })
+               ],
+               now: @now
+             )
+
+    refute Enum.any?(
+             DispatchAgent.visible_attempts(successor_scheduled_agent, @now),
+             &(&1.run_id == successor_run_id)
+           )
+  end
+
+  test "rejects aborting a repaired continuation without writing" do
+    fenced_agent = fenced_agent()
+
+    assert {:ok, %{agent: repaired_agent}} =
+             DispatchAgent.acknowledge_continuation_repair(
+               @storage,
+               fenced_agent,
+               @run_id,
+               now: @now
+             )
+
+    before_abort = dispatch_entries()
+
+    assert {:error, {:continuation_already_repaired, @run_id}} =
+             DispatchAgent.abort_continuation_fence(
+               @storage,
+               repaired_agent,
+               @run_id,
+               :predecessor_changed,
+               now: @now
+             )
+
+    assert dispatch_entries() == before_abort
+  end
+
+  test "routes aborts by queue and rejects a mismatched storage partition" do
+    agent = queued_agent("priority")
+
+    assert {:ok, %{agent: fenced_agent}} =
+             DispatchAgent.fence_run_for_continuation(
+               @storage,
+               agent,
+               continuation_fence(),
+               now: @now
+             )
+
+    partitioned_storage = partitioned_storage("tenant-a")
+    before_priority = dispatch_entries(@storage, "priority")
+    before_partition = dispatch_entries(partitioned_storage, "priority")
+
+    assert {:error, {:partition_mismatch, :dispatch_agent}} =
+             DispatchAgent.abort_continuation_fence(
+               partitioned_storage,
+               fenced_agent,
+               @run_id,
+               :predecessor_changed,
+               now: @now
+             )
+
+    assert dispatch_entries(@storage, "priority") == before_priority
+    assert dispatch_entries(partitioned_storage, "priority") == before_partition
+
+    assert {:ok, %{abort: %{queue: "priority"}}} =
+             DispatchAgent.abort_continuation_fence(
+               @storage,
+               fenced_agent,
+               @run_id,
+               :predecessor_changed,
+               now: @now
+             )
+
+    assert Enum.map(dispatch_entries(@storage, "priority"), & &1.type) == [
+             :run_queued,
+             :run_continuation_fenced,
+             :run_continuation_aborted
+           ]
+
+    assert dispatch_entries() == []
+  end
+
+  test "rejects invalid abort input and missing fences without writing" do
+    agent = queued_agent()
+    before_abort = dispatch_entries()
+
+    assert {:error, {:invalid_continuation_abort, :invalid}} =
+             DispatchAgent.abort_continuation_fence(
+               @storage,
+               agent,
+               @run_id,
+               :future_reason,
+               now: @now
+             )
+
+    assert {:error, {:continuation_fence_not_found, @run_id}} =
+             DispatchAgent.abort_continuation_fence(
+               @storage,
+               agent,
+               @run_id,
+               :predecessor_changed,
+               now: @now
+             )
+
+    assert dispatch_entries() == before_abort
+  end
+
+  test "abort wins the shared revision before repair" do
+    assert_resolution_race(:abort)
+  end
+
+  test "repair wins the shared revision before abort" do
+    assert_resolution_race(:repair)
+  end
+
   defp assert_race(winner) do
     agent = queued_agent()
     ref = make_ref()
@@ -865,6 +1060,89 @@ defmodule Squidie.Runtime.DispatchAgent.ContinuationFenceCASTest do
     assert {:error, :conflict} = Task.await(loser_task)
 
     assert Enum.map(dispatch_entries(), & &1.type) == [:run_queued, winner_kind]
+  end
+
+  defp assert_resolution_race(winner) do
+    agent = fenced_agent()
+    ref = make_ref()
+
+    barrier_storage =
+      {CASBarrierStorage,
+       delegate: @storage,
+       barrier_thread_id: Journal.thread_id({:dispatch, "default"}),
+       barrier_ref: ref,
+       barrier_kinds: [:run_continuation_aborted, :run_continuation_repaired],
+       test_pid: self()}
+
+    abort_task =
+      Task.async(fn ->
+        DispatchAgent.abort_continuation_fence(
+          barrier_storage,
+          agent,
+          @run_id,
+          :predecessor_changed,
+          now: @now
+        )
+      end)
+
+    repair_task =
+      Task.async(fn ->
+        DispatchAgent.acknowledge_continuation_repair(
+          barrier_storage,
+          agent,
+          @run_id,
+          now: @now
+        )
+      end)
+
+    assert_receive {:append_blocked, ^ref, :run_continuation_aborted, abort_pid}
+    assert_receive {:append_blocked, ^ref, :run_continuation_repaired, repair_pid}
+
+    {winner_task, winner_pid, loser_task, loser_pid, winner_kind, loser_call} =
+      case winner do
+        :abort ->
+          {abort_task, abort_pid, repair_task, repair_pid, :run_continuation_aborted, :repair}
+
+        :repair ->
+          {repair_task, repair_pid, abort_task, abort_pid, :run_continuation_repaired, :abort}
+      end
+
+    send(winner_pid, {:append_release, ref})
+    assert {:ok, _update} = Task.await(winner_task)
+    send(loser_pid, {:append_release, ref})
+    assert {:error, :conflict} = Task.await(loser_task)
+
+    assert {:ok, rebuilt_agent} = DispatchAgent.rebuild(@storage, "default")
+    before_retry = dispatch_entries()
+
+    case loser_call do
+      :repair ->
+        assert {:error, {:continuation_already_aborted, @run_id}} =
+                 DispatchAgent.acknowledge_continuation_repair(
+                   @storage,
+                   rebuilt_agent,
+                   @run_id,
+                   now: @now
+                 )
+
+      :abort ->
+        assert {:error, {:continuation_already_repaired, @run_id}} =
+                 DispatchAgent.abort_continuation_fence(
+                   @storage,
+                   rebuilt_agent,
+                   @run_id,
+                   :predecessor_changed,
+                   now: @now
+                 )
+    end
+
+    assert dispatch_entries() == before_retry
+
+    assert Enum.map(dispatch_entries(), & &1.type) == [
+             :run_queued,
+             :run_continuation_fenced,
+             winner_kind
+           ]
   end
 
   defp queued_agent(queue \\ "default") do

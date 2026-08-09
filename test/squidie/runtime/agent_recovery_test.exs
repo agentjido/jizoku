@@ -273,6 +273,37 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
     assert journal_state() == before_recovery
   end
 
+  test "workflow recovery restores predecessor dispatches after a continuation abort" do
+    seed_planned_journal(@run_id, @charge_key)
+    append_continuation_fence()
+
+    assert {:ok, workflow_agent} = WorkflowAgent.rebuild(@storage, @run_id)
+    assert {:ok, fenced_dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+    assert WorkflowAgent.pending_dispatches(workflow_agent, fenced_dispatch_agent) == []
+
+    assert {:ok, %{agent: aborted_dispatch_agent}} =
+             DispatchAgent.abort_continuation_fence(
+               @storage,
+               fenced_dispatch_agent,
+               @run_id,
+               :predecessor_changed,
+               now: @completed_at
+             )
+
+    assert [%{runnable_key: @charge_key}] =
+             WorkflowAgent.pending_dispatches(workflow_agent, aborted_dispatch_agent)
+
+    assert {:ok, %{agent: scheduled_agent, runnables: [%{runnable_key: @charge_key}]}} =
+             WorkflowAgent.schedule_pending_dispatches(
+               @storage,
+               workflow_agent,
+               aborted_dispatch_agent,
+               now: @completed_at
+             )
+
+    assert WorkflowAgent.pending_dispatches(workflow_agent, scheduled_agent) == []
+  end
+
   test "agent recovery fails closed on an invalid fence before scheduling or applying" do
     seed_recoverable_journal()
     append_continuation_fence()
