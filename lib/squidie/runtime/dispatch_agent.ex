@@ -151,6 +151,17 @@ defmodule Squidie.Runtime.DispatchAgent do
     Projection.completed_results(projection)
   end
 
+  @doc false
+  @spec results_ready_to_apply(Agent.t()) :: [
+          Squidie.Runtime.DispatchProtocol.ActionAttempt.t()
+        ]
+  def results_ready_to_apply(%Agent{
+        agent_module: __MODULE__,
+        state: %State{projection: projection}
+      }) do
+    Projection.results_ready_to_apply(projection)
+  end
+
   @doc """
   Returns every runnable key already known by the dispatch projection.
   """
@@ -175,6 +186,14 @@ defmodule Squidie.Runtime.DispatchAgent do
       )
       when is_binary(run_id) do
     Projection.continuation_fence(projection, run_id)
+  end
+
+  @doc false
+  @spec continuation_fences(Agent.t()) :: [map()]
+  def continuation_fences(%Agent{agent_module: __MODULE__, state: %State{projection: projection}}) do
+    projection.continuation_fences
+    |> Map.values()
+    |> Enum.sort_by(& &1.run_id)
   end
 
   @doc false
