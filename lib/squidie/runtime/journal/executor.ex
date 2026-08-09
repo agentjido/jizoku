@@ -2255,14 +2255,8 @@ defmodule Squidie.Runtime.Journal.Executor do
         {:recovered, %Inspection.Snapshot{}} = recovered ->
           {:ok, recovered}
 
-        deferred_recovery ->
-          recover_ordinary_progressions(
-            storage,
-            dispatch_agent,
-            queue,
-            now,
-            deferred_recovery
-          )
+        :none ->
+          recover_ordinary_progressions(storage, dispatch_agent, queue, now)
       end
     end
   end
@@ -2271,8 +2265,7 @@ defmodule Squidie.Runtime.Journal.Executor do
          storage,
          dispatch_agent,
          queue,
-         %DateTime{} = now,
-         deferred_recovery
+         %DateTime{} = now
        ) do
     suppressed_run_ids =
       DispatchProtocol.Projection.continuation_suppressed_run_ids(dispatch_agent.state.projection)
@@ -2299,7 +2292,7 @@ defmodule Squidie.Runtime.Journal.Executor do
             recover_failed_progression(storage, dispatch_agent, queue, attempt, now)
 
           true ->
-            {:ok, deferred_recovery}
+            {:ok, :none}
         end
 
       {:ok, {:recovered, %Inspection.Snapshot{}}} = recovered ->

@@ -320,6 +320,24 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
              Projection.results_ready_to_apply(repaired_projection)
   end
 
+  test "malformed checkpoint fences suppress their predecessor without crashing selectors" do
+    %Projection{} =
+      projection =
+      Projection.rebuild([entry!(:attempt_scheduled, scheduled_attrs())])
+
+    malformed_checkpoint = %Projection{
+      projection
+      | continuation_fences: %{@run_id => %{}, "run_bad" => "malformed"}
+    }
+
+    assert Projection.continuation_suppressed_run_ids(malformed_checkpoint) ==
+             MapSet.new([@run_id, "run_bad"])
+
+    assert Projection.visible_attempts(malformed_checkpoint, @visible_at) == []
+    assert Projection.expired_claims(malformed_checkpoint, @expired_at) == []
+    assert Projection.results_ready_to_apply(malformed_checkpoint) == []
+  end
+
   test "retains a completed continuation repair and removes it from pending fences" do
     fence = entry!(:run_continuation_fenced, continuation_fence_attrs())
 

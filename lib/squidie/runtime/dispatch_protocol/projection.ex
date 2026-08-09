@@ -204,12 +204,18 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
         continuation_repairs: repairs
       }) do
     pending_successor_run_ids =
-      fences
-      |> Enum.reject(fn {predecessor_run_id, _fence} ->
-        Map.has_key?(repairs, predecessor_run_id)
+      Enum.reduce(fences, MapSet.new(), fn {predecessor_run_id, fence}, run_ids ->
+        case {
+          Map.has_key?(repairs, predecessor_run_id),
+          continuation_successor_run_id(fence)
+        } do
+          {false, successor_run_id} when is_binary(successor_run_id) and successor_run_id != "" ->
+            MapSet.put(run_ids, successor_run_id)
+
+          _repaired_or_malformed ->
+            run_ids
+        end
       end)
-      |> Enum.map(fn {_predecessor_run_id, fence} -> fence.successor_run_id end)
-      |> MapSet.new()
 
     fences
     |> Map.keys()
@@ -873,6 +879,14 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
 
   defp continuation_fenced?(%__MODULE__{continuation_fences: fences}, run_id) do
     Map.has_key?(fences, run_id)
+  end
+
+  defp continuation_successor_run_id(fence) when is_map(fence) do
+    Map.get(fence, :successor_run_id)
+  end
+
+  defp continuation_successor_run_id(_malformed_fence) do
+    nil
   end
 
   defp terminal_attempt?(projection, %ActionAttempt{run_id: run_id}) do
