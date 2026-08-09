@@ -34,6 +34,18 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     :queue
   ]
 
+  @continuation_integrity_anomaly_reasons [
+    :conflicting_runnable_intent,
+    :malformed_entry
+  ]
+
+  @continuation_unknown_intent_entry_types [
+    :attempt_claimed,
+    :attempt_completed,
+    :attempt_failed,
+    :runnable_applied
+  ]
+
   @type anomaly :: %{
           required(:reason) => atom(),
           required(:entry_type) => atom(),
@@ -182,6 +194,26 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   end
 
   @doc false
+  @spec valid_continuation_fence?(term()) :: boolean()
+  def valid_continuation_fence?(data) do
+    continuation_fence_data?(data)
+  end
+
+  @doc false
+  @spec same_continuation_fence?(map(), map()) :: boolean()
+  def same_continuation_fence?(left, right) when is_map(left) and is_map(right) do
+    Map.take(left, @continuation_identity_fields) ==
+      Map.take(right, @continuation_identity_fields)
+  end
+
+  @doc false
+  @spec continuation_blockers(t(), String.t()) :: [map()]
+  def continuation_blockers(%__MODULE__{} = projection, run_id) when is_binary(run_id) do
+    terminal_blockers(projection, run_id) ++
+      anomaly_blockers(projection, run_id) ++ attempt_blockers(projection, run_id)
+  end
+
+  @doc false
   @spec anomalies(t()) :: [anomaly()]
   def anomalies(%__MODULE__{anomalies: anomalies}), do: Enum.reverse(anomalies)
 
@@ -324,11 +356,6 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     end
   end
 
-  defp same_continuation_fence?(left, right) do
-    Map.take(left, @continuation_identity_fields) ==
-      Map.take(right, @continuation_identity_fields)
-  end
-
   defp continuation_fence_data?(data) when is_map(data) do
     required_present?(data, [
       :run_id,
@@ -362,6 +389,89 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
       [:run_id, :successor_run_id, :continuation_key, :workflow, :trigger, :queue],
       &non_empty_binary?(Map.fetch!(data, &1))
     )
+  end
+
+  defp terminal_blockers(%__MODULE__{} = projection, run_id) do
+    if terminal_run?(projection, run_id) do
+      [%{reason: :terminal_run}]
+    else
+      []
+    end
+  end
+
+  defp anomaly_blockers(%__MODULE__{} = projection, run_id) do
+    projection.anomalies
+    |> Enum.filter(
+      &(continuation_integrity_anomaly?(&1) and anomaly_for_run?(&1, projection, run_id))
+    )
+    |> Enum.map(&%{reason: :dispatch_anomaly, anomaly: &1})
+  end
+
+  defp anomaly_for_run?(%{run_id: run_id}, _projection, run_id) do
+    true
+  end
+
+  defp anomaly_for_run?(%{runnable_key: runnable_key}, %__MODULE__{} = projection, run_id) do
+    match?(%ActionAttempt{run_id: ^run_id}, Map.get(projection.attempts, runnable_key))
+  end
+
+  defp anomaly_for_run?(_anomaly, _projection, _run_id) do
+    false
+  end
+
+  defp continuation_integrity_anomaly?(%{reason: reason})
+       when reason in @continuation_integrity_anomaly_reasons do
+    true
+  end
+
+  defp continuation_integrity_anomaly?(%{
+         reason: :unknown_runnable_intent,
+         entry_type: entry_type
+       })
+       when entry_type in @continuation_unknown_intent_entry_types do
+    true
+  end
+
+  defp continuation_integrity_anomaly?(_anomaly) do
+    false
+  end
+
+  defp attempt_blockers(%__MODULE__{} = projection, run_id) do
+    projection.attempts
+    |> Map.values()
+    |> Enum.filter(&(&1.run_id == run_id))
+    |> Enum.flat_map(&attempt_blocker/1)
+    |> Enum.sort_by(&Map.get(&1, :runnable_key, ""))
+  end
+
+  defp attempt_blocker(%ActionAttempt{status: status, applied?: true})
+       when status in [:completed, :failed] do
+    []
+  end
+
+  defp attempt_blocker(%ActionAttempt{status: :available, runnable_key: runnable_key}) do
+    [%{reason: :available_attempt, runnable_key: runnable_key}]
+  end
+
+  defp attempt_blocker(%ActionAttempt{status: :retry_scheduled, runnable_key: runnable_key}) do
+    [%{reason: :retry_attempt, runnable_key: runnable_key}]
+  end
+
+  defp attempt_blocker(%ActionAttempt{status: :claimed, runnable_key: runnable_key}) do
+    [%{reason: :claimed_attempt, runnable_key: runnable_key}]
+  end
+
+  defp attempt_blocker(%ActionAttempt{
+         status: status,
+         applied?: false,
+         runnable_key: runnable_key
+       })
+       when status in [:completed, :failed] do
+    [%{reason: :pending_result, runnable_key: runnable_key}]
+  end
+
+  defp attempt_blocker(%ActionAttempt{status: status, runnable_key: runnable_key}) do
+    [%{reason: :unknown_attempt_status, runnable_key: runnable_key, status: status}]
   end
 
   defp required_present?(data, fields) do
@@ -692,12 +802,16 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
          %ActionAttempt{} = attempt,
          data
        ) do
-    anomaly = %{
-      reason: :conflicting_runnable_intent,
-      runnable_key: attempt.runnable_key,
-      entry_type: :attempt_scheduled,
-      idempotency_key: Map.get(data || %{}, :idempotency_key)
-    }
+    anomaly =
+      maybe_put_idempotency_key(
+        %{
+          reason: :conflicting_runnable_intent,
+          run_id: attempt.run_id,
+          runnable_key: attempt.runnable_key,
+          entry_type: :attempt_scheduled
+        },
+        Map.get(data || %{}, :idempotency_key)
+      )
 
     %__MODULE__{projection | anomalies: [anomaly | projection.anomalies]}
   end
@@ -718,6 +832,12 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
 
   defp maybe_put_claim_token_hash(anomaly, claim_token_hash) do
     Map.put(anomaly, :claim_token_hash, claim_token_hash)
+  end
+
+  defp maybe_put_idempotency_key(anomaly, nil), do: anomaly
+
+  defp maybe_put_idempotency_key(anomaly, idempotency_key) do
+    Map.put(anomaly, :idempotency_key, idempotency_key)
   end
 
   defp ordered_attempts(%__MODULE__{attempts: attempts}) do

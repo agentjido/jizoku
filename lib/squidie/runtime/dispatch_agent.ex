@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.DispatchAgent do
   @moduledoc """
   Jido-native dispatch coordination state for one durable dispatch queue.
@@ -24,6 +25,18 @@ defmodule Squidie.Runtime.DispatchAgent do
   alias Squidie.Runtime.Partition
 
   @default_lease_seconds 300
+  @continuation_fence_fields [
+    :run_id,
+    :successor_run_id,
+    :continuation_key,
+    :workflow,
+    :trigger,
+    :input,
+    :definition,
+    :definition_version,
+    :definition_fingerprint,
+    :trace
+  ]
 
   @type queue :: String.t()
   @type claim :: %{
@@ -45,6 +58,11 @@ defmodule Squidie.Runtime.DispatchAgent do
   @type queue_update :: %{
           required(:agent) => Agent.t(),
           required(:queued?) => boolean()
+        }
+  @type continuation_fence_update :: %{
+          required(:agent) => Agent.t(),
+          required(:fence) => map(),
+          required(:created?) => boolean()
         }
   @type storage_config :: Journal.storage_config()
 
@@ -149,6 +167,55 @@ defmodule Squidie.Runtime.DispatchAgent do
     Projection.run_ids(projection)
   end
 
+  @doc false
+  @spec continuation_fence(Agent.t(), String.t()) :: map() | nil
+  def continuation_fence(
+        %Agent{agent_module: __MODULE__, state: %State{projection: projection}},
+        run_id
+      )
+      when is_binary(run_id) do
+    Projection.continuation_fence(projection, run_id)
+  end
+
+  @doc false
+  @spec fence_run_for_continuation(storage_config(), Agent.t(), map(), keyword()) ::
+          {:ok, continuation_fence_update()} | {:error, term()}
+  def fence_run_for_continuation(storage, agent, fence, opts \\ [])
+
+  def fence_run_for_continuation(
+        storage,
+        %Agent{
+          agent_module: __MODULE__,
+          state: %State{
+            queue: queue,
+            projection: %Projection{} = projection,
+            thread_rev: thread_rev
+          }
+        } = agent,
+        fence,
+        opts
+      )
+      when is_binary(queue) and is_map(fence) and is_integer(thread_rev) and thread_rev >= 0 and
+             is_list(opts) do
+    with :ok <- validate_agent_partition(storage, agent),
+         {:ok, fence_entry} <- continuation_fence_entry(fence, queue, opts),
+         :ok <- validate_continuation_fence_entry(fence_entry),
+         {:ok, mode} <- continuation_fence_mode(projection, fence_entry.data) do
+      persist_continuation_fence(
+        mode,
+        storage,
+        agent,
+        projection,
+        thread_rev,
+        fence_entry
+      )
+    end
+  end
+
+  def fence_run_for_continuation(_storage, _agent, _fence, _opts) do
+    {:error, {:invalid_continuation_fence, :invalid}}
+  end
+
   @doc """
   Records that a run belongs to this dispatch queue before runnable attempts are
   scheduled.
@@ -176,21 +243,15 @@ defmodule Squidie.Runtime.DispatchAgent do
       )
       when is_binary(queue) and is_binary(run_id) and is_integer(thread_rev) and
              thread_rev >= 0 and is_list(opts) do
-    if MapSet.member?(Projection.run_ids(projection), run_id) do
-      {:ok, %{agent: agent, queued?: false}}
-    else
-      with {:ok, now} <- lifecycle_now(opts),
-           {:ok, queued_entry} <-
-             DispatchProtocol.new_entry(:run_queued, %{
-               run_id: run_id,
-               queue: queue,
-               occurred_at: now
-             }),
-           {:ok, queued_agent} <-
-             persist_dispatch_entry(storage, agent, projection, thread_rev, queued_entry) do
-        {:ok, %{agent: queued_agent, queued?: true}}
-      end
-    end
+    ensure_run_queued_after_fence(
+      storage,
+      agent,
+      projection,
+      thread_rev,
+      queue,
+      run_id,
+      opts
+    )
   end
 
   @doc """
@@ -225,7 +286,8 @@ defmodule Squidie.Runtime.DispatchAgent do
     with {:ok, now} <- lifecycle_now(opts),
          {:ok, notifier, notifier_opts} <- notifier_options(opts),
          {:ok, entries, scheduled_runnables} <-
-           schedule_entries(projection, queue, run_id, runnables, now) do
+           schedule_entries(projection, queue, run_id, runnables, now),
+         :ok <- ensure_new_schedules_not_continuation_fenced(projection, run_id, entries) do
       wakeup = %{run_id: run_id, notifier: notifier, notifier_opts: notifier_opts, now: now}
 
       persist_dispatch_entries(
@@ -305,6 +367,7 @@ defmodule Squidie.Runtime.DispatchAgent do
     with {:ok, heartbeat_options} <- heartbeat_options(opts),
          {:ok, attempt} <-
            current_claim(projection, runnable_key, claim_id, claim_token, heartbeat_options.now),
+         :ok <- ensure_run_not_continuation_fenced(projection, attempt.run_id),
          :ok <- active_run(storage, attempt.run_id),
          lease_until = DateTime.add(heartbeat_options.now, heartbeat_options.lease_for, :second),
          {:ok, heartbeat_entry} <-
@@ -422,6 +485,7 @@ defmodule Squidie.Runtime.DispatchAgent do
     with {:ok, now} <- lifecycle_now(opts),
          {:ok, retry_attrs} <- retry_attrs(opts),
          {:ok, attempt} <- current_claim(projection, runnable_key, claim_id, claim_token, now),
+         :ok <- ensure_run_not_continuation_fenced(projection, attempt.run_id),
          :ok <- active_run(storage, attempt.run_id),
          {:ok, failed_entry} <-
            DispatchProtocol.new_entry(
@@ -444,6 +508,133 @@ defmodule Squidie.Runtime.DispatchAgent do
            persist_dispatch_entry(storage, agent, projection, thread_rev, failed_entry) do
       {:ok, lifecycle_update(failed_agent, claimed_attempt!(failed_agent, runnable_key))}
     end
+  end
+
+  defp continuation_fence_entry(fence, queue, opts) do
+    if Enum.all?(Map.keys(fence), &(&1 in @continuation_fence_fields)) do
+      with {:ok, now} <- lifecycle_now(opts) do
+        fence
+        |> Map.merge(%{queue: queue, occurred_at: now})
+        |> then(&DispatchProtocol.new_entry(:run_continuation_fenced, &1))
+        |> normalize_continuation_fence_entry_result()
+      end
+    else
+      {:error, {:invalid_continuation_fence, :invalid}}
+    end
+  end
+
+  defp normalize_continuation_fence_entry_result({:ok, entry}) do
+    {:ok, entry}
+  end
+
+  defp normalize_continuation_fence_entry_result({:error, _reason}) do
+    {:error, {:invalid_continuation_fence, :invalid}}
+  end
+
+  defp ensure_run_queued_after_fence(
+         storage,
+         %Agent{} = agent,
+         %Projection{} = projection,
+         thread_rev,
+         queue,
+         run_id,
+         opts
+       ) do
+    if MapSet.member?(Projection.run_ids(projection), run_id) do
+      {:ok, %{agent: agent, queued?: false}}
+    else
+      with :ok <- ensure_run_not_continuation_fenced(projection, run_id),
+           {:ok, now} <- lifecycle_now(opts),
+           {:ok, queued_entry} <-
+             DispatchProtocol.new_entry(:run_queued, %{
+               run_id: run_id,
+               queue: queue,
+               occurred_at: now
+             }),
+           {:ok, queued_agent} <-
+             persist_dispatch_entry(storage, agent, projection, thread_rev, queued_entry) do
+        {:ok, %{agent: queued_agent, queued?: true}}
+      end
+    end
+  end
+
+  defp validate_continuation_fence_entry(%{data: data}) do
+    if Projection.valid_continuation_fence?(data) do
+      :ok
+    else
+      {:error, {:invalid_continuation_fence, :invalid}}
+    end
+  end
+
+  defp continuation_fence_mode(%Projection{} = projection, fence) do
+    case Projection.continuation_fence(projection, fence.run_id) do
+      nil ->
+        case Projection.continuation_blockers(projection, fence.run_id) do
+          [] -> {:ok, :new}
+          blockers -> {:error, {:unsafe_continuation, blockers}}
+        end
+
+      existing ->
+        if Projection.same_continuation_fence?(existing, fence) do
+          {:ok, {:existing, existing}}
+        else
+          {:error, :conflicting_continuation_fence}
+        end
+    end
+  end
+
+  defp persist_continuation_fence(
+         {:existing, existing},
+         _storage,
+         %Agent{} = agent,
+         %Projection{},
+         _thread_rev,
+         _entry
+       ) do
+    {:ok, %{agent: agent, fence: existing, created?: false}}
+  end
+
+  defp persist_continuation_fence(
+         :new,
+         storage,
+         %Agent{} = agent,
+         %Projection{} = projection,
+         thread_rev,
+         entry
+       ) do
+    with :ok <- continuation_active_run(storage, entry.data.run_id),
+         {:ok, fenced_agent} <-
+           persist_dispatch_entry(storage, agent, projection, thread_rev, entry) do
+      {:ok,
+       %{
+         agent: fenced_agent,
+         fence: Projection.continuation_fence(fenced_agent.state.projection, entry.data.run_id),
+         created?: true
+       }}
+    end
+  end
+
+  defp continuation_active_run(storage, run_id) do
+    case active_run(storage, run_id) do
+      {:error, :terminal_run} -> {:error, {:unsafe_continuation, [%{reason: :terminal_run}]}}
+      result -> result
+    end
+  end
+
+  defp ensure_run_not_continuation_fenced(%Projection{} = projection, run_id) do
+    if Projection.continuation_fence(projection, run_id) do
+      {:error, :continuation_fenced}
+    else
+      :ok
+    end
+  end
+
+  defp ensure_new_schedules_not_continuation_fenced(_projection, _run_id, []) do
+    :ok
+  end
+
+  defp ensure_new_schedules_not_continuation_fenced(projection, run_id, _entries) do
+    ensure_run_not_continuation_fenced(projection, run_id)
   end
 
   defp claim_attempt(storage, agent, queue, projection, thread_rev, owner_id, claim_options) do
@@ -514,7 +705,8 @@ defmodule Squidie.Runtime.DispatchAgent do
            now: now
          }
        ) do
-    with :ok <- active_run(storage, attempt.run_id),
+    with :ok <- ensure_run_not_continuation_fenced(projection, attempt.run_id),
+         :ok <- active_run(storage, attempt.run_id),
          {:ok, completed_entry} <-
            DispatchProtocol.new_entry(:attempt_completed, %{
              run_id: attempt.run_id,
