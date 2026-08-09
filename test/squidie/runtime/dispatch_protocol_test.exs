@@ -158,6 +158,69 @@ defmodule Squidie.Runtime.DispatchProtocolTest do
     assert legacy_origin_entry.data.origin == "legacy-origin"
   end
 
+  test "normalizes predecessor continuation intent on the predecessor run thread" do
+    assert {:ok, entry} =
+             DispatchProtocol.new_entry(:run_continuation_requested, %{
+               run_id: @run_id,
+               successor_run_id: "run_456",
+               continuation_key: :page_42,
+               workflow: __MODULE__,
+               trigger: :created,
+               input: %{cursor: "page-42"},
+               definition: :current,
+               definition_version: "2026-08-v1",
+               definition_fingerprint: "definition-fingerprint-v1",
+               occurred_at: @started_at
+             })
+
+    assert entry.thread == {:run, @run_id}
+    assert entry.data.successor_run_id == "run_456"
+    assert entry.data.continuation_key == "page_42"
+    assert entry.data.workflow == Atom.to_string(__MODULE__)
+    assert entry.data.trigger == "created"
+    assert entry.data.definition == :current
+    assert entry.data.definition_version == "2026-08-v1"
+    assert entry.data.definition_fingerprint == "definition-fingerprint-v1"
+  end
+
+  test "supports unversioned continuation definitions while requiring a fingerprint" do
+    attrs = %{
+      run_id: @run_id,
+      successor_run_id: "run_456",
+      continuation_key: "page_42",
+      workflow: @workflow,
+      trigger: "created",
+      input: %{cursor: "page-42"},
+      definition: :current,
+      definition_fingerprint: "definition-fingerprint-v1",
+      occurred_at: @started_at
+    }
+
+    assert {:ok, entry} = DispatchProtocol.new_entry(:run_continuation_requested, attrs)
+    assert Map.has_key?(entry.data, :definition_version)
+    assert entry.data.definition_version == nil
+
+    assert {:error, {:missing_fields, [:definition_fingerprint]}} =
+             DispatchProtocol.new_entry(
+               :run_continuation_requested,
+               Map.delete(attrs, :definition_fingerprint)
+             )
+  end
+
+  test "normalizes successor continuation lineage on the successor run thread" do
+    assert {:ok, entry} =
+             DispatchProtocol.new_entry(:run_continued_from, %{
+               run_id: "run_456",
+               predecessor_run_id: @run_id,
+               continuation_key: :page_42,
+               occurred_at: @started_at
+             })
+
+    assert entry.thread == {:run, "run_456"}
+    assert entry.data.predecessor_run_id == @run_id
+    assert entry.data.continuation_key == "page_42"
+  end
+
   test "normalizes dynamic work records on the run thread" do
     assert {:ok, entry} =
              DispatchProtocol.new_entry(:dynamic_work_recorded, %{
