@@ -458,13 +458,13 @@ defmodule Squidie.Runtime.WorkflowAgent do
     case Journal.fetch_checkpoint(storage, thread) do
       {:ok, %Checkpoint{thread_rev: checkpoint_rev, projection: %Projection{} = projection}}
       when is_integer(checkpoint_rev) and checkpoint_rev >= 0 and checkpoint_rev <= rev ->
-        if stale_failed_checkpoint_missing_terminal_error?(projection) do
-          {:ok, Projection.rebuild(entries)}
-        else
+        if Projection.checkpoint_compatible?(projection) do
           {:ok,
            projection
            |> Projection.upgrade()
            |> Projection.replay(Enum.drop(entries, checkpoint_rev))}
+        else
+          {:ok, Projection.rebuild(entries)}
         end
 
       {:error, :not_found} ->
@@ -476,9 +476,5 @@ defmodule Squidie.Runtime.WorkflowAgent do
       _future_or_invalid_checkpoint ->
         {:ok, Projection.rebuild(entries)}
     end
-  end
-
-  defp stale_failed_checkpoint_missing_terminal_error?(%Projection{} = projection) do
-    projection.terminal_status == :failed and not Map.has_key?(projection, :terminal_error)
   end
 end
