@@ -1,0 +1,345 @@
+defmodule Squidie.Runtime.Journal.Commands.Continuation do
+  @moduledoc false
+
+  alias Jido.Agent
+  alias Squidie.Runtime.DispatchAgent
+  alias Squidie.Runtime.DispatchProtocol
+  alias Squidie.Runtime.Journal
+  alias Squidie.Runtime.Journal.Compensation
+  alias Squidie.Runtime.Journal.ContinuationIntent
+  alias Squidie.Runtime.Journal.Options
+  alias Squidie.Runtime.Journal.WorkflowDefinitionLoader
+  alias Squidie.Runtime.WorkflowAgent
+  alias Squidie.Runtime.WorkflowAgent.Projection
+
+  @run_append_retries 25
+  @type commit_result :: %{
+          required(:created?) => boolean(),
+          required(:intent) => ContinuationIntent.t(),
+          required(:workflow_agent) => Agent.t()
+        }
+
+  @doc false
+  @spec commit_predecessor(Journal.storage_config(), String.t(), String.t()) ::
+          {:ok, commit_result()} | {:error, term()}
+  def commit_predecessor(storage, run_id, queue)
+      when is_binary(run_id) and run_id != "" and is_binary(queue) and queue != "" do
+    with {:ok, queue} <- Options.queue_from_opts(queue: queue) do
+      commit_predecessor(storage, run_id, queue, @run_append_retries)
+    end
+  end
+
+  def commit_predecessor(_storage, _queue, _run_id) do
+    {:error, {:invalid_continuation, :invalid}}
+  end
+
+  defp commit_predecessor(_storage, _run_id, _queue, 0) do
+    {:error, :conflict}
+  end
+
+  defp commit_predecessor(storage, run_id, queue, retries_left) do
+    with {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
+         {:ok, fence} <- continuation_fence(dispatch_agent, run_id),
+         {:ok, intent} <- ContinuationIntent.from_fence(fence),
+         {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
+         {:ok, mode} <- predecessor_mode(workflow_agent, intent),
+         :ok <- validate_static_boundary(storage, workflow_agent, intent, queue),
+         :ok <- validate_mode(storage, dispatch_agent, workflow_agent, intent, queue, mode) do
+      persist_predecessor(
+        mode,
+        storage,
+        run_id,
+        queue,
+        dispatch_agent,
+        workflow_agent,
+        intent,
+        retries_left
+      )
+    end
+  end
+
+  defp continuation_fence(dispatch_agent, run_id) do
+    case DispatchAgent.continuation_fence(dispatch_agent, run_id) do
+      nil -> {:error, {:continuation_fence_not_found, run_id}}
+      fence -> {:ok, fence}
+    end
+  end
+
+  defp predecessor_mode(
+         %Agent{agent_module: WorkflowAgent, state: %{projection: %Projection{} = projection}},
+         intent
+       ) do
+    expected_request = ContinuationIntent.request(intent)
+
+    case {projection.continuation_request, Projection.terminal_status(projection)} do
+      {^expected_request, :continued} ->
+        {:ok, :existing}
+
+      {nil, nil} ->
+        {:ok, :new}
+
+      {^expected_request, nil} ->
+        {:error, {:incomplete_continuation_commit, intent.run_id}}
+
+      {nil, :continued} ->
+        {:error, {:incomplete_continuation_commit, intent.run_id}}
+
+      {nil, terminal_status} ->
+        {:error, {:conflicting_continuation_terminal, terminal_status}}
+
+      {_request, _terminal_status} ->
+        {:error, :conflicting_continuation}
+    end
+  end
+
+  defp validate_mode(_storage, _dispatch_agent, _workflow_agent, _intent, _queue, :existing) do
+    :ok
+  end
+
+  defp validate_mode(storage, dispatch_agent, workflow_agent, intent, _queue, :new) do
+    with :ok <- ContinuationIntent.validate_current_target(intent),
+         :ok <- validate_workflow_boundary(storage, workflow_agent) do
+      validate_dispatch_boundary(dispatch_agent, intent.run_id)
+    end
+  end
+
+  defp validate_static_boundary(storage, workflow_agent, intent, queue) do
+    with :ok <- validate_fence_identity(workflow_agent, intent, queue),
+         :ok <- single_queue_plan(workflow_agent.state.projection, queue) do
+      module_authored_workflow(storage, intent.run_id)
+    end
+  end
+
+  defp validate_fence_identity(
+         %Agent{
+           agent_module: WorkflowAgent,
+           state: %{run_id: run_id, projection: %Projection{} = projection}
+         },
+         intent,
+         queue
+       ) do
+    cond do
+      intent.run_id != run_id ->
+        unsafe(:run_id_mismatch)
+
+      intent.successor_run_id == run_id ->
+        unsafe(:successor_reuses_predecessor)
+
+      intent.queue != queue ->
+        unsafe(:queue_mismatch)
+
+      intent.workflow != projection.workflow ->
+        unsafe(:workflow_mismatch)
+
+      intent.trigger != projection.trigger ->
+        unsafe(:trigger_mismatch)
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_dispatch_boundary(
+         %Agent{agent_module: DispatchAgent, state: %{projection: dispatch_projection}},
+         run_id
+       ) do
+    case DispatchProtocol.Projection.continuation_blockers(dispatch_projection, run_id) do
+      [] -> :ok
+      blockers -> unsafe({:dispatch_blockers, blockers})
+    end
+  end
+
+  defp validate_workflow_boundary(
+         storage,
+         %Agent{agent_module: WorkflowAgent, state: %{projection: %Projection{} = projection}}
+       ) do
+    with :ok <- active_workflow(projection),
+         :ok <- workflow_without_anomalies(projection),
+         :ok <- workflow_without_manual_state(projection),
+         :ok <- workflow_without_unsafe_dynamic_work(projection),
+         :ok <- workflow_without_compensation(projection),
+         :ok <- applied_plan(projection) do
+      linked_children_started(storage, projection)
+    end
+  end
+
+  defp active_workflow(%Projection{} = projection) do
+    if Projection.terminal?(projection) do
+      unsafe(:terminal_run)
+    else
+      :ok
+    end
+  end
+
+  defp workflow_without_anomalies(%Projection{} = projection) do
+    case Projection.anomalies(projection) do
+      [] -> :ok
+      anomalies -> unsafe({:workflow_anomalies, anomalies})
+    end
+  end
+
+  defp workflow_without_manual_state(%Projection{} = projection) do
+    if Projection.manual_state(projection) do
+      unsafe(:manual_state)
+    else
+      :ok
+    end
+  end
+
+  defp applied_plan(%Projection{} = projection) do
+    planned_keys = MapSet.new(Projection.planned_runnable_keys(projection))
+    applied_keys = Projection.applied_runnable_keys(projection)
+
+    if MapSet.subset?(planned_keys, applied_keys) do
+      :ok
+    else
+      unsafe(:unapplied_runnables)
+    end
+  end
+
+  defp single_queue_plan(%Projection{} = projection, queue) do
+    queues =
+      projection
+      |> Projection.planned_runnables()
+      |> Enum.map(&Squidie.MapField.get(&1, :queue, "default"))
+      |> Enum.uniq()
+
+    if Enum.all?(queues, &(&1 == queue)) do
+      :ok
+    else
+      unsafe(:multiple_queues)
+    end
+  end
+
+  defp workflow_without_unsafe_dynamic_work(%Projection{} = projection) do
+    dynamic_work? = Projection.dynamic_work(projection) != []
+    graph_mutation? = map_size(projection.graph.mutation_history) > 0
+
+    if dynamic_work? or graph_mutation? do
+      unsafe(:dynamic_work)
+    else
+      :ok
+    end
+  end
+
+  defp workflow_without_compensation(%Projection{} = projection) do
+    if Enum.any?(Projection.planned_runnables(projection), &Compensation.runnable?/1) do
+      unsafe(:compensation)
+    else
+      :ok
+    end
+  end
+
+  defp linked_children_started(storage, %Projection{} = projection) do
+    projection
+    |> Projection.child_runs()
+    |> Enum.reduce_while(:ok, fn child, :ok ->
+      case Journal.load_thread(storage, {:run, Map.get(child, :child_run_id)}) do
+        {:ok, _thread} -> {:cont, :ok}
+        {:error, :not_found} -> {:halt, unsafe(:child_starting)}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp module_authored_workflow(storage, run_id) do
+    case WorkflowDefinitionLoader.runtime_spec_run?(storage, run_id) do
+      {:ok, false} -> :ok
+      {:ok, true} -> unsafe(:runtime_spec)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp persist_predecessor(
+         :existing,
+         _storage,
+         _run_id,
+         _queue,
+         _dispatch_agent,
+         workflow_agent,
+         intent,
+         _retries_left
+       ) do
+    {:ok, commit_result(workflow_agent, intent, false)}
+  end
+
+  defp persist_predecessor(
+         :new,
+         storage,
+         run_id,
+         queue,
+         _dispatch_agent,
+         workflow_agent,
+         intent,
+         retries_left
+       ) do
+    with {:ok, entries} <- continuation_entries(intent) do
+      append_predecessor_entries(
+        storage,
+        run_id,
+        queue,
+        workflow_agent,
+        intent,
+        entries,
+        retries_left
+      )
+    end
+  end
+
+  defp append_predecessor_entries(
+         storage,
+         run_id,
+         queue,
+         workflow_agent,
+         intent,
+         entries,
+         retries_left
+       ) do
+    case Journal.append_entries(storage, entries,
+           expected_rev: workflow_agent.state.thread_rev,
+           telemetry_projection: workflow_agent.state.projection
+         ) do
+      {:ok, _thread} ->
+        with {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id) do
+          _checkpoint_result =
+            WorkflowAgent.put_checkpoint(storage, workflow_agent, updated_at: intent.occurred_at)
+
+          {:ok, commit_result(workflow_agent, intent, true)}
+        end
+
+      {:error, :conflict} ->
+        commit_predecessor(storage, run_id, queue, retries_left - 1)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp continuation_entries(intent) do
+    request_attrs =
+      intent
+      |> ContinuationIntent.request()
+      |> Map.put(:occurred_at, intent.occurred_at)
+
+    terminal_attrs = %{
+      run_id: intent.run_id,
+      status: :continued,
+      trace: intent.trace,
+      occurred_at: intent.occurred_at
+    }
+
+    with {:ok, request_entry} <-
+           DispatchProtocol.new_entry(:run_continuation_requested, request_attrs),
+         {:ok, terminal_entry} <- DispatchProtocol.new_entry(:run_terminal, terminal_attrs) do
+      {:ok, [request_entry, terminal_entry]}
+    end
+  end
+
+  defp commit_result(workflow_agent, intent, created?) do
+    %{workflow_agent: workflow_agent, intent: intent, created?: created?}
+  end
+
+  defp unsafe(reason) do
+    {:error, {:unsafe_continuation, reason}}
+  end
+end

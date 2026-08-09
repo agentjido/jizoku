@@ -192,6 +192,21 @@ defmodule Squidie.Runtime.DispatchAgent.ContinuationFenceCASTest do
     assert dispatch_entries() == before_fence
   end
 
+  test "rejects a successor that reuses the predecessor run id before writing" do
+    agent = queued_agent()
+    before_fence = dispatch_entries()
+
+    assert {:error, {:invalid_continuation_fence, :invalid}} =
+             DispatchAgent.fence_run_for_continuation(
+               @storage,
+               agent,
+               continuation_fence(successor_run_id: @run_id),
+               now: @now
+             )
+
+    assert dispatch_entries() == before_fence
+  end
+
   test "rejects caller-supplied queue metadata before writing" do
     agent = queued_agent()
     before_fence = dispatch_entries()

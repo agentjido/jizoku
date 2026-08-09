@@ -458,7 +458,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     Enum.all?(
       [:run_id, :successor_run_id, :continuation_key, :workflow, :trigger, :queue],
       &non_empty_binary?(Map.fetch!(data, &1))
-    )
+    ) and Map.fetch!(data, :run_id) != Map.fetch!(data, :successor_run_id)
   end
 
   defp terminal_blockers(%__MODULE__{} = projection, run_id) do
