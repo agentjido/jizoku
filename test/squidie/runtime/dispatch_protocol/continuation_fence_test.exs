@@ -53,6 +53,38 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
              )
   end
 
+  test "normalizes a complete continuation repair on the dispatch thread" do
+    assert {:ok, entry} =
+             DispatchProtocol.new_entry(
+               :run_continuation_repaired,
+               continuation_repair_attrs(
+                 continuation_key: :page_42,
+                 workflow: __MODULE__,
+                 trigger: :continue,
+                 queue: :monitoring
+               )
+             )
+
+    assert entry.thread == {:dispatch, "monitoring"}
+    assert entry.data.continuation_key == "page_42"
+    assert entry.data.workflow == Atom.to_string(__MODULE__)
+    assert entry.data.trigger == "continue"
+    assert entry.data.queue == "monitoring"
+    assert Map.has_key?(entry.data, :definition_version)
+
+    assert {:error, {:missing_fields, [:definition_fingerprint]}} =
+             DispatchProtocol.new_entry(
+               :run_continuation_repaired,
+               Map.delete(continuation_repair_attrs(), :definition_fingerprint)
+             )
+
+    assert {:error, {:missing_fields, [:trace]}} =
+             DispatchProtocol.new_entry(
+               :run_continuation_repaired,
+               Map.delete(continuation_repair_attrs(), :trace)
+             )
+  end
+
   test "rebuilds exact duplicate fences idempotently and retains the first conflict" do
     first = entry!(:run_continuation_fenced, continuation_fence_attrs())
 
@@ -172,7 +204,8 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
         entry!(:attempt_scheduled, scheduled_attrs(runnable_key: completed_key)),
         entry!(:attempt_claimed, claimed_attrs(runnable_key: completed_key)),
         entry!(:attempt_completed, completed_attrs(runnable_key: completed_key)),
-        entry!(:run_continuation_fenced, continuation_fence_attrs())
+        entry!(:run_continuation_fenced, continuation_fence_attrs()),
+        entry!(:run_continuation_repaired, continuation_repair_attrs())
       ])
 
     assert Projection.visible_attempts(projection, @expired_at) == []
@@ -188,6 +221,7 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
       Projection.rebuild([
         entry!(:attempt_scheduled, scheduled_attrs()),
         entry!(:run_continuation_fenced, continuation_fence_attrs()),
+        entry!(:run_continuation_repaired, continuation_repair_attrs()),
         entry!(:attempt_scheduled, scheduled_attrs(runnable_key: late_key)),
         entry!(:attempt_claimed, claimed_attrs()),
         entry!(:attempt_heartbeat, heartbeat_attrs()),
@@ -233,6 +267,169 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
              Projection.visible_attempts(projection, @visible_at)
   end
 
+  test "retains a completed continuation repair and removes it from pending fences" do
+    fence = entry!(:run_continuation_fenced, continuation_fence_attrs())
+
+    repair =
+      entry!(
+        :run_continuation_repaired,
+        continuation_repair_attrs()
+      )
+
+    projection = Projection.rebuild([fence, repair])
+
+    assert Projection.continuation_fence(projection, @run_id) == fence.data
+    assert Projection.continuation_repair(projection, @run_id) == repair.data
+    assert Projection.pending_continuation_fences(projection) == []
+    assert Projection.anomalies(projection) == []
+  end
+
+  test "retains the first continuation repair and classifies conflicting reuse" do
+    first = entry!(:run_continuation_repaired, continuation_repair_attrs())
+
+    duplicate =
+      entry!(
+        :run_continuation_repaired,
+        continuation_repair_attrs(
+          trace: %{@trace | span_id: "b7ad6b7169203331"},
+          occurred_at: @visible_at
+        )
+      )
+
+    conflicting =
+      entry!(
+        :run_continuation_repaired,
+        continuation_repair_attrs(
+          successor_run_id: "run_789",
+          occurred_at: @claimed_at
+        )
+      )
+
+    duplicate_projection =
+      Projection.rebuild([
+        entry!(:run_continuation_fenced, continuation_fence_attrs()),
+        first,
+        duplicate
+      ])
+
+    assert Projection.continuation_repair(duplicate_projection, @run_id) == first.data
+    assert Projection.anomalies(duplicate_projection) == []
+
+    conflicting_projection = Projection.replay(duplicate_projection, [conflicting])
+
+    assert Projection.continuation_repair(conflicting_projection, @run_id) == first.data
+
+    assert [%{reason: :conflicting_continuation_repair}] =
+             Projection.anomalies(conflicting_projection)
+  end
+
+  test "classifies one-field continuation repair identity conflicts" do
+    conflicts = [
+      successor_run_id: "run_789",
+      continuation_key: "page-99",
+      workflow: "OtherWorkflow",
+      trigger: "resume",
+      input: %{cursor: "page-99"},
+      definition_version: "v2",
+      definition_fingerprint: "definition-fingerprint-v2",
+      queue: "priority"
+    ]
+
+    for {field, value} <- conflicts do
+      projection =
+        Projection.rebuild([
+          entry!(:run_continuation_fenced, continuation_fence_attrs()),
+          entry!(
+            :run_continuation_repaired,
+            continuation_repair_attrs([{field, value}, {:occurred_at, @visible_at}])
+          )
+        ])
+
+      assert Projection.continuation_repair(projection, @run_id) == nil
+
+      assert [%{reason: :conflicting_continuation_repair}] =
+               Projection.anomalies(projection),
+             "expected #{field} to participate in continuation repair identity"
+    end
+  end
+
+  test "does not resolve an orphaned or mismatched continuation repair" do
+    orphan = entry!(:run_continuation_repaired, continuation_repair_attrs())
+    orphan_projection = Projection.rebuild([orphan])
+
+    assert Projection.continuation_repair(orphan_projection, @run_id) == nil
+
+    assert [%{reason: :orphaned_continuation_repair}] =
+             Projection.anomalies(orphan_projection)
+
+    mismatched =
+      entry!(
+        :run_continuation_repaired,
+        continuation_repair_attrs(input: %{cursor: "page-99"})
+      )
+
+    mismatched_projection =
+      Projection.rebuild([
+        entry!(:run_continuation_fenced, continuation_fence_attrs()),
+        mismatched
+      ])
+
+    assert Projection.continuation_repair(mismatched_projection, @run_id) == nil
+    assert [_pending] = Projection.pending_continuation_fences(mismatched_projection)
+
+    assert [%{reason: :conflicting_continuation_repair}] =
+             Projection.anomalies(mismatched_projection)
+  end
+
+  test "malformed continuation repairs cannot resolve a valid fence" do
+    malformed = %Entry{
+      type: :run_continuation_repaired,
+      thread: {:dispatch, "default"},
+      data: Map.delete(continuation_repair_attrs(), :trace),
+      occurred_at: @visible_at
+    }
+
+    projection =
+      Projection.rebuild([
+        entry!(:run_continuation_fenced, continuation_fence_attrs()),
+        malformed
+      ])
+
+    assert Projection.continuation_repair(projection, @run_id) == nil
+    assert [_pending] = Projection.pending_continuation_fences(projection)
+    assert [%{reason: :malformed_entry}] = Projection.anomalies(projection)
+  end
+
+  test "orders only unresolved continuation fences by predecessor run id" do
+    first_run_id = "run_001"
+    first_successor_run_id = "run_002"
+    second_run_id = "run_003"
+    second_successor_run_id = "run_004"
+
+    projection =
+      Projection.rebuild([
+        entry!(:run_continuation_fenced, continuation_fence_attrs()),
+        entry!(
+          :run_continuation_fenced,
+          continuation_fence_attrs(
+            run_id: second_run_id,
+            successor_run_id: second_successor_run_id
+          )
+        ),
+        entry!(
+          :run_continuation_fenced,
+          continuation_fence_attrs(
+            run_id: first_run_id,
+            successor_run_id: first_successor_run_id
+          )
+        ),
+        entry!(:run_continuation_repaired, continuation_repair_attrs())
+      ])
+
+    assert [%{run_id: ^first_run_id}, %{run_id: ^second_run_id}] =
+             Projection.pending_continuation_fences(projection)
+  end
+
   test "normalizes checkpoints created before continuation fences" do
     legacy_projection =
       Projection.new()
@@ -242,6 +439,17 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
 
     refute Projection.checkpoint_compatible?(legacy_projection)
     assert Projection.normalize(legacy_projection).continuation_fences == %{}
+  end
+
+  test "rejects checkpoints created before continuation repair receipts" do
+    legacy_projection =
+      Projection.new()
+      |> Map.from_struct()
+      |> Map.delete(:continuation_repairs)
+      |> Map.put(:__struct__, Projection)
+
+    refute Projection.checkpoint_compatible?(legacy_projection)
+    assert Projection.normalize(legacy_projection).continuation_repairs == %{}
   end
 
   defp continuation_fence_attrs(attrs \\ []) do
@@ -262,6 +470,10 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
       },
       Map.new(attrs)
     )
+  end
+
+  defp continuation_repair_attrs(attrs \\ []) do
+    Map.merge(continuation_fence_attrs(), Map.new(attrs))
   end
 
   defp scheduled_attrs(attrs \\ []) do
