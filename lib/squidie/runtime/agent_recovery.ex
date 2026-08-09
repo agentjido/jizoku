@@ -39,6 +39,7 @@ defmodule Squidie.Runtime.AgentRecovery do
     with {:ok, storage} <- recovery_storage(storage, opts),
          {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
          {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
+         :ok <- ensure_continuation_recovery_ready(dispatch_agent, run_id),
          {:ok, %{agent: dispatch_agent, runnables: scheduled_runnables}} <-
            WorkflowAgent.schedule_pending_dispatches(
              storage,
@@ -60,6 +61,14 @@ defmodule Squidie.Runtime.AgentRecovery do
          scheduled_runnables: scheduled_runnables,
          applied_attempts: applied_attempts
        }}
+    end
+  end
+
+  defp ensure_continuation_recovery_ready(dispatch_agent, run_id) do
+    if DispatchAgent.continuation_fence(dispatch_agent, run_id) do
+      {:error, {:continuation_repair_required, run_id}}
+    else
+      :ok
     end
   end
 

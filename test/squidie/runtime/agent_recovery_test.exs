@@ -5,12 +5,15 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.Journal
+  alias Squidie.Runtime.Journal.Executor
   alias Squidie.Runtime.WorkflowAgent
 
   @storage {Jido.Storage.ETS, table: :squidie_agent_recovery_test}
   @run_id "run_123"
+  @other_run_id "run_789"
   @workflow "BillingWorkflow"
   @charge_key "run_123:charge_card:1"
+  @other_key "run_789:charge_card:1"
   @refund_key "run_123:refund_card:1"
   @started_at ~U[2026-05-15 00:00:00Z]
   @visible_at ~U[2026-05-15 00:00:10Z]
@@ -240,6 +243,103 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
     assert {:error, :not_found} = Journal.load_entries(@storage, {:dispatch, "default"})
   end
 
+  test "workflow recovery selectors hide fenced dispatches and results without writing" do
+    seed_recoverable_journal()
+    append_continuation_fence()
+
+    assert {:ok, workflow_agent} = WorkflowAgent.rebuild(@storage, @run_id)
+    assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+    before_recovery = journal_state()
+
+    assert WorkflowAgent.pending_dispatches(workflow_agent, dispatch_agent) == []
+    assert WorkflowAgent.pending_results(workflow_agent, dispatch_agent) == []
+
+    assert {:ok, %{runnables: []}} =
+             WorkflowAgent.schedule_pending_dispatches(
+               @storage,
+               workflow_agent,
+               dispatch_agent,
+               now: @completed_at
+             )
+
+    assert {:ok, %{attempts: []}} =
+             WorkflowAgent.apply_pending_results(
+               @storage,
+               workflow_agent,
+               dispatch_agent,
+               now: @completed_at
+             )
+
+    assert journal_state() == before_recovery
+  end
+
+  test "agent recovery stops at a fence before scheduling or applying" do
+    seed_recoverable_journal()
+    append_continuation_fence()
+    before_recovery = journal_state()
+
+    assert {:error, {:continuation_repair_required, @run_id}} =
+             AgentRecovery.recover(@storage, @run_id, "default", now: @completed_at)
+
+    assert journal_state() == before_recovery
+  end
+
+  test "executor stops at a fence before every ordinary recovery branch" do
+    for scenario <- [:planned, :completed, :failed, :deferred] do
+      cleanup_storage()
+      seed_executor_scenario(scenario)
+      append_continuation_fence()
+      before_recovery = journal_state()
+
+      assert {:error, {:continuation_repair_required, @run_id}} =
+               Executor.execute_next(
+                 runtime: :journal,
+                 journal_storage: @storage,
+                 queue: "default",
+                 owner_id: "recovery-worker",
+                 now: @completed_at
+               )
+
+      assert journal_state() == before_recovery
+    end
+  end
+
+  test "executor recovers an unrelated run in the same queue before reporting a fence" do
+    append_continuation_fence()
+    seed_planned_journal(@other_run_id, @other_key)
+
+    assert {:ok, %{run_id: @other_run_id}} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               owner_id: "recovery-worker",
+               now: @completed_at
+             )
+
+    assert {:ok, dispatch_entries} = Journal.load_entries(@storage, {:dispatch, "default"})
+
+    assert Enum.map(dispatch_entries, &{&1.type, &1.data.run_id}) == [
+             {:run_continuation_fenced, @run_id},
+             {:run_queued, @other_run_id},
+             {:attempt_scheduled, @other_run_id}
+           ]
+  end
+
+  test "targeted recovery ignores another run's fence in the same queue" do
+    append_continuation_fence()
+    seed_planned_journal(@other_run_id, @other_key)
+
+    assert {:ok,
+            %{
+              scheduled_runnables: [%{run_id: @other_run_id, runnable_key: @other_key}],
+              applied_attempts: []
+            }} =
+             AgentRecovery.recover(@storage, @other_run_id, "default", now: @completed_at)
+
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @run_id})
+  end
+
   defp seed_recoverable_journal(storage \\ @storage) do
     assert {:ok, run_started} =
              DispatchProtocol.new_entry(:run_started, %{
@@ -274,6 +374,111 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
              ])
 
     :ok
+  end
+
+  defp seed_executor_scenario(:planned) do
+    seed_planned_journal(@run_id, @charge_key)
+  end
+
+  defp seed_executor_scenario(result_type) do
+    assert {:ok, run_started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, runnables_planned} =
+             DispatchProtocol.new_entry(:runnables_planned, %{
+               run_id: @run_id,
+               runnables: [charge_runnable()],
+               occurred_at: @visible_at
+             })
+
+    result_entry =
+      case result_type do
+        :completed ->
+          entry!(:attempt_completed, completed_attrs())
+
+        :failed ->
+          entry!(:attempt_failed, failed_attrs())
+
+        :deferred ->
+          entry!(
+            :attempt_completed,
+            completed_attrs(
+              result: %{},
+              execution_opts: [defer: %{reason: %{code: "gateway_pending"}}, schedule_in: 30]
+            )
+          )
+      end
+
+    assert {:ok, _thread} = Journal.append_entries(@storage, [run_started, runnables_planned])
+
+    assert {:ok, _thread} =
+             Journal.append_entries(@storage, [
+               entry!(:attempt_scheduled, scheduled_attrs()),
+               entry!(:attempt_claimed, claimed_attrs()),
+               result_entry
+             ])
+  end
+
+  defp seed_planned_journal(run_id, runnable_key) do
+    runnable =
+      charge_runnable()
+      |> Map.put(:run_id, run_id)
+      |> Map.put(:runnable_key, runnable_key)
+      |> Map.put(:idempotency_key, "#{run_id}:charge_card:payment_123")
+
+    assert {:ok, _thread} =
+             Journal.append_entries(@storage, [
+               entry!(:run_started, %{
+                 run_id: run_id,
+                 workflow: @workflow,
+                 occurred_at: @started_at
+               }),
+               entry!(:runnables_planned, %{
+                 run_id: run_id,
+                 runnables: [runnable],
+                 occurred_at: @visible_at
+               })
+             ])
+
+    assert {:ok, _thread} =
+             Journal.append_entries(@storage, [
+               entry!(:run_queued, %{
+                 run_id: run_id,
+                 queue: "default",
+                 occurred_at: @visible_at
+               })
+             ])
+  end
+
+  defp append_continuation_fence do
+    fence =
+      entry!(:run_continuation_fenced, %{
+        run_id: @run_id,
+        successor_run_id: "run_456",
+        continuation_key: "page-2",
+        workflow: @workflow,
+        trigger: "continue",
+        input: %{"cursor" => "page-2"},
+        definition: :current,
+        definition_version: nil,
+        definition_fingerprint: "definition-fingerprint-v1",
+        queue: "default",
+        trace: @trace,
+        occurred_at: @completed_at
+      })
+
+    assert {:ok, _thread} = Journal.append_entries(@storage, [fence])
+  end
+
+  defp journal_state do
+    %{
+      run: Journal.load_entries(@storage, {:run, @run_id}),
+      dispatch: Journal.load_entries(@storage, {:dispatch, "default"})
+    }
   end
 
   defp charge_runnable do
@@ -338,6 +543,26 @@ defmodule Squidie.Runtime.AgentRecoveryTest do
       },
       Map.new(attrs)
     )
+  end
+
+  defp failed_attrs(attrs \\ %{}) do
+    Map.merge(
+      %{
+        run_id: @run_id,
+        runnable_key: @charge_key,
+        claim_id: "claim_1",
+        claim_token_hash: "token_hash_1",
+        queue: "default",
+        error: %{"code" => "gateway_timeout"},
+        occurred_at: @completed_at
+      },
+      Map.new(attrs)
+    )
+  end
+
+  defp entry!(type, attrs) do
+    assert {:ok, entry} = DispatchProtocol.new_entry(type, attrs)
+    entry
   end
 
   defp table_name(:checkpoints), do: :squidie_agent_recovery_test_checkpoints

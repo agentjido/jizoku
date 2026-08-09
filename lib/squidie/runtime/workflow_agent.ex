@@ -140,7 +140,7 @@ defmodule Squidie.Runtime.WorkflowAgent do
     applied_keys = Projection.applied_runnable_keys(projection)
 
     dispatch_agent
-    |> DispatchAgent.completed_results()
+    |> DispatchAgent.results_ready_to_apply()
     |> Enum.filter(fn result ->
       result.run_id == run_id and
         Projection.planned_runnable_key?(projection, result.runnable_key) and
@@ -162,28 +162,18 @@ defmodule Squidie.Runtime.WorkflowAgent do
   def pending_dispatches(
         %Agent{
           agent_module: __MODULE__,
-          state: %{partition: partition, projection: projection}
+          state: %{run_id: run_id, partition: partition, projection: projection}
         },
         %Agent{
           agent_module: DispatchAgent,
           state: %{partition: partition, queue: queue}
         } = dispatch_agent
       ) do
-    dispatched_keys = DispatchAgent.runnable_keys(dispatch_agent)
-    applied_keys = Projection.applied_runnable_keys(projection)
-    dispatchable_keys = Projection.dispatchable_runnable_keys(projection)
-
-    projection
-    |> Projection.planned_runnables()
-    |> Enum.reject(fn runnable ->
-      key = runnable_key(runnable)
-
-      normalize_queue(runnable_queue(runnable) || queue) != queue or
-        not MapSet.member?(dispatchable_keys, key) or
-        MapSet.member?(dispatched_keys, key) or
-        MapSet.member?(applied_keys, key)
-    end)
-    |> reject_when_terminal(projection)
+    if DispatchAgent.continuation_fence(dispatch_agent, run_id) do
+      []
+    else
+      pending_dispatches_for_active_run(projection, dispatch_agent, queue)
+    end
   end
 
   def pending_dispatches(
@@ -325,6 +315,24 @@ defmodule Squidie.Runtime.WorkflowAgent do
       {:error, _reason} = error ->
         error
     end
+  end
+
+  defp pending_dispatches_for_active_run(projection, dispatch_agent, queue) do
+    dispatched_keys = DispatchAgent.runnable_keys(dispatch_agent)
+    applied_keys = Projection.applied_runnable_keys(projection)
+    dispatchable_keys = Projection.dispatchable_runnable_keys(projection)
+
+    projection
+    |> Projection.planned_runnables()
+    |> Enum.reject(fn runnable ->
+      key = runnable_key(runnable)
+
+      normalize_queue(runnable_queue(runnable) || queue) != queue or
+        not MapSet.member?(dispatchable_keys, key) or
+        MapSet.member?(dispatched_keys, key) or
+        MapSet.member?(applied_keys, key)
+    end)
+    |> reject_when_terminal(projection)
   end
 
   defp reject_deferred_completion(%ActionAttempt{} = attempt) do

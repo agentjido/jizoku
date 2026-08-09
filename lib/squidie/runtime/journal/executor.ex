@@ -120,8 +120,40 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp execute_after_recovery(storage, queue, %DateTime{} = now, owner_id, opts, :none) do
     with {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
          {:ok, claim_result} <- claim_next(storage, dispatch_agent, owner_id, opts, now) do
-      execute_claim_result(storage, queue, now, opts, claim_result)
+      execute_claim_result_or_repair(
+        storage,
+        queue,
+        now,
+        opts,
+        dispatch_agent,
+        claim_result
+      )
     end
+  end
+
+  defp execute_claim_result_or_repair(
+         _storage,
+         _queue,
+         _now,
+         _opts,
+         dispatch_agent,
+         :none
+       ) do
+    case DispatchAgent.continuation_fences(dispatch_agent) do
+      [] -> {:ok, :none}
+      [%{run_id: run_id} | _remaining] -> {:error, {:continuation_repair_required, run_id}}
+    end
+  end
+
+  defp execute_claim_result_or_repair(
+         storage,
+         queue,
+         %DateTime{} = now,
+         opts,
+         _dispatch_agent,
+         claim_result
+       ) do
+    execute_claim_result(storage, queue, now, opts, claim_result)
   end
 
   defp claim_next(storage, dispatch_agent, owner_id, opts, %DateTime{} = now) do
@@ -132,8 +164,6 @@ defmodule Squidie.Runtime.Journal.Executor do
 
     DispatchAgent.claim_next(storage, dispatch_agent, owner_id, claim_opts)
   end
-
-  defp execute_claim_result(_storage, _queue, _claim_now, _opts, :none), do: {:ok, :none}
 
   defp execute_claim_result(storage, queue, %DateTime{} = claim_now, opts, %{
          agent: dispatch_agent,
@@ -2213,9 +2243,21 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp recover_pending_progressions(storage, dispatch_agent, queue, %DateTime{} = now) do
-    attempts = Map.values(dispatch_agent.state.projection.attempts)
+    fenced_run_ids = continuation_fenced_run_ids(dispatch_agent)
 
-    case recover_pending_dispatches(storage, dispatch_agent, queue, attempts, now) do
+    attempts =
+      dispatch_agent.state.projection.attempts
+      |> Map.values()
+      |> Enum.reject(&MapSet.member?(fenced_run_ids, &1.run_id))
+
+    case recover_pending_dispatches(
+           storage,
+           dispatch_agent,
+           queue,
+           attempts,
+           fenced_run_ids,
+           now
+         ) do
       {:ok, :none} ->
         cond do
           attempt = Enum.find(attempts, &recoverable_completed_attempt?(storage, &1)) ->
@@ -2236,10 +2278,18 @@ defmodule Squidie.Runtime.Journal.Executor do
     end
   end
 
-  defp recover_pending_dispatches(storage, dispatch_agent, queue, attempts, %DateTime{} = now) do
+  defp recover_pending_dispatches(
+         storage,
+         dispatch_agent,
+         queue,
+         attempts,
+         fenced_run_ids,
+         %DateTime{} = now
+       ) do
     dispatch_agent
     |> DispatchAgent.run_ids()
     |> MapSet.union(attempt_run_ids(attempts))
+    |> MapSet.difference(fenced_run_ids)
     |> Enum.sort()
     |> Enum.reduce_while({:ok, :none}, fn run_id, {:ok, :none} ->
       case WorkflowAgent.rebuild(storage, run_id) do
@@ -2250,6 +2300,13 @@ defmodule Squidie.Runtime.Journal.Executor do
           {:cont, {:ok, :none}}
       end
     end)
+  end
+
+  defp continuation_fenced_run_ids(dispatch_agent) do
+    dispatch_agent
+    |> DispatchAgent.continuation_fences()
+    |> Enum.map(& &1.run_id)
+    |> MapSet.new()
   end
 
   defp attempt_run_ids(attempts) do
