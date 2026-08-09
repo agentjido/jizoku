@@ -17,6 +17,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
   """
 
   alias Squidie.Runtime.DispatchProtocol.Entry
+  alias Squidie.Runtime.Trace
 
   @graph_operation_field_names %{
     "kind" => :kind,
@@ -44,6 +45,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
           | :run_indexed
           | :run_cataloged
           | :run_queued
+          | :run_continuation_fenced
           | :attempt_scheduled
           | :attempt_claimed
           | :attempt_heartbeat
@@ -70,6 +72,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
 
   @dispatch_entry_types [
     :run_queued,
+    :run_continuation_fenced,
     :attempt_scheduled,
     :attempt_claimed,
     :attempt_heartbeat,
@@ -127,6 +130,19 @@ defmodule Squidie.Runtime.DispatchProtocol do
     run_indexed: [:run_id, :workflow, :queue, :occurred_at],
     run_cataloged: [:run_id, :workflow, :queue, :occurred_at],
     run_queued: [:run_id, :queue, :occurred_at],
+    run_continuation_fenced: [
+      :run_id,
+      :successor_run_id,
+      :continuation_key,
+      :workflow,
+      :trigger,
+      :input,
+      :definition,
+      :definition_fingerprint,
+      :queue,
+      :trace,
+      :occurred_at
+    ],
     attempt_scheduled: [
       :run_id,
       :runnable_key,
@@ -205,6 +221,16 @@ defmodule Squidie.Runtime.DispatchProtocol do
 
   def new_entry(type, _attrs) when is_atom(type), do: {:error, {:unknown_entry_type, type}}
 
+  defp normalize_attrs(attrs, :run_continuation_fenced) do
+    attrs
+    |> Map.put_new(:definition_version, nil)
+    |> Map.update(:continuation_key, nil, &normalize_thread_id/1)
+    |> Map.update(:workflow, nil, &normalize_workflow/1)
+    |> Map.update(:trigger, nil, &normalize_thread_id/1)
+    |> Map.update(:queue, "default", &normalize_queue/1)
+    |> Map.update(:trace, nil, &normalize_trace/1)
+  end
+
   defp normalize_attrs(attrs, type) when type in @dispatch_entry_types do
     Map.update(attrs, :queue, "default", &normalize_queue/1)
   end
@@ -282,6 +308,13 @@ defmodule Squidie.Runtime.DispatchProtocol do
   end
 
   defp normalize_attrs(attrs, _type), do: attrs
+
+  defp normalize_trace(trace) do
+    case Trace.normalize(trace) do
+      {:ok, normalized} -> normalized
+      {:error, _reason} -> trace
+    end
+  end
 
   defp require_fields(type, attrs) do
     missing_fields =

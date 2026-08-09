@@ -382,6 +382,54 @@ defmodule Squidie.Runtime.DispatchAgentTest do
     assert DispatchAgent.run_ids(agent) == MapSet.new([@run_id])
   end
 
+  test "rebuilds the full thread when a legacy checkpoint omitted a durable continuation fence" do
+    assert {:ok, scheduled_entry} =
+             DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs())
+
+    assert {:ok, fence_entry} =
+             DispatchProtocol.new_entry(:run_continuation_fenced, %{
+               run_id: @run_id,
+               successor_run_id: "run_456",
+               continuation_key: "page-42",
+               workflow: "MonitoringWorkflow",
+               trigger: "continue",
+               input: %{cursor: "page-42"},
+               definition: :current,
+               definition_fingerprint: "definition-fingerprint-v1",
+               queue: "default",
+               trace: %{
+                 trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
+                 span_id: "00f067aa0ba902b7"
+               },
+               occurred_at: @visible_at
+             })
+
+    assert {:ok, thread} = Journal.append_entries(@storage, [scheduled_entry, fence_entry])
+
+    legacy_projection =
+      [scheduled_entry]
+      |> Projection.rebuild()
+      |> Map.delete(:continuation_fences)
+
+    refute Projection.checkpoint_compatible?(legacy_projection)
+
+    assert :ok =
+             Journal.put_checkpoint(
+               @storage,
+               {:dispatch, "default"},
+               legacy_projection,
+               thread.rev,
+               updated_at: @visible_at
+             )
+
+    assert {:ok, agent} = DispatchAgent.rebuild(@storage, "default")
+
+    assert DispatchAgent.visible_attempts(agent, @visible_at) == []
+
+    assert Projection.continuation_fence(agent.state.projection, @run_id).successor_run_id ==
+             "run_456"
+  end
+
   test "upgrades legacy attempts nested in dispatch checkpoints without trace" do
     assert {:ok, scheduled_entry} =
              DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs())

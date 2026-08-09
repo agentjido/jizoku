@@ -565,7 +565,11 @@ defmodule Squidie.Runtime.DispatchAgent do
     case Journal.fetch_checkpoint(storage, thread) do
       {:ok, %Checkpoint{thread_rev: checkpoint_rev, projection: %Projection{} = projection}}
       when is_integer(checkpoint_rev) and checkpoint_rev >= 0 and checkpoint_rev <= rev ->
-        {:ok, Projection.replay(projection, Enum.drop(entries, checkpoint_rev))}
+        if Projection.checkpoint_compatible?(projection) do
+          {:ok, Projection.replay(projection, Enum.drop(entries, checkpoint_rev))}
+        else
+          {:ok, Projection.rebuild(entries)}
+        end
 
       {:error, :not_found} ->
         {:ok, Projection.rebuild(entries)}

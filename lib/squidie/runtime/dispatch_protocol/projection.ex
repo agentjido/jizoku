@@ -10,6 +10,29 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
 
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.DispatchProtocol.Entry
+  alias Squidie.Runtime.Trace
+
+  @continuation_blocked_entry_types [
+    :attempt_scheduled,
+    :attempt_claimed,
+    :attempt_heartbeat,
+    :attempt_completed,
+    :attempt_failed,
+    :live_wakeup_emitted
+  ]
+
+  @continuation_identity_fields [
+    :run_id,
+    :successor_run_id,
+    :continuation_key,
+    :workflow,
+    :trigger,
+    :input,
+    :definition,
+    :definition_version,
+    :definition_fingerprint,
+    :queue
+  ]
 
   @type anomaly :: %{
           required(:reason) => atom(),
@@ -26,19 +49,25 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @type t :: %__MODULE__{
           attempts: %{optional(String.t()) => ActionAttempt.t()},
           anomalies: [anomaly()],
+          continuation_fences: %{optional(String.t()) => map()},
           queued_run_ids: string_set(),
           terminal_runs: string_set()
         }
 
   defstruct attempts: %{},
             anomalies: [],
+            continuation_fences: %{},
             queued_run_ids: MapSet.new(),
             terminal_runs: MapSet.new()
 
   @doc false
   @spec new() :: t()
   def new do
-    %__MODULE__{queued_run_ids: MapSet.new(), terminal_runs: MapSet.new()}
+    %__MODULE__{
+      continuation_fences: %{},
+      queued_run_ids: MapSet.new(),
+      terminal_runs: MapSet.new()
+    }
   end
 
   @doc false
@@ -59,9 +88,20 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     %__MODULE__{
       attempts: normalize_attempts(Map.get(projection, :attempts, %{})),
       anomalies: Map.get(projection, :anomalies, []),
+      continuation_fences: Map.get(projection, :continuation_fences, %{}),
       queued_run_ids: Map.get(projection, :queued_run_ids, MapSet.new()),
       terminal_runs: Map.get(projection, :terminal_runs, MapSet.new())
     }
+  end
+
+  @doc false
+  @spec checkpoint_compatible?(term()) :: boolean()
+  def checkpoint_compatible?(%__MODULE__{} = projection) do
+    Map.has_key?(projection, :continuation_fences)
+  end
+
+  def checkpoint_compatible?(_projection) do
+    false
   end
 
   @doc false
@@ -71,7 +111,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     |> ordered_attempts()
     |> Enum.filter(fn attempt ->
       attempt.status in [:available, :retry_scheduled] and not after?(attempt.visible_at, at) and
-        not terminal_run?(projection, attempt.run_id)
+        not terminal_run?(projection, attempt.run_id) and
+        not continuation_fenced?(projection, attempt.run_id)
     end)
   end
 
@@ -82,7 +123,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     |> ordered_attempts()
     |> Enum.filter(fn attempt ->
       attempt.status == :claimed and not is_nil(attempt.lease_until) and
-        not after?(attempt.lease_until, at) and not terminal_run?(projection, attempt.run_id)
+        not after?(attempt.lease_until, at) and not terminal_run?(projection, attempt.run_id) and
+        not continuation_fenced?(projection, attempt.run_id)
     end)
   end
 
@@ -104,10 +146,20 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
 
   @doc false
   @spec run_ids(t()) :: MapSet.t(String.t())
-  def run_ids(%__MODULE__{attempts: attempts, queued_run_ids: queued_run_ids}) do
-    attempts
-    |> Enum.map(fn {_key, attempt} -> attempt.run_id end)
-    |> MapSet.new()
+  def run_ids(%__MODULE__{
+        attempts: attempts,
+        continuation_fences: continuation_fences,
+        queued_run_ids: queued_run_ids
+      }) do
+    attempt_run_ids =
+      attempts
+      |> Enum.map(fn {_key, attempt} -> attempt.run_id end)
+      |> MapSet.new()
+
+    fence_run_ids = MapSet.new(Map.keys(continuation_fences))
+
+    attempt_run_ids
+    |> MapSet.union(fence_run_ids)
     |> MapSet.union(queued_run_ids)
   end
 
@@ -116,73 +168,48 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   def results_ready_to_apply(%__MODULE__{} = projection) do
     projection
     |> completed_results()
-    |> Enum.reject(&(&1.applied? or terminal_run?(projection, &1.run_id)))
+    |> Enum.reject(
+      &(&1.applied? or terminal_run?(projection, &1.run_id) or
+          continuation_fenced?(projection, &1.run_id))
+    )
+  end
+
+  @doc false
+  @spec continuation_fence(t(), String.t()) :: map() | nil
+  def continuation_fence(%__MODULE__{continuation_fences: fences}, run_id)
+      when is_binary(run_id) do
+    Map.get(fences, run_id)
   end
 
   @doc false
   @spec anomalies(t()) :: [anomaly()]
   def anomalies(%__MODULE__{anomalies: anomalies}), do: Enum.reverse(anomalies)
 
+  defp apply_entry(
+         %Entry{type: type, data: %{run_id: run_id}} = entry,
+         %__MODULE__{} = projection
+       )
+       when type in @continuation_blocked_entry_types do
+    if continuation_fenced?(projection, run_id) do
+      add_anomaly(projection, entry, :continuation_fenced)
+    else
+      apply_dispatch_mutation(entry, projection)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :run_continuation_fenced} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if continuation_fence_data?(entry.data) do
+      put_continuation_fence(projection, entry)
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
   defp apply_entry(%Entry{type: :run_queued, data: data}, %__MODULE__{} = projection) do
     %__MODULE__{projection | queued_run_ids: MapSet.put(projection.queued_run_ids, data.run_id)}
-  end
-
-  defp apply_entry(%Entry{type: :attempt_scheduled, data: data} = entry, projection) do
-    if terminal_run?(projection, data.run_id) do
-      add_anomaly(projection, entry, :terminal_run)
-    else
-      put_new_attempt(projection, build_attempt(data), data)
-    end
-  end
-
-  defp apply_entry(%Entry{type: :attempt_claimed, data: data} = entry, projection) do
-    case Map.fetch(projection.attempts, data.runnable_key) do
-      {:ok, %ActionAttempt{} = attempt} ->
-        claim_attempt(projection, entry, attempt)
-
-      :error ->
-        add_anomaly(projection, entry, :unknown_runnable_intent)
-    end
-  end
-
-  defp apply_entry(%Entry{type: :attempt_heartbeat, data: data} = entry, projection) do
-    update_matching_claim(projection, entry, fn %ActionAttempt{} = attempt ->
-      %ActionAttempt{attempt | lease_until: data.lease_until}
-    end)
-  end
-
-  defp apply_entry(%Entry{type: :attempt_completed, data: data} = entry, projection) do
-    case Map.fetch(projection.attempts, data.runnable_key) do
-      {:ok, %ActionAttempt{} = attempt} ->
-        complete_attempt(projection, entry, attempt)
-
-      :error ->
-        add_anomaly(projection, entry, :unknown_runnable_intent)
-    end
-  end
-
-  defp apply_entry(%Entry{type: :attempt_failed, data: data} = entry, projection) do
-    case Map.fetch(projection.attempts, data.runnable_key) do
-      {:ok, %ActionAttempt{} = attempt} ->
-        fail_matching_attempt(projection, entry, attempt)
-
-      :error ->
-        add_anomaly(projection, entry, :unknown_runnable_intent)
-    end
-  end
-
-  defp apply_entry(%Entry{type: :live_wakeup_emitted, data: data} = entry, projection) do
-    case Map.fetch(projection.attempts, data.runnable_key) do
-      {:ok, %ActionAttempt{} = attempt} ->
-        if terminal_attempt?(projection, attempt) do
-          add_anomaly(projection, entry, :terminal_run)
-        else
-          put_attempt(projection, %ActionAttempt{attempt | wakeup_emitted?: true})
-        end
-
-      :error ->
-        add_anomaly(projection, entry, :unknown_runnable_intent)
-    end
   end
 
   defp apply_entry(%Entry{type: :runnable_applied} = entry, projection) do
@@ -200,6 +227,162 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   end
 
   defp apply_entry(%Entry{}, projection), do: projection
+
+  defp apply_dispatch_mutation(
+         %Entry{type: :attempt_scheduled, data: data} = entry,
+         projection
+       ) do
+    if terminal_run?(projection, data.run_id) do
+      add_anomaly(projection, entry, :terminal_run)
+    else
+      put_new_attempt(projection, build_attempt(data), data)
+    end
+  end
+
+  defp apply_dispatch_mutation(
+         %Entry{type: :attempt_claimed, data: data} = entry,
+         projection
+       ) do
+    case Map.fetch(projection.attempts, data.runnable_key) do
+      {:ok, %ActionAttempt{} = attempt} ->
+        claim_attempt(projection, entry, attempt)
+
+      :error ->
+        add_anomaly(projection, entry, :unknown_runnable_intent)
+    end
+  end
+
+  defp apply_dispatch_mutation(
+         %Entry{type: :attempt_heartbeat, data: data} = entry,
+         projection
+       ) do
+    update_matching_claim(projection, entry, fn %ActionAttempt{} = attempt ->
+      %ActionAttempt{attempt | lease_until: data.lease_until}
+    end)
+  end
+
+  defp apply_dispatch_mutation(
+         %Entry{type: :attempt_completed, data: data} = entry,
+         projection
+       ) do
+    case Map.fetch(projection.attempts, data.runnable_key) do
+      {:ok, %ActionAttempt{} = attempt} ->
+        complete_attempt(projection, entry, attempt)
+
+      :error ->
+        add_anomaly(projection, entry, :unknown_runnable_intent)
+    end
+  end
+
+  defp apply_dispatch_mutation(
+         %Entry{type: :attempt_failed, data: data} = entry,
+         projection
+       ) do
+    case Map.fetch(projection.attempts, data.runnable_key) do
+      {:ok, %ActionAttempt{} = attempt} ->
+        fail_matching_attempt(projection, entry, attempt)
+
+      :error ->
+        add_anomaly(projection, entry, :unknown_runnable_intent)
+    end
+  end
+
+  defp apply_dispatch_mutation(
+         %Entry{type: :live_wakeup_emitted, data: data} = entry,
+         projection
+       ) do
+    case Map.fetch(projection.attempts, data.runnable_key) do
+      {:ok, %ActionAttempt{} = attempt} ->
+        if terminal_attempt?(projection, attempt) do
+          add_anomaly(projection, entry, :terminal_run)
+        else
+          put_attempt(projection, %ActionAttempt{attempt | wakeup_emitted?: true})
+        end
+
+      :error ->
+        add_anomaly(projection, entry, :unknown_runnable_intent)
+    end
+  end
+
+  defp put_continuation_fence(
+         %__MODULE__{} = projection,
+         %Entry{data: %{run_id: run_id} = data} = entry
+       ) do
+    case Map.fetch(projection.continuation_fences, run_id) do
+      {:ok, existing} ->
+        if same_continuation_fence?(existing, data) do
+          projection
+        else
+          add_anomaly(projection, entry, :conflicting_continuation_fence)
+        end
+
+      :error ->
+        %__MODULE__{
+          projection
+          | continuation_fences: Map.put(projection.continuation_fences, run_id, data)
+        }
+    end
+  end
+
+  defp same_continuation_fence?(left, right) do
+    Map.take(left, @continuation_identity_fields) ==
+      Map.take(right, @continuation_identity_fields)
+  end
+
+  defp continuation_fence_data?(data) when is_map(data) do
+    required_present?(data, [
+      :run_id,
+      :successor_run_id,
+      :continuation_key,
+      :workflow,
+      :trigger,
+      :input,
+      :definition,
+      :definition_fingerprint,
+      :queue,
+      :trace,
+      :occurred_at
+    ]) and
+      Map.has_key?(data, :definition_version) and
+      valid_continuation_fence_identifiers?(data) and
+      is_map(Map.fetch!(data, :input)) and
+      Map.fetch!(data, :definition) == :current and
+      optional_non_empty_binary?(Map.fetch!(data, :definition_version)) and
+      non_empty_binary?(Map.fetch!(data, :definition_fingerprint)) and
+      Trace.valid?(Map.fetch!(data, :trace)) and
+      match?(%DateTime{}, Map.fetch!(data, :occurred_at))
+  end
+
+  defp continuation_fence_data?(_data) do
+    false
+  end
+
+  defp valid_continuation_fence_identifiers?(data) do
+    Enum.all?(
+      [:run_id, :successor_run_id, :continuation_key, :workflow, :trigger, :queue],
+      &non_empty_binary?(Map.fetch!(data, &1))
+    )
+  end
+
+  defp required_present?(data, fields) do
+    Enum.all?(fields, &(Map.has_key?(data, &1) and not is_nil(Map.fetch!(data, &1))))
+  end
+
+  defp optional_non_empty_binary?(nil) do
+    true
+  end
+
+  defp optional_non_empty_binary?(value) do
+    non_empty_binary?(value)
+  end
+
+  defp non_empty_binary?(value) when is_binary(value) do
+    value != ""
+  end
+
+  defp non_empty_binary?(_value) do
+    false
+  end
 
   defp put_new_attempt(%__MODULE__{} = projection, %ActionAttempt{} = attempt, data \\ nil) do
     case Map.fetch(projection.attempts, attempt.runnable_key) do
@@ -480,6 +663,10 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
 
   defp terminal_run?(%__MODULE__{terminal_runs: terminal_runs}, run_id) do
     MapSet.member?(terminal_runs, run_id)
+  end
+
+  defp continuation_fenced?(%__MODULE__{continuation_fences: fences}, run_id) do
+    Map.has_key?(fences, run_id)
   end
 
   defp terminal_attempt?(projection, %ActionAttempt{run_id: run_id}) do
