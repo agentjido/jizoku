@@ -166,6 +166,7 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
       workflow: "OtherWorkflow",
       trigger: "resume",
       input: %{cursor: "page-99"},
+      request_input: %{cursor: "page-99"},
       definition_version: "v2",
       definition_fingerprint: "definition-fingerprint-v2",
       queue: "priority"
@@ -185,6 +186,16 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
                Projection.anomalies(projection),
              "expected #{field} to participate in continuation identity"
     end
+  end
+
+  test "validates optional caller-declared continuation input" do
+    assert Projection.valid_continuation_fence?(
+             continuation_fence_attrs(request_input: %{cursor: "page-42"})
+           )
+
+    refute Projection.valid_continuation_fence?(
+             continuation_fence_attrs(request_input: "page-42")
+           )
   end
 
   test "malformed fence facts do not hide legitimate work or crash replay" do

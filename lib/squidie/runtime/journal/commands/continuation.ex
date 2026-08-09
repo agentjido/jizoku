@@ -99,6 +99,40 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
     :not_abortable
   end
 
+  @doc false
+  @spec validate_new_intent(
+          Journal.storage_config(),
+          Agent.t(),
+          Agent.t(),
+          ContinuationIntent.t()
+        ) :: :ok | {:error, term()}
+  def validate_new_intent(
+        storage,
+        %Agent{
+          agent_module: DispatchAgent,
+          state: %{partition: partition, queue: queue}
+        } = dispatch_agent,
+        %Agent{
+          agent_module: WorkflowAgent,
+          state: %{partition: partition}
+        } = workflow_agent,
+        %ContinuationIntent{queue: queue} = intent
+      ) do
+    with true <- Storage.partition(storage) == partition,
+         {:ok, :new} <- predecessor_mode(workflow_agent, intent),
+         :ok <- validate_static_boundary(storage, workflow_agent, intent, queue) do
+      validate_mode(storage, dispatch_agent, workflow_agent, intent, queue, :new)
+    else
+      false -> {:error, {:unsafe_continuation, :partition_mismatch}}
+      {:ok, :existing} -> {:error, :conflicting_continuation}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def validate_new_intent(_storage, _dispatch_agent, _workflow_agent, _intent) do
+    {:error, {:invalid_continuation, :invalid}}
+  end
+
   defp commit_predecessor(_storage, _run_id, _queue, 0) do
     {:error, :conflict}
   end

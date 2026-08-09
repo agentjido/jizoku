@@ -36,6 +36,16 @@ defmodule Squidie.Runtime.Routing do
     :metadata
   ]
   @journal_control_options [:runtime, :journal_storage, :queue, :partition, :now]
+  @journal_continuation_options [:runtime, :journal_storage, :queue, :partition, :now]
+  @public_continuation_options [
+    :runtime,
+    :journal_storage,
+    :queue,
+    :partition,
+    :now,
+    :input,
+    :continuation_key
+  ]
   @journal_execute_options [
     :runtime,
     :journal_storage,
@@ -153,6 +163,12 @@ defmodule Squidie.Runtime.Routing do
     configured_journal_options(overrides, @journal_control_options)
   end
 
+  @doc "Builds trusted journal options for a continue-as-new command."
+  @spec journal_continuation_options(keyword()) :: keyword()
+  def journal_continuation_options(overrides) do
+    configured_journal_options(overrides, @journal_continuation_options)
+  end
+
   @doc """
   Builds journal options for claiming and executing visible work.
   """
@@ -199,6 +215,12 @@ defmodule Squidie.Runtime.Routing do
   @spec public_graph_reconciliation_options(keyword()) :: :ok | {:error, term()}
   def public_graph_reconciliation_options(opts) do
     validate_public_options(opts, @journal_graph_reconciliation_options)
+  end
+
+  @doc "Validates options accepted by the public continue-as-new command."
+  @spec public_continuation_options(keyword() | term()) :: :ok | {:error, term()}
+  def public_continuation_options(opts) do
+    validate_public_options(opts, @public_continuation_options)
   end
 
   @doc """

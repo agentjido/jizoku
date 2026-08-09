@@ -32,6 +32,7 @@ defmodule Squidie.Runtime.DispatchAgent do
     :workflow,
     :trigger,
     :input,
+    :request_input,
     :definition,
     :definition_version,
     :definition_fingerprint,

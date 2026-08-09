@@ -30,6 +30,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     :workflow,
     :trigger,
     :input,
+    :request_input,
     :definition,
     :definition_version,
     :definition_fingerprint,
@@ -630,16 +631,28 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     ]) and
       Map.has_key?(data, :definition_version) and
       valid_continuation_fence_identifiers?(data) and
-      is_map(Map.fetch!(data, :input)) and
-      Map.fetch!(data, :definition) == :current and
-      optional_non_empty_binary?(Map.fetch!(data, :definition_version)) and
-      non_empty_binary?(Map.fetch!(data, :definition_fingerprint)) and
+      valid_continuation_target?(data) and
       Trace.valid?(Map.fetch!(data, :trace)) and
       match?(%DateTime{}, Map.fetch!(data, :occurred_at))
   end
 
   defp continuation_fence_data?(_data) do
     false
+  end
+
+  defp valid_continuation_request_input?(data) do
+    case Map.fetch(data, :request_input) do
+      {:ok, request_input} -> is_map(request_input)
+      :error -> true
+    end
+  end
+
+  defp valid_continuation_target?(data) do
+    is_map(Map.fetch!(data, :input)) and
+      valid_continuation_request_input?(data) and
+      Map.fetch!(data, :definition) == :current and
+      optional_non_empty_binary?(Map.fetch!(data, :definition_version)) and
+      non_empty_binary?(Map.fetch!(data, :definition_fingerprint))
   end
 
   defp continuation_abort_data?(data) when is_map(data) do
