@@ -436,6 +436,30 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   def anomalies(%__MODULE__{anomalies: anomalies}), do: Enum.reverse(anomalies)
 
   defp apply_entry(
+         %Entry{type: :run_terminal, data: data} = entry,
+         %__MODULE__{terminal_status: terminal_status} = projection
+       )
+       when terminal_status != nil do
+    if required_present?(data, [:run_id, :status]) do
+      if duplicate_terminal?(projection, entry, data) do
+        projection
+      else
+        add_anomaly(projection, entry, :conflicting_terminal)
+      end
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{} = entry,
+         %__MODULE__{terminal_status: terminal_status} = projection
+       )
+       when terminal_status != nil do
+    add_anomaly(projection, entry, :terminal_run)
+  end
+
+  defp apply_entry(
          %Entry{type: :run_signal_received, data: data} = entry,
          %__MODULE__{} = projection
        ) do
@@ -614,6 +638,15 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       error when is_map(error) -> error
       _other -> nil
     end
+  end
+
+  defp duplicate_terminal?(%__MODULE__{} = projection, %Entry{} = entry, data)
+       when is_map(data) do
+    projection.run_id == definition_metadata_value(data, :run_id) and
+      projection.terminal_status == definition_metadata_value(data, :status) and
+      projection.terminal_at ==
+        (definition_metadata_value(data, :occurred_at) || entry.occurred_at) and
+      projection.terminal_error == terminal_error_from_data(data)
   end
 
   defp definition_metadata_value(data, key) when is_map(data) and is_atom(key) do
@@ -1341,7 +1374,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   defp refresh_status(%__MODULE__{terminal_status: terminal_status} = projection)
-       when terminal_status in [:completed, :failed, :cancelled] do
+       when terminal_status != nil do
     %__MODULE__{projection | status: terminal_status}
   end
 

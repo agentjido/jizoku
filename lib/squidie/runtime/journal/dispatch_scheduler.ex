@@ -26,7 +26,7 @@ defmodule Squidie.Runtime.Journal.DispatchScheduler do
          _now,
          _retries_left
        )
-       when workflow_agent.state.projection.terminal_status in [:completed, :failed, :cancelled] do
+       when workflow_agent.state.projection.terminal_status != nil do
     {:ok, %{agent: dispatch_agent, runnables: []}}
   end
 

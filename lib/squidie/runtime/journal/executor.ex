@@ -17,6 +17,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Compensation
+  alias Squidie.Runtime.Journal.DispatchScheduler
   alias Squidie.Runtime.Journal.EntryBuilder
   alias Squidie.Runtime.Journal.Executor.ClaimContext
   alias Squidie.Runtime.Journal.Executor.RuntimeContext
@@ -718,7 +719,7 @@ defmodule Squidie.Runtime.Journal.Executor do
 
   defp success_progression_recorded?(workflow_agent, %ActionAttempt{} = attempt) do
     MapSet.member?(WorkflowAgent.applied_runnable_keys(workflow_agent), attempt.runnable_key) or
-      workflow_agent.state.projection.terminal_status in [:completed, :failed, :cancelled]
+      Projection.terminal?(workflow_agent.state.projection)
   end
 
   defp append_failed_success_progression(
@@ -729,7 +730,7 @@ defmodule Squidie.Runtime.Journal.Executor do
          _error,
          _retries_left
        )
-       when workflow_agent.state.projection.terminal_status in [:completed, :failed, :cancelled] do
+       when workflow_agent.state.projection.terminal_status != nil do
     {:ok, workflow_agent}
   end
 
@@ -1789,7 +1790,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp append_run_entries(_storage, workflow_agent, _entries, _retries_left)
-       when workflow_agent.state.projection.terminal_status in [:completed, :failed, :cancelled] do
+       when workflow_agent.state.projection.terminal_status != nil do
     {:ok, workflow_agent}
   end
 
@@ -1818,27 +1819,12 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp schedule_pending_dispatches(storage, workflow_agent, dispatch_agent, %DateTime{} = now) do
-    schedule_pending_dispatches(
+    DispatchScheduler.schedule_pending_dispatches(
       storage,
       workflow_agent,
       dispatch_agent,
       now,
       @dispatch_append_retries
-    )
-  end
-
-  defp schedule_pending_dispatches(_storage, workflow_agent, dispatch_agent, _now, _retries_left)
-       when workflow_agent.state.projection.terminal_status in [:completed, :failed, :cancelled] do
-    {:ok, %{agent: dispatch_agent, runnables: []}}
-  end
-
-  defp schedule_pending_dispatches(storage, workflow_agent, dispatch_agent, now, retries_left) do
-    Squidie.Runtime.Journal.DispatchScheduler.schedule_pending_dispatches(
-      storage,
-      workflow_agent,
-      dispatch_agent,
-      now,
-      retries_left
     )
   end
 
@@ -2506,7 +2492,7 @@ defmodule Squidie.Runtime.Journal.Executor do
           WorkflowAgent.applied_runnable_keys(workflow_agent),
           attempt.runnable_key
         ) and
-          workflow_agent.state.projection.terminal_status not in [:completed, :failed, :cancelled]
+          not Projection.terminal?(workflow_agent.state.projection)
 
       {:error, _reason} ->
         false
@@ -2518,7 +2504,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp recoverable_failed_attempt?(storage, %ActionAttempt{status: :failed} = attempt) do
     case WorkflowAgent.rebuild(storage, attempt.run_id) do
       {:ok, workflow_agent} ->
-        workflow_agent.state.projection.terminal_status not in [:completed, :failed, :cancelled] and
+        not Projection.terminal?(workflow_agent.state.projection) and
           not failed_progression_recorded?(workflow_agent, attempt)
 
       {:error, _reason} ->
@@ -2534,7 +2520,7 @@ defmodule Squidie.Runtime.Journal.Executor do
     MapSet.member?(WorkflowAgent.applied_runnable_keys(workflow_agent), attempt.runnable_key) or
       Enum.member?(WorkflowAgent.planned_runnable_keys(workflow_agent), retry_key) or
       Compensation.planned_for_failure?(workflow_agent, attempt.runnable_key) or
-      workflow_agent.state.projection.terminal_status in [:completed, :failed, :cancelled]
+      Projection.terminal?(workflow_agent.state.projection)
   end
 
   defp durable_retry_options(dispatch_agent, workflow_agent, %ActionAttempt{} = failed_attempt) do

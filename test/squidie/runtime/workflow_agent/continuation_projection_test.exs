@@ -32,6 +32,119 @@ defmodule Squidie.Runtime.WorkflowAgent.ContinuationProjectionTest do
            }
   end
 
+  test "keeps continued runs terminal when later runnable facts replay" do
+    projection =
+      Projection.rebuild([
+        run_started(@predecessor_run_id),
+        continuation_requested(@predecessor_run_id, @middle_run_id, "page-42"),
+        entry!(:run_terminal, %{
+          run_id: @predecessor_run_id,
+          status: :continued,
+          occurred_at: @occurred_at
+        }),
+        entry!(:runnables_planned, %{
+          run_id: @predecessor_run_id,
+          runnables: [%{runnable_key: "#{@predecessor_run_id}:late:1", step: "late"}],
+          occurred_at: @occurred_at
+        }),
+        entry!(:runnable_applied, %{
+          run_id: @predecessor_run_id,
+          runnable_key: "#{@predecessor_run_id}:late:1",
+          result: %{late: true},
+          occurred_at: @occurred_at
+        })
+      ])
+
+    assert Projection.terminal?(projection)
+    assert Projection.status(projection) == :continued
+    assert Projection.terminal_status(projection) == :continued
+    assert Projection.planned_runnables(projection) == []
+    assert Projection.applied_runnable_keys(projection) == MapSet.new()
+    assert Projection.applied_results(projection) == %{}
+
+    assert Projection.anomalies(projection) == [
+             %{
+               reason: :terminal_run,
+               entry_type: :runnables_planned,
+               run_id: @predecessor_run_id
+             },
+             %{
+               reason: :terminal_run,
+               entry_type: :runnable_applied,
+               run_id: @predecessor_run_id,
+               runnable_key: "#{@predecessor_run_id}:late:1"
+             }
+           ]
+  end
+
+  test "preserves the first terminal fact when an old executor appends a conflicting terminal" do
+    continued_at = @occurred_at
+    completed_at = DateTime.add(@occurred_at, 1, :second)
+
+    continued =
+      entry!(:run_terminal, %{
+        run_id: @predecessor_run_id,
+        status: :continued,
+        occurred_at: continued_at
+      })
+
+    projection =
+      Projection.rebuild([
+        run_started(@predecessor_run_id),
+        continued,
+        continued,
+        entry!(:run_terminal, %{
+          run_id: @predecessor_run_id,
+          status: :completed,
+          occurred_at: completed_at
+        })
+      ])
+
+    assert Projection.status(projection) == :continued
+    assert Projection.terminal_status(projection) == :continued
+    assert projection.terminal_at == continued_at
+
+    assert Projection.anomalies(projection) == [
+             %{
+               reason: :conflicting_terminal,
+               entry_type: :run_terminal,
+               run_id: @predecessor_run_id
+             }
+           ]
+  end
+
+  test "records malformed terminal facts that arrive after termination" do
+    continued =
+      entry!(:run_terminal, %{
+        run_id: @predecessor_run_id,
+        status: :continued,
+        occurred_at: @occurred_at
+      })
+
+    malformed_terminal = %Entry{
+      type: :run_terminal,
+      thread: {:run, @predecessor_run_id},
+      data: :not_a_map,
+      occurred_at: @occurred_at
+    }
+
+    projection =
+      Projection.rebuild([
+        run_started(@predecessor_run_id),
+        continued,
+        malformed_terminal
+      ])
+
+    assert Projection.terminal_status(projection) == :continued
+
+    assert Projection.anomalies(projection) == [
+             %{
+               reason: :malformed_entry,
+               entry_type: :run_terminal
+             }
+           ]
+  end
+
   test "rebuilds successor lineage from explicit durable evidence" do
     projection =
       Projection.rebuild([
