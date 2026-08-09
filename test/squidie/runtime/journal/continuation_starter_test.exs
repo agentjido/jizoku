@@ -207,13 +207,32 @@ defmodule Squidie.Runtime.Journal.ContinuationStarterTest do
     assert {:error, {:invalid_option, {:continuation_definition_identity, :invalid}}} =
              start_successor(omit_continuation_definition_identity: true)
 
-    assert {:error, {:invalid_option, {:continuation_definition_identity, :invalid}}} =
+    assert {:error, {:invalid_option, {:continuation_origin, :invalid}}} =
              start_successor(omit_continuation_origin: true)
 
     assert {:error, {:invalid_option, {:continuation_definition_identity, :invalid}}} =
              start_successor(continuation_definition_identity: %{definition_fingerprint: nil})
 
     assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @run_id})
+  end
+
+  test "requires a complete durable intent before writing" do
+    assert {:error, {:invalid_option, {:continuation_origin, :required}}} =
+             start_successor(
+               omit_continuation_origin: true,
+               omit_continuation_definition_identity: true
+             )
+
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @run_id})
+  end
+
+  test "requires a deterministic run id before any storage write" do
+    recording_storage = {RecordingStorage, delegate: @storage, test_pid: self()}
+
+    assert {:error, {:invalid_option, {:run_id, :required}}} =
+             start_successor(journal_storage: recording_storage, omit_run_id: true)
+
+    refute_receive {:storage_append, _thread_id, _kinds}
   end
 
   test "rejects definition drift before creating a missing successor" do
@@ -379,6 +398,7 @@ defmodule Squidie.Runtime.Journal.ContinuationStarterTest do
         :continuation_definition_identity,
         Keyword.get(overrides, :omit_continuation_definition_identity, false)
       )
+      |> maybe_delete_option(:run_id, Keyword.get(overrides, :omit_run_id, false))
 
     Starter.start_continuation_from_intent(CursorWorkflow, trigger, %{cursor: "next"}, opts)
   end

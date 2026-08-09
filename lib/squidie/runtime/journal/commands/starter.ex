@@ -98,7 +98,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
       when is_atom(workflow) and is_atom(trigger_name) and is_map(resolved_input) and
              is_list(opts) do
     with :ok <- validate_command_signal(opts),
-         :ok <- validate_continuation_options(opts),
+         :ok <- validate_required_continuation_options(opts),
          {:ok, storage} <- Options.storage_from_opts(opts),
          {:ok, queue} <- Options.queue_from_opts(opts),
          {:ok, now} <- Options.now_from_opts(opts),
@@ -583,11 +583,32 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
           :ok
 
         {%{}, %{}} ->
-          :ok
+          validate_continuation_run_id(opts)
 
-        _mismatched_pair ->
+        {%{}, nil} ->
           {:error, {:invalid_option, {:continuation_definition_identity, :invalid}}}
+
+        {nil, %{}} ->
+          {:error, {:invalid_option, {:continuation_origin, :invalid}}}
       end
+    end
+  end
+
+  defp validate_required_continuation_options(opts) do
+    with :ok <- validate_continuation_options(opts) do
+      if Keyword.has_key?(opts, :continuation_origin) do
+        :ok
+      else
+        {:error, {:invalid_option, {:continuation_origin, :required}}}
+      end
+    end
+  end
+
+  defp validate_continuation_run_id(opts) do
+    if Keyword.has_key?(opts, :run_id) do
+      :ok
+    else
+      {:error, {:invalid_option, {:run_id, :required}}}
     end
   end
 
