@@ -16,7 +16,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.Journal
-  alias Squidie.Runtime.Journal.Commands.Continuation
+  alias Squidie.Runtime.Journal.Commands.ContinuationRecovery
   alias Squidie.Runtime.Journal.Compensation
   alias Squidie.Runtime.Journal.DispatchScheduler
   alias Squidie.Runtime.Journal.EntryBuilder
@@ -129,6 +129,7 @@ defmodule Squidie.Runtime.Journal.Executor do
         storage,
         queue,
         now,
+        owner_id,
         opts,
         dispatch_agent,
         claim_result
@@ -139,13 +140,15 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp execute_claim_result_or_repair(
          storage,
          queue,
-         _now,
-         _opts,
+         %DateTime{} = now,
+         owner_id,
+         opts,
          dispatch_agent,
          :none
        ) do
-    case repair_pending_continuation(storage, dispatch_agent, queue) do
+    case repair_pending_continuation(storage, dispatch_agent, queue, now) do
       {:ok, :none} -> {:ok, :none}
+      {:ok, :aborted} -> execute_recovered(storage, queue, now, owner_id, opts)
       {:ok, successor} -> {:ok, successor}
       {:error, _reason} = error -> error
     end
@@ -155,6 +158,7 @@ defmodule Squidie.Runtime.Journal.Executor do
          storage,
          queue,
          %DateTime{} = now,
+         _owner_id,
          opts,
          _dispatch_agent,
          claim_result
@@ -2250,14 +2254,23 @@ defmodule Squidie.Runtime.Journal.Executor do
 
   defp recover_pending_progressions(storage, dispatch_agent, queue, %DateTime{} = now) do
     with {:ok, continuation_recovery} <-
-           pending_continuation_recovery(storage, dispatch_agent, queue) do
+           pending_continuation_recovery(storage, dispatch_agent, queue, now) do
       case continuation_recovery do
         {:recovered, %Inspection.Snapshot{}} = recovered ->
           {:ok, recovered}
 
+        :aborted ->
+          recover_after_aborted_continuation(storage, queue, now)
+
         :none ->
           recover_ordinary_progressions(storage, dispatch_agent, queue, now)
       end
+    end
+  end
+
+  defp recover_after_aborted_continuation(storage, queue, now) do
+    with {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue) do
+      recover_ordinary_progressions(storage, dispatch_agent, queue, now)
     end
   end
 
@@ -2327,25 +2340,37 @@ defmodule Squidie.Runtime.Journal.Executor do
     end)
   end
 
-  defp pending_continuation_recovery(storage, dispatch_agent, queue) do
-    case repair_pending_continuation(storage, dispatch_agent, queue) do
+  defp pending_continuation_recovery(storage, dispatch_agent, queue, now) do
+    case repair_pending_continuation(storage, dispatch_agent, queue, now) do
       {:ok, :none} -> {:ok, :none}
+      {:ok, :aborted} -> {:ok, :aborted}
       {:ok, successor} -> {:ok, {:recovered, successor}}
       {:error, _reason} -> {:ok, :none}
     end
   end
 
-  defp repair_pending_continuation(storage, dispatch_agent, queue) do
+  defp repair_pending_continuation(storage, dispatch_agent, queue, now) do
     dispatch_agent
     |> DispatchAgent.pending_continuation_fences()
-    |> repair_pending_continuation(storage, queue, :no_error)
+    |> repair_pending_continuation(storage, queue, now, :no_error, false)
   end
 
-  defp repair_pending_continuation([], _storage, _queue, :no_error) do
+  defp repair_pending_continuation([], _storage, _queue, _now, _first_error, true) do
+    {:ok, :aborted}
+  end
+
+  defp repair_pending_continuation([], _storage, _queue, _now, :no_error, false) do
     {:ok, :none}
   end
 
-  defp repair_pending_continuation([], _storage, _queue, {:first_error, first_error}) do
+  defp repair_pending_continuation(
+         [],
+         _storage,
+         _queue,
+         _now,
+         {:first_error, first_error},
+         false
+       ) do
     {:error, first_error}
   end
 
@@ -2353,11 +2378,16 @@ defmodule Squidie.Runtime.Journal.Executor do
          [%{run_id: run_id} | remaining],
          storage,
          queue,
-         first_error
+         now,
+         first_error,
+         aborted?
        ) do
-    case Continuation.repair_fenced_run(storage, run_id, queue) do
-      {:ok, %{successor: successor}} ->
+    case ContinuationRecovery.resolve_fenced_run(storage, run_id, queue, now: now) do
+      {:ok, {:repaired, %{successor: successor}}} ->
         {:ok, successor}
+
+      {:ok, {:aborted, _abort}} ->
+        repair_pending_continuation(remaining, storage, queue, now, first_error, true)
 
       {:error, reason} ->
         first_error =
@@ -2370,7 +2400,9 @@ defmodule Squidie.Runtime.Journal.Executor do
           remaining,
           storage,
           queue,
-          first_error
+          now,
+          first_error,
+          aborted?
         )
     end
   end

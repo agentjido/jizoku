@@ -2,17 +2,18 @@ defmodule Squidie.Runtime.AgentRecovery do
   @moduledoc """
   Restart recovery coordinator for Jido-native workflow and dispatch agents.
 
-  The coordinator rebuilds both agents from durable journals, repairs a pending
+  The coordinator rebuilds both agents from durable journals, resolves a pending
   continuation for the target run, then drains the remaining restart-safe
   windows in order: missing dispatch intents first, completed dispatch results
-  second.
+  second. Resolution repairs a valid continuation or aborts its fence after a
+  durable competing predecessor transition wins.
   """
 
   alias Jido.Agent
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.Journal
-  alias Squidie.Runtime.Journal.Commands.Continuation
+  alias Squidie.Runtime.Journal.Commands.ContinuationRecovery
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.WorkflowAgent
 
@@ -28,9 +29,9 @@ defmodule Squidie.Runtime.AgentRecovery do
   @doc """
   Rebuilds a workflow agent and dispatch agent, then drains restart recovery.
 
-  Pending continuation repair runs before ordinary recovery so a durable fence
-  cannot expose predecessor work again. Planned runnable dispatch recovery then
-  runs before completed result recovery so a restart observes all durable
+  Pending continuation resolution runs before ordinary recovery so a durable
+  fence cannot expose predecessor work again. Planned runnable dispatch recovery
+  then runs before completed result recovery so a restart observes all durable
   workflow intent before applying durable dispatch outcomes back to the run
   thread.
   """
@@ -48,7 +49,8 @@ defmodule Squidie.Runtime.AgentRecovery do
              storage,
              workflow_agent,
              dispatch_agent,
-             run_id
+             run_id,
+             opts
            ),
          {:ok, %{agent: dispatch_agent, runnables: scheduled_runnables}} <-
            WorkflowAgent.schedule_pending_dispatches(
@@ -78,7 +80,8 @@ defmodule Squidie.Runtime.AgentRecovery do
          storage,
          workflow_agent,
          dispatch_agent,
-         run_id
+         run_id,
+         opts
        ) do
     pending? =
       dispatch_agent
@@ -88,7 +91,8 @@ defmodule Squidie.Runtime.AgentRecovery do
     if pending? do
       queue = dispatch_agent.state.queue
 
-      with {:ok, _repair} <- Continuation.repair_fenced_run(storage, run_id, queue),
+      with {:ok, _resolution} <-
+             ContinuationRecovery.resolve_fenced_run(storage, run_id, queue, opts),
            {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
            {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue) do
         {:ok, %{workflow_agent: workflow_agent, dispatch_agent: dispatch_agent}}

@@ -7,6 +7,7 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Commands.Continuation
+  alias Squidie.Runtime.Journal.Commands.ContinuationRecovery
   alias Squidie.Runtime.Journal.Commands.Starter
   alias Squidie.Runtime.Journal.Executor
   alias Squidie.Runtime.Journal.Storage
@@ -190,6 +191,33 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
     assert_repair_complete()
   end
 
+  test "targeted agent recovery aborts an authenticated fence after dynamic work" do
+    _fence = seed_fenced_predecessor()
+    assert {:ok, run_thread} = Journal.load_thread(@storage, {:run, @run_id})
+
+    assert {:ok, dynamic_work} =
+             DispatchProtocol.new_entry(:dynamic_work_recorded, %{
+               run_id: @run_id,
+               dynamic_key: "dynamic-1",
+               origin: %{runnable_key: "origin"},
+               nodes: [],
+               occurred_at: @now
+             })
+
+    assert {:ok, _thread} =
+             Journal.append_entries(@storage, [dynamic_work], expected_rev: run_thread.rev)
+
+    assert {:ok, %{scheduled_runnables: [], applied_attempts: []}} =
+             AgentRecovery.recover(@storage, @run_id, "default", now: @now)
+
+    assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+
+    assert %{abort_reason: :predecessor_changed} =
+             DispatchAgent.continuation_abort(dispatch_agent, @run_id)
+
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @successor_run_id})
+  end
+
   test "does not resurrect a continuation after its fence is aborted" do
     _fence = seed_fenced_predecessor()
     assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
@@ -239,6 +267,55 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
 
     assert completed.run_id == @successor_run_id
     assert completed.status == :completed
+  end
+
+  test "executor aborts a terminal-lost fence and executes unrelated queue work" do
+    _fence = seed_fenced_predecessor()
+    assert {:ok, predecessor_thread} = Journal.load_thread(@storage, {:run, @run_id})
+
+    terminal =
+      Squidie.Runtime.Journal.EntryBuilder.traced_run_terminal!(
+        @run_id,
+        :cancelled,
+        @trace,
+        @now
+      )
+
+    assert {:ok, _thread} =
+             Journal.append_entries(@storage, [terminal], expected_rev: predecessor_thread.rev)
+
+    assert {:ok, _snapshot} =
+             Starter.start_run(CursorWorkflow, :continue, %{cursor: "unrelated"},
+               journal_storage: @storage,
+               queue: "default",
+               run_id: @visible_run_id,
+               now: @now
+             )
+
+    assert {:ok, completed} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               owner_id: "unrelated-worker",
+               now: @now
+             )
+
+    assert completed.run_id == @visible_run_id
+    assert completed.status == :completed
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @successor_run_id})
+
+    assert {:ok, dispatch_entries} = Journal.load_entries(@storage, {:dispatch, "default"})
+
+    abort_index = Enum.find_index(dispatch_entries, &(&1.type == :run_continuation_aborted))
+
+    claim_index =
+      Enum.find_index(
+        dispatch_entries,
+        &(&1.type == :attempt_claimed and &1.data.run_id == @visible_run_id)
+      )
+
+    assert abort_index < claim_index
   end
 
   test "executor repairs a fence that appears between recovery and claim" do
@@ -610,15 +687,72 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
       end)
 
     assert {:error, :injected_successor_failure} =
-             Continuation.repair_fenced_run(storage, @run_id, "default")
+             ContinuationRecovery.resolve_fenced_run(
+               storage,
+               @run_id,
+               "default",
+               now: @now
+             )
 
     assert {:error, :not_found} = Journal.load_entries(@storage, {:run, @successor_run_id})
+    assert {:ok, predecessor_entries} = Journal.load_entries(@storage, {:run, @run_id})
+    assert Projection.rebuild(predecessor_entries).status == :continued
     assert_pending_repair()
 
-    assert {:ok, %{successor: %{run_id: @successor_run_id}, receipt_created?: true}} =
-             Continuation.repair_fenced_run(@storage, @run_id, "default")
+    assert {:ok, {:repaired, %{successor: %{run_id: @successor_run_id}, receipt_created?: true}}} =
+             ContinuationRecovery.resolve_fenced_run(
+               @storage,
+               @run_id,
+               "default",
+               now: @now
+             )
 
     assert_repair_complete()
+  end
+
+  test "recovers an abort receipt after an unknown append outcome" do
+    _fence = seed_fenced_predecessor()
+    assert {:ok, run_thread} = Journal.load_thread(@storage, {:run, @run_id})
+
+    assert {:ok, dynamic_work} =
+             DispatchProtocol.new_entry(:dynamic_work_recorded, %{
+               run_id: @run_id,
+               dynamic_key: "dynamic-1",
+               origin: %{runnable_key: "origin"},
+               nodes: [],
+               occurred_at: @now
+             })
+
+    assert {:ok, _thread} =
+             Journal.append_entries(
+               @storage,
+               [dynamic_work],
+               expected_rev: run_thread.rev
+             )
+
+    failure_ref = make_ref()
+
+    storage =
+      fault_storage(fn _thread_id, entries, _opts ->
+        if Enum.map(entries, & &1.kind) == [:run_continuation_aborted] and
+             is_nil(Process.get(failure_ref)) do
+          Process.put(failure_ref, true)
+          {:delegate_then_return, {:error, :conflict}}
+        else
+          :continue
+        end
+      end)
+
+    assert {:ok, {:aborted, %{created?: false}}} =
+             ContinuationRecovery.resolve_fenced_run(
+               storage,
+               @run_id,
+               "default",
+               now: @now
+             )
+
+    assert {:ok, dispatch_entries} = Journal.load_entries(@storage, {:dispatch, "default"})
+    assert Enum.count(dispatch_entries, &(&1.type == :run_continuation_aborted)) == 1
   end
 
   test "rejects an incompatible preexisting successor without acknowledging repair" do
