@@ -59,10 +59,12 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
   def start_run(workflow, trigger_name, payload, opts)
       when is_atom(workflow) and is_map(payload) and is_list(opts) do
     with :ok <- validate_command_signal(opts),
+         :ok <- validate_continuation_options(opts),
          {:ok, storage} <- Options.storage_from_opts(opts),
          {:ok, queue} <- Options.queue_from_opts(opts),
          {:ok, now} <- Options.now_from_opts(opts),
          {:ok, definition} <- Definition.load(workflow),
+         :ok <- validate_continuation_definition(definition, opts),
          {:ok, trigger} <- trigger(definition, trigger_name),
          {:ok, resolved_payload} <- Definition.resolve_payload(trigger, payload),
          {:ok, planner} <- RunicPlanner.new(workflow),
@@ -89,6 +91,40 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
     end
   end
 
+  @doc false
+  @spec start_continuation_from_intent(module(), atom(), map(), keyword()) ::
+          {:ok, Inspection.Snapshot.t()} | {:error, start_error()}
+  def start_continuation_from_intent(workflow, trigger_name, resolved_input, opts)
+      when is_atom(workflow) and is_atom(trigger_name) and is_map(resolved_input) and
+             is_list(opts) do
+    with :ok <- validate_command_signal(opts),
+         :ok <- validate_required_continuation_options(opts),
+         {:ok, storage} <- Options.storage_from_opts(opts),
+         {:ok, queue} <- Options.queue_from_opts(opts),
+         {:ok, now} <- Options.now_from_opts(opts),
+         {:ok, run_id} <- run_id(opts) do
+      case Journal.load_thread(storage, {:run, run_id}) do
+        {:ok, _thread} ->
+          repair_existing_continuation(
+            storage,
+            workflow,
+            trigger_name,
+            resolved_input,
+            run_id,
+            queue,
+            now,
+            opts
+          )
+
+        {:error, :not_found} ->
+          start_run(workflow, trigger_name, resolved_input, opts)
+
+        {:error, _reason} = error ->
+          error
+      end
+    end
+  end
+
   @doc """
   Starts a runtime-authored workflow spec by appending journal facts and
   scheduling dispatch.
@@ -100,6 +136,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
   def start_spec_run(spec, trigger_name, payload, opts)
       when is_map(payload) and is_list(opts) do
     with :ok <- validate_command_signal(opts),
+         :ok <- validate_continuation_options(opts),
          {:ok, storage} <- Options.storage_from_opts(opts),
          {:ok, queue} <- Options.queue_from_opts(opts),
          {:ok, now} <- Options.now_from_opts(opts),
@@ -113,6 +150,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
          :ok <- validate_planned_action_inputs(definition, runnables),
          persisted_spec <- persisted_runtime_spec(spec),
          persisted_definition <- definition_from_spec(persisted_spec),
+         :ok <- validate_continuation_definition(persisted_definition, opts),
          {:ok, run_id} <- run_id(opts),
          :ok <- validate_initial_context(opts),
          {:ok, journal_runnables} <-
@@ -361,14 +399,33 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
            ),
          {:ok, runnables_planned} <-
            EntryBuilder.runnables_planned(run_id, runnables, now),
+         {:ok, continuation_entries} <- continuation_entries(run_id, now, opts),
          {:ok, _run_thread} <-
-           Journal.append_entries(storage, [run_signal_received, run_started, runnables_planned],
+           Journal.append_entries(
+             storage,
+             Enum.concat([
+               [run_signal_received, run_started],
+               continuation_entries,
+               [runnables_planned]
+             ]),
              expected_rev: 0
            ) do
       {:ok, :created}
     else
       {:error, :conflict} ->
-        rebuild_existing_start(storage, workflow, run_id, runnables, expected_fingerprint, opts)
+        rebuild_existing_start(
+          storage,
+          run_id,
+          %{
+            workflow: workflow,
+            trigger: trigger,
+            input: input,
+            runnables: runnables,
+            definition_version: definition.definition_version,
+            definition_fingerprint: expected_fingerprint
+          },
+          opts
+        )
 
       {:error, _reason} = error ->
         error
@@ -515,6 +572,139 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
 
       {:ok, invalid} ->
         {:error, {:invalid_option, {:command_signal, invalid}}}
+    end
+  end
+
+  defp validate_continuation_options(opts) do
+    with {:ok, origin} <- continuation_origin(opts),
+         {:ok, identity} <- continuation_definition_identity(opts) do
+      case {origin, identity} do
+        {nil, nil} ->
+          :ok
+
+        {%{}, %{}} ->
+          validate_continuation_run_id(opts)
+
+        {%{}, nil} ->
+          {:error, {:invalid_option, {:continuation_definition_identity, :invalid}}}
+
+        {nil, %{}} ->
+          {:error, {:invalid_option, {:continuation_origin, :invalid}}}
+      end
+    end
+  end
+
+  defp validate_required_continuation_options(opts) do
+    with :ok <- validate_continuation_options(opts) do
+      if Keyword.has_key?(opts, :continuation_origin) do
+        :ok
+      else
+        {:error, {:invalid_option, {:continuation_origin, :required}}}
+      end
+    end
+  end
+
+  defp validate_continuation_run_id(opts) do
+    if Keyword.has_key?(opts, :run_id) do
+      :ok
+    else
+      {:error, {:invalid_option, {:run_id, :required}}}
+    end
+  end
+
+  defp validate_continuation_definition(definition, opts) do
+    with {:ok, expected} <- continuation_definition_identity(opts) do
+      validate_continuation_definition_match(definition, expected)
+    end
+  end
+
+  defp validate_continuation_definition_match(_definition, nil) do
+    :ok
+  end
+
+  defp validate_continuation_definition_match(definition, expected) do
+    cond do
+      definition.definition_version != expected.definition_version ->
+        {:error, {:continuation_definition_mismatch, :version}}
+
+      Definition.fingerprint(definition) != expected.definition_fingerprint ->
+        {:error, {:continuation_definition_mismatch, :fingerprint}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp continuation_definition_identity(opts) do
+    case Keyword.fetch(opts, :continuation_definition_identity) do
+      :error ->
+        {:ok, nil}
+
+      {:ok, %{definition_version: version, definition_fingerprint: fingerprint}}
+      when (is_nil(version) or (is_binary(version) and version != "")) and
+             is_binary(fingerprint) and fingerprint != "" ->
+        {:ok, %{definition_version: version, definition_fingerprint: fingerprint}}
+
+      {:ok, _invalid} ->
+        {:error, {:invalid_option, {:continuation_definition_identity, :invalid}}}
+    end
+  end
+
+  defp continuation_entries(run_id, %DateTime{} = now, opts) do
+    case continuation_origin(opts) do
+      {:ok, nil} ->
+        {:ok, []}
+
+      {:ok, %{predecessor_run_id: predecessor_run_id, continuation_key: continuation_key}} ->
+        with {:ok, entry} <-
+               DispatchProtocol.new_entry(:run_continued_from, %{
+                 run_id: run_id,
+                 predecessor_run_id: predecessor_run_id,
+                 continuation_key: continuation_key,
+                 occurred_at: now
+               }) do
+          {:ok, [entry]}
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp continuation_origin(opts) do
+    case Keyword.fetch(opts, :continuation_origin) do
+      :error ->
+        {:ok, nil}
+
+      {:ok,
+       %{
+         predecessor_run_id: predecessor_run_id,
+         continuation_key: continuation_key
+       }}
+      when is_binary(predecessor_run_id) and predecessor_run_id != "" and
+             is_binary(continuation_key) and continuation_key != "" ->
+        with {:ok, predecessor_run_id} <- canonical_predecessor_run_id(predecessor_run_id),
+             {:ok, continuation_key} <-
+               Options.thread_part(continuation_key, :continuation_key) do
+          {:ok,
+           %{
+             predecessor_run_id: predecessor_run_id,
+             continuation_key: continuation_key
+           }}
+        else
+          {:error, _reason} ->
+            {:error, {:invalid_option, {:continuation_origin, :invalid}}}
+        end
+
+      {:ok, _invalid} ->
+        {:error, {:invalid_option, {:continuation_origin, :invalid}}}
+    end
+  end
+
+  defp canonical_predecessor_run_id(predecessor_run_id) do
+    case Ecto.UUID.cast(predecessor_run_id) do
+      {:ok, predecessor_run_id} -> {:ok, predecessor_run_id}
+      :error -> {:error, :invalid_predecessor_run_id}
     end
   end
 
@@ -821,10 +1011,8 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
 
   defp rebuild_existing_start(
          storage,
-         workflow,
          run_id,
-         expected_runnables,
-         expected_fingerprint,
+         expected,
          opts
        ) do
     with {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
@@ -834,9 +1022,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
       validate_existing_start_mode(
         mode,
         workflow_agent,
-        workflow,
-        expected_runnables,
-        expected_fingerprint,
+        expected,
         existing_fingerprint,
         opts
       )
@@ -844,43 +1030,208 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
   end
 
   defp existing_start_mode(opts) do
-    if Keyword.get(opts, :duplicate_schedule_start, false) do
-      :schedule_duplicate
-    else
-      :strict
+    cond do
+      Keyword.has_key?(opts, :continuation_origin) ->
+        :continuation
+
+      Keyword.get(opts, :duplicate_schedule_start, false) ->
+        :schedule_duplicate
+
+      true ->
+        :strict
+    end
+  end
+
+  defp validate_existing_start_mode(
+         :continuation,
+         workflow_agent,
+         expected,
+         existing_fingerprint,
+         opts
+       ) do
+    projection = workflow_agent.state.projection
+
+    with :ok <-
+           validate_existing_start(
+             workflow_agent,
+             expected.workflow,
+             expected.runnables,
+             expected.definition_fingerprint,
+             existing_fingerprint
+           ),
+         {:ok, expected_identity} <- continuation_definition_identity(opts),
+         :ok <-
+           validate_persisted_definition_identity(
+             projection,
+             existing_fingerprint,
+             expected_identity
+           ),
+         :ok <- validate_existing_continuation(workflow_agent, expected, opts) do
+      {:ok, :existing}
     end
   end
 
   defp validate_existing_start_mode(
          :schedule_duplicate,
          workflow_agent,
-         workflow,
-         _expected_runnables,
-         _expected_fingerprint,
+         expected,
          _existing_fingerprint,
          opts
        ) do
-    validate_existing_schedule_start(workflow_agent, workflow, opts)
+    with :ok <- validate_existing_continuation(workflow_agent, expected, opts) do
+      validate_existing_schedule_start(workflow_agent, expected.workflow, opts)
+    end
   end
 
   defp validate_existing_start_mode(
          :strict,
          workflow_agent,
-         workflow,
-         expected_runnables,
-         expected_fingerprint,
+         expected,
          existing_fingerprint,
-         _opts
+         opts
        ) do
     with :ok <-
            validate_existing_start(
              workflow_agent,
-             workflow,
-             expected_runnables,
-             expected_fingerprint,
+             expected.workflow,
+             expected.runnables,
+             expected.definition_fingerprint,
              existing_fingerprint
-           ) do
+           ),
+         :ok <- validate_existing_continuation(workflow_agent, expected, opts) do
       {:ok, :existing}
+    end
+  end
+
+  defp validate_existing_continuation(workflow_agent, expected, opts) do
+    with {:ok, expected_origin} <- continuation_origin(opts) do
+      projection = workflow_agent.state.projection
+
+      if continuation_identity_matches?(projection, expected, expected_origin) do
+        :ok
+      else
+        {:error, :conflict}
+      end
+    end
+  end
+
+  defp continuation_identity_matches?(%Projection{} = projection, _expected, nil) do
+    projection
+    |> Projection.continuation()
+    |> Map.fetch!(:continued_from)
+    |> is_nil()
+  end
+
+  defp continuation_identity_matches?(
+         %Projection{} = projection,
+         expected,
+         expected_origin
+       ) do
+    existing_origin =
+      projection
+      |> Projection.continuation()
+      |> Map.fetch!(:continued_from)
+
+    existing_origin == public_continuation_origin(expected_origin) and
+      projection.trigger == Atom.to_string(Map.fetch!(expected.trigger, :name)) and
+      projection.input == expected.input
+  end
+
+  defp public_continuation_origin(nil) do
+    nil
+  end
+
+  defp public_continuation_origin(%{
+         predecessor_run_id: predecessor_run_id,
+         continuation_key: continuation_key
+       }) do
+    %{run_id: predecessor_run_id, continuation_key: continuation_key}
+  end
+
+  defp repair_existing_continuation(
+         storage,
+         workflow,
+         trigger_name,
+         input,
+         run_id,
+         queue,
+         %DateTime{} = now,
+         opts
+       ) do
+    with {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
+         {:ok, existing_fingerprint} <- persisted_definition_fingerprint(storage, run_id),
+         :ok <-
+           validate_persisted_continuation(
+             workflow_agent.state.projection,
+             existing_fingerprint,
+             workflow,
+             trigger_name,
+             input,
+             queue,
+             opts
+           ) do
+      complete_started_run(storage, workflow, run_id, queue, now, :existing, opts)
+    end
+  end
+
+  defp validate_persisted_continuation(
+         %Projection{} = projection,
+         existing_fingerprint,
+         workflow,
+         trigger_name,
+         input,
+         queue,
+         opts
+       ) do
+    with {:ok, expected_identity} <- continuation_definition_identity(opts),
+         {:ok, expected_origin} <- continuation_origin(opts),
+         :ok <-
+           validate_persisted_definition_identity(
+             projection,
+             existing_fingerprint,
+             expected_identity
+           ),
+         :ok <- validate_persisted_continuation_queue(projection, queue) do
+      expected = %{trigger: %{name: trigger_name}, input: input}
+
+      cond do
+        projection.workflow != Definition.serialize_workflow(workflow) ->
+          {:error, :conflict}
+
+        not continuation_identity_matches?(projection, expected, expected_origin) ->
+          {:error, :conflict}
+
+        true ->
+          :ok
+      end
+    end
+  end
+
+  defp validate_persisted_definition_identity(
+         %Projection{} = projection,
+         existing_fingerprint,
+         expected_identity
+       ) do
+    if is_map(expected_identity) and
+         projection.definition_version == expected_identity.definition_version and
+         existing_fingerprint == expected_identity.definition_fingerprint do
+      :ok
+    else
+      {:error, :conflict}
+    end
+  end
+
+  defp validate_persisted_continuation_queue(%Projection{} = projection, queue) do
+    queues =
+      projection
+      |> Projection.planned_runnables()
+      |> Enum.map(&runnable_value(&1, :queue))
+      |> Enum.uniq()
+
+    if queues == [queue] do
+      :ok
+    else
+      {:error, :conflict}
     end
   end
 
