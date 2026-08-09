@@ -285,6 +285,12 @@ defmodule Squidie.Runtime.Journal.ContinuationPredecessorTest do
 
     assert {:ok, workflow_agent} = WorkflowAgent.rebuild(@storage, @run_id)
 
+    refute Projection.checkpoint_compatible?(%{})
+
+    refute workflow_agent.state.projection
+           |> Map.delete(:terminal_status)
+           |> Projection.checkpoint_compatible?()
+
     legacy_projection =
       workflow_agent.state.projection
       |> Map.delete(:continued_from_run_id)
@@ -415,6 +421,56 @@ defmodule Squidie.Runtime.Journal.ContinuationPredecessorTest do
              Continuation.commit_predecessor(@storage, @run_id, "default")
 
     assert journal_state() == before_repair
+  end
+
+  test "rejects a terminal-only partial predecessor commit" do
+    _fence = seed_fenced_predecessor()
+
+    append_run_entry(
+      Squidie.Runtime.Journal.EntryBuilder.traced_run_terminal!(
+        @run_id,
+        :continued,
+        @trace,
+        @now
+      )
+    )
+
+    before_repair = journal_state()
+
+    assert {:error, {:incomplete_continuation_commit, @run_id}} =
+             Continuation.commit_predecessor(@storage, @run_id, "default")
+
+    assert journal_state() == before_repair
+  end
+
+  test "returns conflict after exhausting the bounded append retry budget" do
+    _fence = seed_fenced_predecessor()
+    before_conflict = journal_state()
+
+    conflicting_storage =
+      recording_storage(fn thread_id, kinds ->
+        if thread_id == Journal.thread_id({:run, @run_id}) and
+             kinds == [:run_continuation_requested, :run_terminal] do
+          {:return, {:error, :conflict}}
+        else
+          :continue
+        end
+      end)
+
+    assert {:error, :conflict} =
+             Continuation.commit_predecessor(conflicting_storage, @run_id, "default")
+
+    for _attempt <- 1..25 do
+      assert_receive {
+        :storage_append,
+        "squidie:run:#{@run_id}",
+        [:run_continuation_requested, :run_terminal]
+      }
+    end
+
+    refute_receive {:storage_append, "squidie:run:#{@run_id}", _kinds}
+    refute_receive {:storage_checkpoint_put, _key}
+    assert journal_state() == before_conflict
   end
 
   test "rejects a competing terminal state without exposing a successor" do

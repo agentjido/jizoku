@@ -406,10 +406,11 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   @doc false
-  @spec checkpoint_compatible?(t()) :: boolean()
+  @spec checkpoint_compatible?(term()) :: boolean()
   def checkpoint_compatible?(%__MODULE__{} = projection) do
     Enum.all?(
       [
+        :terminal_status,
         :continued_from_run_id,
         :continued_from_key,
         :continued_to_run_id,
@@ -420,6 +421,10 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       &Map.has_key?(projection, &1)
     ) and
       not stale_failed_checkpoint_missing_terminal_error?(projection)
+  end
+
+  def checkpoint_compatible?(_projection) do
+    false
   end
 
   @doc false
@@ -453,7 +458,8 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   def anomalies(%__MODULE__{anomalies: anomalies}), do: Enum.reverse(anomalies)
 
   defp stale_failed_checkpoint_missing_terminal_error?(%__MODULE__{} = projection) do
-    projection.terminal_status == :failed and not Map.has_key?(projection, :terminal_error)
+    Map.get(projection, :terminal_status) == :failed and
+      not Map.has_key?(projection, :terminal_error)
   end
 
   defp apply_entry(

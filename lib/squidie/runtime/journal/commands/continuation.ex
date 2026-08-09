@@ -7,7 +7,6 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Compensation
   alias Squidie.Runtime.Journal.ContinuationIntent
-  alias Squidie.Runtime.Journal.EntryBuilder
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.Journal.WorkflowDefinitionLoader
   alias Squidie.Runtime.WorkflowAgent
@@ -274,8 +273,28 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
          intent,
          retries_left
        ) do
-    entries = continuation_entries(intent)
+    with {:ok, entries} <- continuation_entries(intent) do
+      append_predecessor_entries(
+        storage,
+        run_id,
+        queue,
+        workflow_agent,
+        intent,
+        entries,
+        retries_left
+      )
+    end
+  end
 
+  defp append_predecessor_entries(
+         storage,
+         run_id,
+         queue,
+         workflow_agent,
+         intent,
+         entries,
+         retries_left
+       ) do
     case Journal.append_entries(storage, entries,
            expected_rev: workflow_agent.state.thread_rev,
            telemetry_projection: workflow_agent.state.projection
@@ -302,18 +321,18 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
       |> ContinuationIntent.request()
       |> Map.put(:occurred_at, intent.occurred_at)
 
-    {:ok, request_entry} =
-      DispatchProtocol.new_entry(:run_continuation_requested, request_attrs)
+    terminal_attrs = %{
+      run_id: intent.run_id,
+      status: :continued,
+      trace: intent.trace,
+      occurred_at: intent.occurred_at
+    }
 
-    terminal_entry =
-      EntryBuilder.traced_run_terminal!(
-        intent.run_id,
-        :continued,
-        intent.trace,
-        intent.occurred_at
-      )
-
-    [request_entry, terminal_entry]
+    with {:ok, request_entry} <-
+           DispatchProtocol.new_entry(:run_continuation_requested, request_attrs),
+         {:ok, terminal_entry} <- DispatchProtocol.new_entry(:run_terminal, terminal_attrs) do
+      {:ok, [request_entry, terminal_entry]}
+    end
   end
 
   defp commit_result(workflow_agent, intent, created?) do
