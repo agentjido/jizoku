@@ -9,7 +9,7 @@ defmodule Squidie.Runtime.ScheduleIdentity do
   persisted scheduled run can still be found after workflow code drifts.
   """
 
-  import Bitwise, only: [band: 2, bor: 2]
+  alias Squidie.Runtime.DeterministicIdentity
 
   @spec run_id(String.t(), String.t(), String.t()) ::
           {:ok, Ecto.UUID.t()} | {:error, {:invalid_schedule_identity, term()}}
@@ -21,10 +21,7 @@ defmodule Squidie.Runtime.ScheduleIdentity do
   def run_id(workflow, trigger, signal_id)
       when is_binary(workflow) and is_binary(trigger) and is_binary(signal_id) and
              workflow != "" and trigger != "" and signal_id != "" do
-    {:ok,
-     [workflow, trigger, signal_id]
-     |> stable_identity_parts()
-     |> deterministic_uuid()}
+    {:ok, DeterministicIdentity.uuid([workflow, trigger, signal_id])}
   end
 
   def run_id(_workflow, _trigger, _signal_id) do
@@ -52,7 +49,7 @@ defmodule Squidie.Runtime.ScheduleIdentity do
   end
 
   defp derived_signal_id(workflow, trigger, %{start_at: start_at, end_at: end_at}) do
-    signal_parts = stable_identity_parts([workflow, trigger, start_at, end_at])
+    signal_parts = DeterministicIdentity.encode_parts([workflow, trigger, start_at, end_at])
     digest = :crypto.hash(:sha256, signal_parts)
 
     {:ok, "sha256:" <> Base.url_encode64(digest, padding: false)}
@@ -60,20 +57,4 @@ defmodule Squidie.Runtime.ScheduleIdentity do
 
   defp derived_signal_id(_workflow, _trigger, _intended_window),
     do: {:error, {:invalid_schedule_identity, :missing_signal_id}}
-
-  defp stable_identity_parts(parts) do
-    parts
-    |> Enum.map(fn part -> [Integer.to_string(byte_size(part)), ":", part] end)
-    |> Enum.intersperse("|")
-    |> IO.iodata_to_binary()
-  end
-
-  defp deterministic_uuid(identity) when is_binary(identity) do
-    <<a::32, b::16, c::16, d::16, e::48, _rest::binary>> = :crypto.hash(:sha256, identity)
-    version = bor(band(c, 0x0FFF), 0x5000)
-    variant = bor(band(d, 0x3FFF), 0x8000)
-    uuid_binary = <<a::32, b::16, version::16, variant::16, e::48>>
-    {:ok, uuid} = Ecto.UUID.load(uuid_binary)
-    uuid
-  end
 end
