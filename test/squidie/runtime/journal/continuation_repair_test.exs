@@ -2,11 +2,13 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
   use ExUnit.Case, async: false
 
   alias Jido.Storage.ETS
+  alias Squidie.Runtime.AgentRecovery
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Commands.Continuation
   alias Squidie.Runtime.Journal.Commands.Starter
+  alias Squidie.Runtime.Journal.Executor
   alias Squidie.Runtime.Journal.Storage
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Workflow.Definition
@@ -34,8 +36,14 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
 
     @impl Jido.Storage
     def load_thread(thread_id, opts) do
-      {adapter, delegate_opts} = delegate(opts)
-      adapter.load_thread(thread_id, delegate_opts)
+      case Keyword.fetch!(opts, :load_hook).(thread_id) do
+        :continue ->
+          {adapter, delegate_opts} = delegate(opts)
+          adapter.load_thread(thread_id, delegate_opts)
+
+        {:return, result} ->
+          result
+      end
     end
 
     @impl Jido.Storage
@@ -62,7 +70,8 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
 
     defp delegate(opts) do
       {adapter, delegate_opts} = Keyword.fetch!(opts, :delegate)
-      {adapter, delegate_opts ++ Keyword.drop(opts, [:append_hook, :delegate])}
+
+      {adapter, delegate_opts ++ Keyword.drop(opts, [:append_hook, :delegate, :load_hook])}
     end
 
     defp delegate_append(thread_id, entries, opts) do
@@ -103,6 +112,9 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
   @storage {ETS, table: :squidie_continuation_repair_test}
   @run_id "11111111-1111-5111-8111-111111111111"
   @successor_run_id "22222222-2222-5222-8222-222222222222"
+  @invalid_run_id "00000000-0000-5000-8000-000000000001"
+  @invalid_successor_run_id "00000000-0000-5000-8000-000000000002"
+  @visible_run_id "99999999-9999-5999-8999-999999999999"
   @now ~U[2026-08-09 21:00:00Z]
   @trace %{
     trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
@@ -158,6 +170,336 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
     assert completed.run_id == @successor_run_id
     assert completed.status == :completed
     assert completed.context.cursor == "next"
+  end
+
+  test "targeted agent recovery repairs a pending continuation before ordinary recovery" do
+    _fence = seed_fenced_predecessor()
+
+    assert {:ok,
+            %{
+              workflow_agent: predecessor_agent,
+              scheduled_runnables: [],
+              applied_attempts: []
+            }} = AgentRecovery.recover(@storage, @run_id, "default", now: @now)
+
+    assert predecessor_agent.state.projection.status == :continued
+
+    assert {:ok, _successor_entries} =
+             Journal.load_entries(@storage, {:run, @successor_run_id})
+
+    assert_repair_complete()
+  end
+
+  test "executor repairs a pending continuation before executing its successor" do
+    _fence = seed_fenced_predecessor()
+
+    assert {:ok, repaired} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               owner_id: "recovery-worker",
+               now: @now
+             )
+
+    assert repaired.run_id == @successor_run_id
+    assert repaired.status == :running
+    assert_repair_complete()
+
+    assert {:ok, completed} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               owner_id: "successor-worker",
+               now: @now
+             )
+
+    assert completed.run_id == @successor_run_id
+    assert completed.status == :completed
+  end
+
+  test "executor repairs a fence that appears between recovery and claim" do
+    fence = seed_fenced_predecessor(persist_fence: false)
+
+    assert {:ok, fence_entry} =
+             DispatchProtocol.new_entry(
+               :run_continuation_fenced,
+               fence
+               |> Map.put(:queue, "default")
+               |> Map.put(:occurred_at, @now)
+             )
+
+    dispatch_thread_id = Journal.thread_id({:dispatch, "default"})
+    load_count_ref = make_ref()
+
+    storage =
+      fault_storage(
+        fn _thread_id, _entries, _opts -> :continue end,
+        load_hook: fn thread_id ->
+          if thread_id == dispatch_thread_id do
+            load_count = Process.get(load_count_ref, 0) + 1
+            Process.put(load_count_ref, load_count)
+
+            if load_count == 2 do
+              assert {:ok, _thread} = Journal.append_entries(@storage, [fence_entry])
+            end
+          end
+
+          :continue
+        end
+      )
+
+    assert {:ok, before_entries} = Journal.load_entries(@storage, {:dispatch, "default"})
+    claimed_before = Enum.count(before_entries, &(&1.type == :attempt_claimed))
+
+    assert {:ok, repaired} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: storage,
+               queue: "default",
+               owner_id: "recovery-worker",
+               now: @now
+             )
+
+    assert repaired.run_id == @successor_run_id
+    assert repaired.status == :running
+    assert Process.get(load_count_ref) >= 2
+
+    assert {:ok, after_entries} = Journal.load_entries(@storage, {:dispatch, "default"})
+    assert Enum.count(after_entries, &(&1.type == :attempt_claimed)) == claimed_before
+    assert Enum.count(after_entries, &(&1.type == :run_continuation_fenced)) == 1
+    assert Enum.count(after_entries, &(&1.type == :run_continuation_repaired)) == 1
+    assert_repair_complete()
+  end
+
+  test "executor acknowledges a fully exposed successor before claiming it" do
+    _fence = seed_fenced_predecessor()
+    expose_successor_without_receipt()
+
+    assert {:ok, repaired} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               owner_id: "recovery-worker",
+               now: @now
+             )
+
+    assert repaired.run_id == @successor_run_id
+    assert repaired.status == :running
+    assert_repair_complete()
+
+    assert {:ok, completed} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               owner_id: "successor-worker",
+               now: @now
+             )
+
+    assert completed.run_id == @successor_run_id
+    assert completed.status == :completed
+  end
+
+  test "executor does not claim an exposed successor when its receipt cannot commit" do
+    _fence = seed_fenced_predecessor()
+    expose_successor_without_receipt()
+
+    storage =
+      fault_storage(fn _thread_id, entries, _opts ->
+        if Enum.map(entries, & &1.kind) == [:run_continuation_repaired] do
+          {:return, {:error, :injected_receipt_failure}}
+        else
+          :continue
+        end
+      end)
+
+    before_failure = journal_state()
+
+    assert {:error, :injected_receipt_failure} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: storage,
+               queue: "default",
+               owner_id: "recovery-worker",
+               now: @now
+             )
+
+    assert journal_state() == before_failure
+    assert_pending_repair()
+
+    assert {:ok, repaired} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               owner_id: "recovery-worker",
+               now: @now
+             )
+
+    assert repaired.run_id == @successor_run_id
+    assert repaired.status == :running
+    assert_repair_complete()
+  end
+
+  test "executor does not recover successor outcomes while its receipt is pending" do
+    for outcome <- [:completed, :failed] do
+      cleanup_storage()
+      _fence = seed_fenced_predecessor()
+      expose_successor_without_receipt()
+      append_successor_outcome(outcome)
+
+      storage =
+        fault_storage(fn _thread_id, entries, _opts ->
+          if Enum.map(entries, & &1.kind) == [:run_continuation_repaired] do
+            {:return, {:error, :injected_receipt_failure}}
+          else
+            :continue
+          end
+        end)
+
+      before_failure = journal_state()
+
+      assert {:error, :injected_receipt_failure} =
+               Executor.execute_next(
+                 runtime: :journal,
+                 journal_storage: storage,
+                 queue: "default",
+                 owner_id: "recovery-worker",
+                 now: @now
+               )
+
+      assert journal_state() == before_failure
+      assert_pending_repair()
+
+      assert {:ok, %{run_id: @successor_run_id, status: :running}} =
+               Executor.execute_next(
+                 runtime: :journal,
+                 journal_storage: @storage,
+                 queue: "default",
+                 owner_id: "recovery-worker",
+                 now: @now
+               )
+
+      assert_repair_complete()
+    end
+  end
+
+  test "an invalid pending fence does not block an unrelated visible run" do
+    assert {:ok, _snapshot} =
+             Starter.start_run(CursorWorkflow, :continue, %{cursor: "visible"},
+               journal_storage: @storage,
+               queue: "default",
+               run_id: @visible_run_id,
+               now: @now
+             )
+
+    append_invalid_fence()
+
+    assert {:ok, completed} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               owner_id: "unrelated-worker",
+               now: @now
+             )
+
+    assert completed.run_id == @visible_run_id
+    assert completed.status == :completed
+  end
+
+  test "an invalid first fence does not starve a later valid continuation" do
+    _fence = seed_fenced_predecessor()
+    append_invalid_fence()
+
+    assert {:ok, repaired} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               owner_id: "recovery-worker",
+               now: @now
+             )
+
+    assert repaired.run_id == @successor_run_id
+    assert repaired.status == :running
+
+    assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+
+    assert [%{run_id: @invalid_run_id}] =
+             DispatchAgent.pending_continuation_fences(dispatch_agent)
+  end
+
+  test "executor preserves falsey storage errors while deferring repair" do
+    for reason <- [nil, false] do
+      cleanup_storage()
+      _fence = seed_fenced_predecessor()
+
+      storage =
+        fault_storage(fn _thread_id, entries, _opts ->
+          if Enum.map(entries, & &1.kind) == [:run_continuation_requested, :run_terminal] do
+            {:return, {:error, reason}}
+          else
+            :continue
+          end
+        end)
+
+      assert {:error, ^reason} =
+               Executor.execute_next(
+                 runtime: :journal,
+                 journal_storage: storage,
+                 queue: "default",
+                 owner_id: "recovery-worker",
+                 now: @now
+               )
+
+      assert_pending_repair()
+    end
+  end
+
+  test "executor trusts a fresh rebuild when another worker repairs a deferred fence" do
+    invalid_fence = append_invalid_fence()
+
+    assert {:ok, repair_entry} =
+             DispatchProtocol.new_entry(
+               :run_continuation_repaired,
+               Map.put(invalid_fence, :occurred_at, @now)
+             )
+
+    dispatch_thread_id = Journal.thread_id({:dispatch, "default"})
+    load_count_ref = make_ref()
+
+    storage =
+      fault_storage(
+        fn _thread_id, _entries, _opts -> :continue end,
+        load_hook: fn thread_id ->
+          if thread_id == dispatch_thread_id do
+            load_count = Process.get(load_count_ref, 0) + 1
+            Process.put(load_count_ref, load_count)
+
+            if load_count == 2 do
+              assert {:ok, _thread} = Journal.append_entries(@storage, [repair_entry])
+            end
+          end
+
+          :continue
+        end
+      )
+
+    assert {:ok, :none} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: storage,
+               queue: "default",
+               owner_id: "recovery-worker",
+               now: @now
+             )
+
+    assert Process.get(load_count_ref) >= 2
+    assert_repair_complete()
   end
 
   test "returns the same successor and performs no journal writes on exact retry" do
@@ -463,6 +805,59 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
     assert_repair_complete(globex_storage, "priority")
   end
 
+  test "executor routes continuation recovery by partition and non-default queue" do
+    assert {:ok, acme_storage} = Storage.scope(@storage, "tenant_acme")
+    assert {:ok, globex_storage} = Storage.scope(@storage, "tenant_globex")
+
+    _acme_fence = seed_fenced_predecessor(storage: acme_storage, queue: "priority")
+    _globex_fence = seed_fenced_predecessor(storage: globex_storage, queue: "priority")
+
+    assert {:ok, repaired} =
+             Executor.execute_next(
+               runtime: :journal,
+               journal_storage: acme_storage,
+               queue: "priority",
+               owner_id: "acme-recovery-worker",
+               now: @now
+             )
+
+    assert repaired.run_id == @successor_run_id
+    assert repaired.status == :running
+    assert_repair_complete(acme_storage, "priority")
+    assert_pending_repair(globex_storage, "priority")
+
+    assert {:error, :not_found} =
+             Journal.load_entries(globex_storage, {:run, @successor_run_id})
+
+    assert {:error, :not_found} =
+             Journal.load_entries(acme_storage, {:dispatch, "default"})
+  end
+
+  test "targeted agent recovery routes by partition and non-default queue" do
+    assert {:ok, acme_storage} = Storage.scope(@storage, "tenant_acme")
+    assert {:ok, globex_storage} = Storage.scope(@storage, "tenant_globex")
+
+    _acme_fence = seed_fenced_predecessor(storage: acme_storage, queue: "priority")
+    _globex_fence = seed_fenced_predecessor(storage: globex_storage, queue: "priority")
+
+    assert {:ok,
+            %{
+              workflow_agent: predecessor_agent,
+              scheduled_runnables: [],
+              applied_attempts: []
+            }} = AgentRecovery.recover(acme_storage, @run_id, "priority", now: @now)
+
+    assert predecessor_agent.state.projection.status == :continued
+    assert_repair_complete(acme_storage, "priority")
+    assert_pending_repair(globex_storage, "priority")
+
+    assert {:error, :not_found} =
+             Journal.load_entries(globex_storage, {:run, @successor_run_id})
+
+    assert {:error, :not_found} =
+             Journal.load_entries(acme_storage, {:dispatch, "default"})
+  end
+
   defp seed_fenced_predecessor(opts \\ []) do
     storage = Keyword.get(opts, :storage, @storage)
     queue = Keyword.get(opts, :queue, "default")
@@ -512,17 +907,21 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
       trace: @trace
     }
 
-    {:ok, rebuilt_dispatch_agent} = DispatchAgent.rebuild(storage, queue)
+    if Keyword.get(opts, :persist_fence, true) do
+      {:ok, rebuilt_dispatch_agent} = DispatchAgent.rebuild(storage, queue)
 
-    assert {:ok, %{fence: persisted_fence}} =
-             DispatchAgent.fence_run_for_continuation(
-               storage,
-               rebuilt_dispatch_agent,
-               fence,
-               now: @now
-             )
+      assert {:ok, %{fence: persisted_fence}} =
+               DispatchAgent.fence_run_for_continuation(
+                 storage,
+                 rebuilt_dispatch_agent,
+                 fence,
+                 now: @now
+               )
 
-    persisted_fence
+      persisted_fence
+    else
+      fence
+    end
   end
 
   defp append_applied(storage, runnable_key) do
@@ -536,6 +935,75 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
 
     assert {:ok, thread} = Journal.load_thread(storage, {:run, @run_id})
     assert {:ok, _thread} = Journal.append_entries(storage, [entry], expected_rev: thread.rev)
+  end
+
+  defp append_invalid_fence do
+    {:ok, definition} = Definition.load(CursorWorkflow)
+
+    assert {:ok, entry} =
+             DispatchProtocol.new_entry(:run_continuation_fenced, %{
+               run_id: @invalid_run_id,
+               successor_run_id: @invalid_successor_run_id,
+               continuation_key: "invalid-fence",
+               workflow: Definition.serialize_workflow(CursorWorkflow),
+               trigger: "continue",
+               input: %{cursor: "invalid"},
+               definition: :current,
+               definition_version: definition.definition_version,
+               definition_fingerprint: Definition.fingerprint(definition),
+               queue: "default",
+               trace: @trace,
+               occurred_at: @now
+             })
+
+    assert {:ok, _thread} = Journal.append_entries(@storage, [entry])
+    entry.data
+  end
+
+  defp append_successor_outcome(outcome) when outcome in [:completed, :failed] do
+    assert {:ok, successor_entries} =
+             Journal.load_entries(@storage, {:run, @successor_run_id})
+
+    assert [%{runnable_key: runnable_key}] =
+             successor_entries
+             |> Projection.rebuild()
+             |> Projection.planned_runnables()
+
+    claim_attrs = %{
+      run_id: @successor_run_id,
+      runnable_key: runnable_key,
+      claim_id: "successor-claim",
+      claim_token_hash: "successor-token-hash",
+      owner_id: "legacy-worker",
+      queue: "default",
+      lease_until: DateTime.add(@now, 60, :second),
+      occurred_at: @now
+    }
+
+    base_outcome_attrs = %{
+      run_id: @successor_run_id,
+      runnable_key: runnable_key,
+      claim_id: "successor-claim",
+      claim_token_hash: "successor-token-hash",
+      queue: "default",
+      occurred_at: @now
+    }
+
+    {outcome_type, outcome_attrs} =
+      case outcome do
+        :completed ->
+          {:attempt_completed, Map.put(base_outcome_attrs, :result, %{cursor: "next"})}
+
+        :failed ->
+          {:attempt_failed, Map.put(base_outcome_attrs, :error, %{reason: "legacy failure"})}
+      end
+
+    assert {:ok, claimed} = DispatchProtocol.new_entry(:attempt_claimed, claim_attrs)
+    assert {:ok, outcome_entry} = DispatchProtocol.new_entry(outcome_type, outcome_attrs)
+    assert {:ok, thread} = Journal.load_thread(@storage, {:dispatch, "default"})
+
+    assert {:ok, _thread} =
+             Journal.append_entries(@storage, [claimed, outcome_entry], expected_rev: thread.rev)
   end
 
   defp continuation_request(fence) do
@@ -627,8 +1095,10 @@ defmodule Squidie.Runtime.Journal.ContinuationRepairTest do
     workflow
   end
 
-  defp fault_storage(append_hook) do
-    {FaultStorage, delegate: @storage, append_hook: append_hook}
+  defp fault_storage(append_hook, opts \\ []) do
+    load_hook = Keyword.get(opts, :load_hook, fn _thread_id -> :continue end)
+
+    {FaultStorage, delegate: @storage, append_hook: append_hook, load_hook: load_hook}
   end
 
   defp cleanup_storage do

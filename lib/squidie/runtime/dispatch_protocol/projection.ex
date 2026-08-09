@@ -124,24 +124,28 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @doc false
   @spec visible_attempts(t(), DateTime.t()) :: [ActionAttempt.t()]
   def visible_attempts(%__MODULE__{} = projection, %DateTime{} = at) do
+    suppressed_run_ids = continuation_suppressed_run_ids(projection)
+
     projection
     |> ordered_attempts()
     |> Enum.filter(fn attempt ->
       attempt.status in [:available, :retry_scheduled] and not after?(attempt.visible_at, at) and
         not terminal_run?(projection, attempt.run_id) and
-        not continuation_fenced?(projection, attempt.run_id)
+        not MapSet.member?(suppressed_run_ids, attempt.run_id)
     end)
   end
 
   @doc false
   @spec expired_claims(t(), DateTime.t()) :: [ActionAttempt.t()]
   def expired_claims(%__MODULE__{} = projection, %DateTime{} = at) do
+    suppressed_run_ids = continuation_suppressed_run_ids(projection)
+
     projection
     |> ordered_attempts()
     |> Enum.filter(fn attempt ->
       attempt.status == :claimed and not is_nil(attempt.lease_until) and
         not after?(attempt.lease_until, at) and not terminal_run?(projection, attempt.run_id) and
-        not continuation_fenced?(projection, attempt.run_id)
+        not MapSet.member?(suppressed_run_ids, attempt.run_id)
     end)
   end
 
@@ -183,12 +187,34 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @doc false
   @spec results_ready_to_apply(t()) :: [ActionAttempt.t()]
   def results_ready_to_apply(%__MODULE__{} = projection) do
+    suppressed_run_ids = continuation_suppressed_run_ids(projection)
+
     projection
     |> completed_results()
     |> Enum.reject(
       &(&1.applied? or terminal_run?(projection, &1.run_id) or
-          continuation_fenced?(projection, &1.run_id))
+          MapSet.member?(suppressed_run_ids, &1.run_id))
     )
+  end
+
+  @doc false
+  @spec continuation_suppressed_run_ids(t()) :: MapSet.t(String.t())
+  def continuation_suppressed_run_ids(%__MODULE__{
+        continuation_fences: fences,
+        continuation_repairs: repairs
+      }) do
+    pending_successor_run_ids =
+      fences
+      |> Enum.reject(fn {predecessor_run_id, _fence} ->
+        Map.has_key?(repairs, predecessor_run_id)
+      end)
+      |> Enum.map(fn {_predecessor_run_id, fence} -> fence.successor_run_id end)
+      |> MapSet.new()
+
+    fences
+    |> Map.keys()
+    |> MapSet.new()
+    |> MapSet.union(pending_successor_run_ids)
   end
 
   @doc false

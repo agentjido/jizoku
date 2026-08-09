@@ -16,6 +16,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.Journal
+  alias Squidie.Runtime.Journal.Commands.Continuation
   alias Squidie.Runtime.Journal.Compensation
   alias Squidie.Runtime.Journal.DispatchScheduler
   alias Squidie.Runtime.Journal.EntryBuilder
@@ -118,6 +119,10 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp execute_after_recovery(storage, queue, %DateTime{} = now, owner_id, opts, :none) do
+    claim_after_recovery(storage, queue, now, owner_id, opts)
+  end
+
+  defp claim_after_recovery(storage, queue, %DateTime{} = now, owner_id, opts) do
     with {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
          {:ok, claim_result} <- claim_next(storage, dispatch_agent, owner_id, opts, now) do
       execute_claim_result_or_repair(
@@ -132,16 +137,17 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp execute_claim_result_or_repair(
-         _storage,
-         _queue,
+         storage,
+         queue,
          _now,
          _opts,
          dispatch_agent,
          :none
        ) do
-    case DispatchAgent.continuation_fences(dispatch_agent) do
-      [] -> {:ok, :none}
-      [%{run_id: run_id} | _remaining] -> {:error, {:continuation_repair_required, run_id}}
+    case repair_pending_continuation(storage, dispatch_agent, queue) do
+      {:ok, :none} -> {:ok, :none}
+      {:ok, successor} -> {:ok, successor}
+      {:error, _reason} = error -> error
     end
   end
 
@@ -2243,19 +2249,45 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp recover_pending_progressions(storage, dispatch_agent, queue, %DateTime{} = now) do
-    fenced_run_ids = continuation_fenced_run_ids(dispatch_agent)
+    with {:ok, continuation_recovery} <-
+           pending_continuation_recovery(storage, dispatch_agent, queue) do
+      case continuation_recovery do
+        {:recovered, %Inspection.Snapshot{}} = recovered ->
+          {:ok, recovered}
+
+        deferred_recovery ->
+          recover_ordinary_progressions(
+            storage,
+            dispatch_agent,
+            queue,
+            now,
+            deferred_recovery
+          )
+      end
+    end
+  end
+
+  defp recover_ordinary_progressions(
+         storage,
+         dispatch_agent,
+         queue,
+         %DateTime{} = now,
+         deferred_recovery
+       ) do
+    suppressed_run_ids =
+      DispatchProtocol.Projection.continuation_suppressed_run_ids(dispatch_agent.state.projection)
 
     attempts =
       dispatch_agent.state.projection.attempts
       |> Map.values()
-      |> Enum.reject(&MapSet.member?(fenced_run_ids, &1.run_id))
+      |> Enum.reject(&MapSet.member?(suppressed_run_ids, &1.run_id))
 
     case recover_pending_dispatches(
            storage,
            dispatch_agent,
            queue,
            attempts,
-           fenced_run_ids,
+           suppressed_run_ids,
            now
          ) do
       {:ok, :none} ->
@@ -2267,7 +2299,7 @@ defmodule Squidie.Runtime.Journal.Executor do
             recover_failed_progression(storage, dispatch_agent, queue, attempt, now)
 
           true ->
-            {:ok, :none}
+            {:ok, deferred_recovery}
         end
 
       {:ok, {:recovered, %Inspection.Snapshot{}}} = recovered ->
@@ -2283,13 +2315,13 @@ defmodule Squidie.Runtime.Journal.Executor do
          dispatch_agent,
          queue,
          attempts,
-         fenced_run_ids,
+         suppressed_run_ids,
          %DateTime{} = now
        ) do
     dispatch_agent
     |> DispatchAgent.run_ids()
     |> MapSet.union(attempt_run_ids(attempts))
-    |> MapSet.difference(fenced_run_ids)
+    |> MapSet.difference(suppressed_run_ids)
     |> Enum.sort()
     |> Enum.reduce_while({:ok, :none}, fn run_id, {:ok, :none} ->
       case WorkflowAgent.rebuild(storage, run_id) do
@@ -2302,11 +2334,52 @@ defmodule Squidie.Runtime.Journal.Executor do
     end)
   end
 
-  defp continuation_fenced_run_ids(dispatch_agent) do
+  defp pending_continuation_recovery(storage, dispatch_agent, queue) do
+    case repair_pending_continuation(storage, dispatch_agent, queue) do
+      {:ok, :none} -> {:ok, :none}
+      {:ok, successor} -> {:ok, {:recovered, successor}}
+      {:error, _reason} -> {:ok, :none}
+    end
+  end
+
+  defp repair_pending_continuation(storage, dispatch_agent, queue) do
     dispatch_agent
-    |> DispatchAgent.continuation_fences()
-    |> Enum.map(& &1.run_id)
-    |> MapSet.new()
+    |> DispatchAgent.pending_continuation_fences()
+    |> repair_pending_continuation(storage, queue, :no_error)
+  end
+
+  defp repair_pending_continuation([], _storage, _queue, :no_error) do
+    {:ok, :none}
+  end
+
+  defp repair_pending_continuation([], _storage, _queue, {:first_error, first_error}) do
+    {:error, first_error}
+  end
+
+  defp repair_pending_continuation(
+         [%{run_id: run_id} | remaining],
+         storage,
+         queue,
+         first_error
+       ) do
+    case Continuation.repair_fenced_run(storage, run_id, queue) do
+      {:ok, %{successor: successor}} ->
+        {:ok, successor}
+
+      {:error, reason} ->
+        first_error =
+          case first_error do
+            :no_error -> {:first_error, reason}
+            {:first_error, _reason} = existing -> existing
+          end
+
+        repair_pending_continuation(
+          remaining,
+          storage,
+          queue,
+          first_error
+        )
+    end
   end
 
   defp attempt_run_ids(attempts) do

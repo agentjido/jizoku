@@ -267,6 +267,59 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
              Projection.visible_attempts(projection, @visible_at)
   end
 
+  test "a pending fence hides its exposed successor until the repair receipt" do
+    visible_key = "#{@successor_run_id}:visible:1"
+    claimed_key = "#{@successor_run_id}:claimed:1"
+    completed_key = "#{@successor_run_id}:completed:1"
+
+    pending_projection =
+      Projection.rebuild([
+        entry!(:run_continuation_fenced, continuation_fence_attrs()),
+        entry!(
+          :attempt_scheduled,
+          scheduled_attrs(run_id: @successor_run_id, runnable_key: visible_key)
+        ),
+        entry!(
+          :attempt_scheduled,
+          scheduled_attrs(run_id: @successor_run_id, runnable_key: claimed_key)
+        ),
+        entry!(
+          :attempt_claimed,
+          claimed_attrs(run_id: @successor_run_id, runnable_key: claimed_key)
+        ),
+        entry!(
+          :attempt_scheduled,
+          scheduled_attrs(run_id: @successor_run_id, runnable_key: completed_key)
+        ),
+        entry!(
+          :attempt_claimed,
+          claimed_attrs(run_id: @successor_run_id, runnable_key: completed_key)
+        ),
+        entry!(
+          :attempt_completed,
+          completed_attrs(run_id: @successor_run_id, runnable_key: completed_key)
+        )
+      ])
+
+    assert Projection.visible_attempts(pending_projection, @visible_at) == []
+    assert Projection.expired_claims(pending_projection, @expired_at) == []
+    assert Projection.results_ready_to_apply(pending_projection) == []
+
+    repaired_projection =
+      Projection.replay(pending_projection, [
+        entry!(:run_continuation_repaired, continuation_repair_attrs())
+      ])
+
+    assert [%{run_id: @successor_run_id, runnable_key: ^visible_key}] =
+             Projection.visible_attempts(repaired_projection, @visible_at)
+
+    assert [%{run_id: @successor_run_id, runnable_key: ^claimed_key}] =
+             Projection.expired_claims(repaired_projection, @expired_at)
+
+    assert [%{run_id: @successor_run_id, runnable_key: ^completed_key}] =
+             Projection.results_ready_to_apply(repaired_projection)
+  end
+
   test "retains a completed continuation repair and removes it from pending fences" do
     fence = entry!(:run_continuation_fenced, continuation_fence_attrs())
 
