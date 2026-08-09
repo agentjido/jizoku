@@ -62,6 +62,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
           attempts: %{optional(String.t()) => ActionAttempt.t()},
           anomalies: [anomaly()],
           continuation_fences: %{optional(String.t()) => map()},
+          continuation_repairs: %{optional(String.t()) => map()},
           queued_run_ids: string_set(),
           terminal_runs: string_set()
         }
@@ -69,6 +70,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   defstruct attempts: %{},
             anomalies: [],
             continuation_fences: %{},
+            continuation_repairs: %{},
             queued_run_ids: MapSet.new(),
             terminal_runs: MapSet.new()
 
@@ -77,6 +79,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   def new do
     %__MODULE__{
       continuation_fences: %{},
+      continuation_repairs: %{},
       queued_run_ids: MapSet.new(),
       terminal_runs: MapSet.new()
     }
@@ -101,6 +104,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
       attempts: normalize_attempts(Map.get(projection, :attempts, %{})),
       anomalies: Map.get(projection, :anomalies, []),
       continuation_fences: Map.get(projection, :continuation_fences, %{}),
+      continuation_repairs: Map.get(projection, :continuation_repairs, %{}),
       queued_run_ids: Map.get(projection, :queued_run_ids, MapSet.new()),
       terminal_runs: Map.get(projection, :terminal_runs, MapSet.new())
     }
@@ -109,7 +113,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @doc false
   @spec checkpoint_compatible?(term()) :: boolean()
   def checkpoint_compatible?(%__MODULE__{} = projection) do
-    Map.has_key?(projection, :continuation_fences)
+    Map.has_key?(projection, :continuation_fences) and
+      Map.has_key?(projection, :continuation_repairs)
   end
 
   def checkpoint_compatible?(_projection) do
@@ -194,6 +199,22 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   end
 
   @doc false
+  @spec continuation_repair(t(), String.t()) :: map() | nil
+  def continuation_repair(%__MODULE__{continuation_repairs: repairs}, run_id)
+      when is_binary(run_id) do
+    Map.get(repairs, run_id)
+  end
+
+  @doc false
+  @spec pending_continuation_fences(t()) :: [map()]
+  def pending_continuation_fences(%__MODULE__{} = projection) do
+    projection.continuation_fences
+    |> Map.drop(Map.keys(projection.continuation_repairs))
+    |> Map.values()
+    |> Enum.sort_by(& &1.run_id)
+  end
+
+  @doc false
   @spec valid_continuation_fence?(term()) :: boolean()
   def valid_continuation_fence?(data) do
     continuation_fence_data?(data)
@@ -235,6 +256,17 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
        ) do
     if continuation_fence_data?(entry.data) do
       put_continuation_fence(projection, entry)
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :run_continuation_repaired} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if continuation_fence_data?(entry.data) do
+      put_continuation_repair(projection, entry)
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
@@ -352,6 +384,44 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
         %__MODULE__{
           projection
           | continuation_fences: Map.put(projection.continuation_fences, run_id, data)
+        }
+    end
+  end
+
+  defp put_continuation_repair(
+         %__MODULE__{} = projection,
+         %Entry{data: %{run_id: run_id} = data} = entry
+       ) do
+    case Map.fetch(projection.continuation_fences, run_id) do
+      {:ok, fence} ->
+        put_matching_continuation_repair(projection, entry, fence, data)
+
+      :error ->
+        add_anomaly(projection, entry, :orphaned_continuation_repair)
+    end
+  end
+
+  defp put_matching_continuation_repair(projection, entry, fence, data) do
+    if same_continuation_fence?(fence, data) do
+      retain_continuation_repair(projection, entry, data)
+    else
+      add_anomaly(projection, entry, :conflicting_continuation_repair)
+    end
+  end
+
+  defp retain_continuation_repair(%__MODULE__{} = projection, entry, data) do
+    case Map.fetch(projection.continuation_repairs, data.run_id) do
+      {:ok, existing} ->
+        if same_continuation_fence?(existing, data) do
+          projection
+        else
+          add_anomaly(projection, entry, :conflicting_continuation_repair)
+        end
+
+      :error ->
+        %__MODULE__{
+          projection
+          | continuation_repairs: Map.put(projection.continuation_repairs, data.run_id, data)
         }
     end
   end

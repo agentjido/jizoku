@@ -197,6 +197,15 @@ defmodule Squidie.Runtime.DispatchAgent do
   end
 
   @doc false
+  @spec pending_continuation_fences(Agent.t()) :: [map()]
+  def pending_continuation_fences(%Agent{
+        agent_module: __MODULE__,
+        state: %State{projection: projection}
+      }) do
+    Projection.pending_continuation_fences(projection)
+  end
+
+  @doc false
   @spec fence_run_for_continuation(storage_config(), Agent.t(), map(), keyword()) ::
           {:ok, continuation_fence_update()} | {:error, term()}
   def fence_run_for_continuation(storage, agent, fence, opts \\ [])
