@@ -64,6 +64,11 @@ defmodule Squidie.Runtime.DispatchAgent do
           required(:fence) => map(),
           required(:created?) => boolean()
         }
+  @type continuation_repair_update :: %{
+          required(:agent) => Agent.t(),
+          required(:repair) => map(),
+          required(:created?) => boolean()
+        }
   @type storage_config :: Journal.storage_config()
 
   @doc """
@@ -242,6 +247,48 @@ defmodule Squidie.Runtime.DispatchAgent do
 
   def fence_run_for_continuation(_storage, _agent, _fence, _opts) do
     {:error, {:invalid_continuation_fence, :invalid}}
+  end
+
+  @doc false
+  @spec acknowledge_continuation_repair(
+          storage_config(),
+          Agent.t(),
+          String.t(),
+          keyword()
+        ) :: {:ok, continuation_repair_update()} | {:error, term()}
+  def acknowledge_continuation_repair(storage, agent, run_id, opts \\ [])
+
+  def acknowledge_continuation_repair(
+        storage,
+        %Agent{
+          agent_module: __MODULE__,
+          state: %State{
+            queue: queue,
+            projection: %Projection{} = projection,
+            thread_rev: thread_rev
+          }
+        } = agent,
+        run_id,
+        opts
+      )
+      when is_binary(queue) and is_binary(run_id) and run_id != "" and
+             is_integer(thread_rev) and thread_rev >= 0 and is_list(opts) do
+    with :ok <- validate_agent_partition(storage, agent),
+         {:ok, repair_entry} <- continuation_repair_entry(projection, run_id, queue, opts),
+         {:ok, mode} <- continuation_repair_mode(projection, run_id) do
+      persist_continuation_repair(
+        mode,
+        storage,
+        agent,
+        projection,
+        thread_rev,
+        repair_entry
+      )
+    end
+  end
+
+  def acknowledge_continuation_repair(_storage, _agent, _run_id, _opts) do
+    {:error, {:invalid_continuation_repair, :invalid}}
   end
 
   @doc """
@@ -551,6 +598,32 @@ defmodule Squidie.Runtime.DispatchAgent do
     end
   end
 
+  defp continuation_repair_entry(%Projection{} = projection, run_id, queue, opts) do
+    case Projection.continuation_fence(projection, run_id) do
+      %{queue: ^queue} = fence ->
+        with {:ok, now} <- lifecycle_now(opts) do
+          fence
+          |> Map.put(:occurred_at, now)
+          |> then(&DispatchProtocol.new_entry(:run_continuation_repaired, &1))
+          |> normalize_continuation_repair_entry_result()
+        end
+
+      nil ->
+        {:error, {:continuation_fence_not_found, run_id}}
+
+      _wrong_queue ->
+        {:error, {:invalid_continuation_repair, :wrong_queue}}
+    end
+  end
+
+  defp normalize_continuation_repair_entry_result({:ok, entry}) do
+    {:ok, entry}
+  end
+
+  defp normalize_continuation_repair_entry_result({:error, _reason}) do
+    {:error, {:invalid_continuation_repair, :invalid}}
+  end
+
   defp normalize_continuation_fence_entry_result({:ok, entry}) do
     {:ok, entry}
   end
@@ -637,6 +710,47 @@ defmodule Squidie.Runtime.DispatchAgent do
        %{
          agent: fenced_agent,
          fence: Projection.continuation_fence(fenced_agent.state.projection, entry.data.run_id),
+         created?: true
+       }}
+    end
+  end
+
+  defp continuation_repair_mode(%Projection{} = projection, run_id) do
+    case Projection.continuation_repair(projection, run_id) do
+      nil -> {:ok, :new}
+      existing -> {:ok, {:existing, existing}}
+    end
+  end
+
+  defp persist_continuation_repair(
+         {:existing, existing},
+         _storage,
+         %Agent{} = agent,
+         %Projection{},
+         _thread_rev,
+         _entry
+       ) do
+    {:ok, %{agent: agent, repair: existing, created?: false}}
+  end
+
+  defp persist_continuation_repair(
+         :new,
+         storage,
+         %Agent{} = agent,
+         %Projection{} = projection,
+         thread_rev,
+         entry
+       ) do
+    with {:ok, repaired_agent} <-
+           persist_dispatch_entry(storage, agent, projection, thread_rev, entry) do
+      {:ok,
+       %{
+         agent: repaired_agent,
+         repair:
+           Projection.continuation_repair(
+             repaired_agent.state.projection,
+             entry.data.run_id
+           ),
          created?: true
        }}
     end

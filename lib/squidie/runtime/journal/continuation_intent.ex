@@ -35,6 +35,7 @@ defmodule Squidie.Runtime.Journal.ContinuationIntent do
           trace: map(),
           occurred_at: DateTime.t()
         }
+  @type current_target :: %{workflow: module(), trigger: atom()}
 
   @request_fields [
     :run_id,
@@ -73,12 +74,20 @@ defmodule Squidie.Runtime.Journal.ContinuationIntent do
   @doc false
   @spec validate_current_target(t()) :: :ok | {:error, term()}
   def validate_current_target(%__MODULE__{} = intent) do
-    with {:ok, _workflow, definition} <- Definition.load_serialized(intent.workflow),
+    with {:ok, _target} <- resolve_current_target(intent) do
+      :ok
+    end
+  end
+
+  @doc false
+  @spec resolve_current_target(t()) :: {:ok, current_target()} | {:error, term()}
+  def resolve_current_target(%__MODULE__{} = intent) do
+    with {:ok, workflow, definition} <- Definition.load_serialized(intent.workflow),
          :ok <- validate_definition_identity(definition, intent),
          {:ok, trigger} <- target_trigger(definition, intent.trigger),
          {:ok, resolved_input} <- Definition.resolve_payload(trigger, intent.input) do
       if resolved_input == intent.input do
-        :ok
+        {:ok, %{workflow: workflow, trigger: trigger.name}}
       else
         {:error, {:invalid_continuation_target, :unresolved_input}}
       end

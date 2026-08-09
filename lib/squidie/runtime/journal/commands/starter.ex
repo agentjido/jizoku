@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.Commands.Starter do
   @moduledoc """
   Journal-backed workflow start boundary for the Jido-native runtime.
@@ -118,6 +119,46 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
 
         {:error, :not_found} ->
           start_run(workflow, trigger_name, resolved_input, opts)
+
+        {:error, _reason} = error ->
+          error
+      end
+    end
+  end
+
+  @doc false
+  @spec repair_existing_continuation_from_intent(String.t(), String.t(), map(), keyword()) ::
+          {:ok, Inspection.Snapshot.t()} | {:error, start_error() | :not_found}
+  def repair_existing_continuation_from_intent(
+        workflow_name,
+        trigger_name,
+        resolved_input,
+        opts
+      )
+      when is_binary(workflow_name) and workflow_name != "" and is_binary(trigger_name) and
+             trigger_name != "" and
+             is_map(resolved_input) and is_list(opts) do
+    with :ok <- validate_command_signal(opts),
+         :ok <- validate_required_continuation_options(opts),
+         {:ok, storage} <- Options.storage_from_opts(opts),
+         {:ok, queue} <- Options.queue_from_opts(opts),
+         {:ok, now} <- Options.now_from_opts(opts),
+         {:ok, run_id} <- run_id(opts) do
+      case Journal.load_thread(storage, {:run, run_id}) do
+        {:ok, _thread} ->
+          repair_existing_continuation(
+            storage,
+            workflow_name,
+            trigger_name,
+            resolved_input,
+            run_id,
+            queue,
+            now,
+            opts
+          )
+
+        {:error, :not_found} ->
+          {:error, :not_found}
 
         {:error, _reason} = error ->
           error
@@ -790,7 +831,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
   end
 
   defp ensure_run_indexed(storage, workflow, run_id, queue, %DateTime{} = now) do
-    workflow = Definition.serialize_workflow(workflow)
+    workflow = serialized_workflow(workflow)
 
     with :ok <- ensure_workflow_run_indexed(storage, workflow, run_id, queue, now) do
       ensure_global_run_cataloged(storage, workflow, run_id, queue, now)
@@ -807,6 +848,14 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
            }) do
       ensure_run_index_entry(storage, workflow, run_id, entry, @dispatch_schedule_retries)
     end
+  end
+
+  defp serialized_workflow(workflow) when is_atom(workflow) do
+    Definition.serialize_workflow(workflow)
+  end
+
+  defp serialized_workflow(workflow) when is_binary(workflow) and workflow != "" do
+    workflow
   end
 
   defp ensure_global_run_cataloged(storage, workflow, run_id, queue, %DateTime{} = now) do
@@ -1133,7 +1182,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
       |> Map.fetch!(:continued_from)
 
     existing_origin == public_continuation_origin(expected_origin) and
-      projection.trigger == Atom.to_string(Map.fetch!(expected.trigger, :name)) and
+      projection.trigger == Definition.serialize_trigger(Map.fetch!(expected.trigger, :name)) and
       projection.input == expected.input
   end
 
@@ -1158,26 +1207,28 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
          %DateTime{} = now,
          opts
        ) do
+    workflow_name = serialized_workflow(workflow)
+
     with {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
          {:ok, existing_fingerprint} <- persisted_definition_fingerprint(storage, run_id),
          :ok <-
            validate_persisted_continuation(
              workflow_agent.state.projection,
              existing_fingerprint,
-             workflow,
+             workflow_name,
              trigger_name,
              input,
              queue,
              opts
            ) do
-      complete_started_run(storage, workflow, run_id, queue, now, :existing, opts)
+      complete_started_run(storage, workflow_name, run_id, queue, now, :existing, opts)
     end
   end
 
   defp validate_persisted_continuation(
          %Projection{} = projection,
          existing_fingerprint,
-         workflow,
+         workflow_name,
          trigger_name,
          input,
          queue,
@@ -1195,7 +1246,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
       expected = %{trigger: %{name: trigger_name}, input: input}
 
       cond do
-        projection.workflow != Definition.serialize_workflow(workflow) ->
+        projection.workflow != workflow_name ->
           {:error, :conflict}
 
         not continuation_identity_matches?(projection, expected, expected_origin) ->

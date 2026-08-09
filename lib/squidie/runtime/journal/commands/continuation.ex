@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.Journal.Commands.Continuation do
   @moduledoc false
 
@@ -5,18 +6,27 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.Journal
+  alias Squidie.Runtime.Journal.Commands.Starter
   alias Squidie.Runtime.Journal.Compensation
   alias Squidie.Runtime.Journal.ContinuationIntent
   alias Squidie.Runtime.Journal.Options
+  alias Squidie.Runtime.Journal.Storage
   alias Squidie.Runtime.Journal.WorkflowDefinitionLoader
+  alias Squidie.Runtime.Signal
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
 
   @run_append_retries 25
+  @repair_receipt_retries 25
   @type commit_result :: %{
           required(:created?) => boolean(),
           required(:intent) => ContinuationIntent.t(),
           required(:workflow_agent) => Agent.t()
+        }
+  @type repair_result :: %{
+          required(:predecessor) => commit_result(),
+          required(:successor) => Squidie.ReadModel.Inspection.Snapshot.t(),
+          required(:receipt_created?) => boolean()
         }
 
   @doc false
@@ -30,6 +40,32 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
   end
 
   def commit_predecessor(_storage, _queue, _run_id) do
+    {:error, {:invalid_continuation, :invalid}}
+  end
+
+  @doc false
+  @spec repair_fenced_run(Journal.storage_config(), String.t(), String.t()) ::
+          {:ok, repair_result()} | {:error, term()}
+  def repair_fenced_run(storage, run_id, queue)
+      when is_binary(run_id) and run_id != "" and is_binary(queue) and queue != "" do
+    with {:ok, predecessor} <- commit_predecessor(storage, run_id, queue),
+         {:ok, successor} <- ensure_successor(storage, predecessor.intent),
+         {:ok, receipt} <-
+           acknowledge_repair(
+             storage,
+             predecessor.intent,
+             @repair_receipt_retries
+           ) do
+      {:ok,
+       %{
+         predecessor: predecessor,
+         successor: successor,
+         receipt_created?: receipt.created?
+       }}
+    end
+  end
+
+  def repair_fenced_run(_storage, _run_id, _queue) do
     {:error, {:invalid_continuation, :invalid}}
   end
 
@@ -332,6 +368,86 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
            DispatchProtocol.new_entry(:run_continuation_requested, request_attrs),
          {:ok, terminal_entry} <- DispatchProtocol.new_entry(:run_terminal, terminal_attrs) do
       {:ok, [request_entry, terminal_entry]}
+    end
+  end
+
+  defp ensure_successor(storage, %ContinuationIntent{} = intent) do
+    opts = continuation_start_options(storage, intent)
+
+    case Starter.repair_existing_continuation_from_intent(
+           intent.workflow,
+           intent.trigger,
+           intent.input,
+           opts
+         ) do
+      {:error, :not_found} ->
+        start_missing_successor(storage, intent, opts)
+
+      result ->
+        result
+    end
+  end
+
+  defp start_missing_successor(storage, %ContinuationIntent{} = intent, opts) do
+    with {:ok, target} <- ContinuationIntent.resolve_current_target(intent),
+         {:ok, signal} <- continuation_start_signal(storage, intent) do
+      Starter.start_continuation_from_intent(
+        target.workflow,
+        target.trigger,
+        intent.input,
+        Keyword.put(opts, :command_signal, signal)
+      )
+    end
+  end
+
+  defp continuation_start_options(storage, %ContinuationIntent{} = intent) do
+    [
+      journal_storage: storage,
+      partition: Storage.partition(storage),
+      queue: intent.queue,
+      run_id: intent.successor_run_id,
+      now: intent.occurred_at,
+      continuation_origin: %{
+        predecessor_run_id: intent.run_id,
+        continuation_key: intent.continuation_key
+      },
+      continuation_definition_identity: %{
+        definition_version: intent.definition_version,
+        definition_fingerprint: intent.definition_fingerprint
+      }
+    ]
+  end
+
+  defp continuation_start_signal(storage, %ContinuationIntent{} = intent) do
+    signal_id = "continuation:#{intent.successor_run_id}"
+
+    Signal.start_run(intent.workflow, intent.trigger, intent.input,
+      id: signal_id,
+      trace: intent.trace,
+      partition: Storage.partition(storage),
+      occurred_at: intent.occurred_at,
+      idempotency_key: signal_id
+    )
+  end
+
+  defp acknowledge_repair(_storage, _intent, 0) do
+    {:error, :conflict}
+  end
+
+  defp acknowledge_repair(storage, %ContinuationIntent{} = intent, retries_left) do
+    with {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, intent.queue) do
+      case DispatchAgent.acknowledge_continuation_repair(
+             storage,
+             dispatch_agent,
+             intent.run_id,
+             now: intent.occurred_at
+           ) do
+        {:error, :conflict} ->
+          acknowledge_repair(storage, intent, retries_left - 1)
+
+        result ->
+          result
+      end
     end
   end
 
