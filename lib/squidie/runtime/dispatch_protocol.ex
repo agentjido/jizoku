@@ -47,6 +47,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
           | :run_queued
           | :run_continuation_fenced
           | :run_continuation_repaired
+          | :run_continuation_aborted
           | :attempt_scheduled
           | :attempt_claimed
           | :attempt_heartbeat
@@ -75,6 +76,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
     :run_queued,
     :run_continuation_fenced,
     :run_continuation_repaired,
+    :run_continuation_aborted,
     :attempt_scheduled,
     :attempt_claimed,
     :attempt_heartbeat,
@@ -158,6 +160,20 @@ defmodule Squidie.Runtime.DispatchProtocol do
       :trace,
       :occurred_at
     ],
+    run_continuation_aborted: [
+      :run_id,
+      :successor_run_id,
+      :continuation_key,
+      :workflow,
+      :trigger,
+      :input,
+      :definition,
+      :definition_fingerprint,
+      :queue,
+      :trace,
+      :abort_reason,
+      :occurred_at
+    ],
     attempt_scheduled: [
       :run_id,
       :runnable_key,
@@ -237,7 +253,11 @@ defmodule Squidie.Runtime.DispatchProtocol do
   def new_entry(type, _attrs) when is_atom(type), do: {:error, {:unknown_entry_type, type}}
 
   defp normalize_attrs(attrs, type)
-       when type in [:run_continuation_fenced, :run_continuation_repaired] do
+       when type in [
+              :run_continuation_fenced,
+              :run_continuation_repaired,
+              :run_continuation_aborted
+            ] do
     attrs
     |> Map.put_new(:definition_version, nil)
     |> Map.update(:continuation_key, nil, &normalize_thread_id/1)
