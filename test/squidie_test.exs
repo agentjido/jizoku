@@ -9484,6 +9484,33 @@ defmodule SquidieTest do
                )
     end
 
+    test "cancel/2 rejects continued journal runs" do
+      assert {:ok, %Snapshot{} = started} =
+               Squidie.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_cancel_continued"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      append_read_model_run_entries([
+        read_model_entry!(:run_terminal, %{
+          run_id: started.run_id,
+          status: :continued,
+          occurred_at: @read_model_visible_at
+        })
+      ])
+
+      assert {:error, {:invalid_transition, :continued, :cancelling}} =
+               Squidie.cancel(started.run_id,
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue
+               )
+    end
+
     test "replay/2 creates a fresh journal run from source input" do
       assert {:ok, %Snapshot{} = source} =
                Squidie.start(
@@ -12601,7 +12628,7 @@ defmodule SquidieTest do
       assert recovered_snapshot.status == :completed
     end
 
-    test "execute_next/1 fails closed when heartbeat detects a terminal run" do
+    test "execute_next/1 stops a heartbeated claim when the run continues" do
       parent = self()
       queue = "executor-heartbeat-terminal-#{System.unique_integer([:positive])}"
       now = DateTime.utc_now()
@@ -12645,15 +12672,26 @@ defmodule SquidieTest do
 
       assert_receive {:heartbeat_terminal_step_started, _step_pid}, 1_000
 
-      assert {:ok, %Snapshot{status: :cancelled}} =
-               Squidie.cancel(started_snapshot.run_id,
-                 runtime: :journal,
-                 journal_storage: @read_model_storage,
-                 queue: queue,
-                 now: DateTime.utc_now()
-               )
+      continued_at = DateTime.utc_now()
+
+      append_read_model_run_entries([
+        read_model_entry!(:run_terminal, %{
+          run_id: started_snapshot.run_id,
+          status: :continued,
+          occurred_at: continued_at
+        })
+      ])
 
       assert_receive {:DOWN, ^executor_ref, :process, ^executor_pid, :killed}, 1_000
+
+      assert {:ok, run_entries} = load_read_model_run_entries(started_snapshot.run_id)
+      assert Enum.at(run_entries, -1).type == :run_terminal
+      refute Enum.any?(run_entries, &(&1.type == :runnable_applied))
+
+      assert {:ok, dispatch_entries} =
+               Journal.load_entries(@read_model_storage, {:dispatch, queue})
+
+      refute Enum.any?(dispatch_entries, &(&1.type in [:attempt_completed, :attempt_failed]))
     end
 
     test "execute_next/1 exposes safe attempt metadata to native step context" do
@@ -14035,6 +14073,67 @@ defmodule SquidieTest do
              ]
     end
 
+    test "execute_next/1 does not recover completed attempts after continuation" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               Squidie.start(
+                 PaymentRecoveryWorkflow,
+                 %{account_id: "acct_continued_recovery"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, dispatch_agent} =
+               DispatchAgent.rebuild(@read_model_storage, @read_model_queue)
+
+      assert {:ok, %{agent: claimed_agent, attempt: attempt}} =
+               DispatchAgent.claim_next(@read_model_storage, dispatch_agent, "worker_1",
+                 claim_id: "claim_1",
+                 claim_token: "token_1",
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %{}} =
+               DispatchAgent.complete(
+                 @read_model_storage,
+                 claimed_agent,
+                 attempt.runnable_key,
+                 "claim_1",
+                 "token_1",
+                 %{gateway_check: %{account_id: "acct_continued_recovery", status: "healthy"}},
+                 now: @read_model_visible_at
+               )
+
+      append_read_model_run_entries([
+        read_model_entry!(:run_terminal, %{
+          run_id: started_snapshot.run_id,
+          status: :continued,
+          occurred_at: DateTime.add(@read_model_visible_at, 1, :second)
+        })
+      ])
+
+      assert {:ok, :none} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_2",
+                 claim_id: "claim_2",
+                 claim_token: "token_2",
+                 now: DateTime.add(@read_model_visible_at, 2, :second)
+               )
+
+      assert {:ok, run_entries} =
+               load_read_model_run_entries(started_snapshot.run_id)
+
+      assert Enum.map(run_entries, & &1.type) == [
+               :run_started,
+               :runnables_planned,
+               :run_terminal
+             ]
+    end
+
     test "execute_next/1 recovers a failed attempt that crashed before run progression" do
       assert {:ok, %Snapshot{} = started_snapshot} =
                Squidie.start(
@@ -14088,6 +14187,67 @@ defmodule SquidieTest do
 
       assert recovered_snapshot.status == :failed
       assert recovered_snapshot.reason == :terminal
+
+      assert {:ok, run_entries} =
+               load_read_model_run_entries(started_snapshot.run_id)
+
+      assert Enum.map(run_entries, & &1.type) == [
+               :run_started,
+               :runnables_planned,
+               :run_terminal
+             ]
+    end
+
+    test "execute_next/1 does not recover failed attempts after continuation" do
+      assert {:ok, %Snapshot{} = started_snapshot} =
+               Squidie.start(
+                 JournalFailureWorkflow,
+                 %{account_id: "acct_continued_failure"},
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, dispatch_agent} =
+               DispatchAgent.rebuild(@read_model_storage, @read_model_queue)
+
+      assert {:ok, %{agent: claimed_agent, attempt: attempt}} =
+               DispatchAgent.claim_next(@read_model_storage, dispatch_agent, "worker_1",
+                 claim_id: "claim_1",
+                 claim_token: "token_1",
+                 now: @read_model_visible_at
+               )
+
+      assert {:ok, %{}} =
+               DispatchAgent.fail(
+                 @read_model_storage,
+                 claimed_agent,
+                 attempt.runnable_key,
+                 "claim_1",
+                 "token_1",
+                 %{code: "gateway_timeout", message: "gateway timeout", retryable?: false},
+                 now: @read_model_visible_at
+               )
+
+      append_read_model_run_entries([
+        read_model_entry!(:run_terminal, %{
+          run_id: started_snapshot.run_id,
+          status: :continued,
+          occurred_at: DateTime.add(@read_model_visible_at, 1, :second)
+        })
+      ])
+
+      assert {:ok, :none} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: @read_model_storage,
+                 queue: @read_model_queue,
+                 owner_id: "worker_2",
+                 claim_id: "claim_2",
+                 claim_token: "token_2",
+                 now: DateTime.add(@read_model_visible_at, 2, :second)
+               )
 
       assert {:ok, run_entries} =
                load_read_model_run_entries(started_snapshot.run_id)

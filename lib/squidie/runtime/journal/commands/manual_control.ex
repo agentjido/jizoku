@@ -14,6 +14,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.CommandReceipt
+  alias Squidie.Runtime.Journal.DispatchScheduler
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.ManualAction
   alias Squidie.Runtime.Signal
@@ -55,7 +56,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
            resolve_or_repair(storage, run_id, queue, attrs, command, @run_append_retries),
          {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
          {:ok, _schedule_update} <-
-           schedule_pending_dispatches(
+           DispatchScheduler.schedule_pending_dispatches(
              storage,
              workflow_agent,
              dispatch_agent,
@@ -103,7 +104,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
            resolve_or_repair(storage, run_id, queue, attrs, signal, @run_append_retries),
          {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
          {:ok, _schedule_update} <-
-           schedule_pending_dispatches(
+           DispatchScheduler.schedule_pending_dispatches(
              storage,
              workflow_agent,
              dispatch_agent,
@@ -141,7 +142,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
            ),
          {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
          {:ok, _schedule_update} <-
-           schedule_pending_dispatches(
+           DispatchScheduler.schedule_pending_dispatches(
              storage,
              workflow_agent,
              dispatch_agent,
@@ -183,7 +184,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
            ),
          {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
          {:ok, _schedule_update} <-
-           schedule_pending_dispatches(
+           DispatchScheduler.schedule_pending_dispatches(
              storage,
              workflow_agent,
              dispatch_agent,
@@ -780,21 +781,6 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
          )
        ]}
     end
-  end
-
-  defp schedule_pending_dispatches(_storage, workflow_agent, dispatch_agent, _now, _retries_left)
-       when workflow_agent.state.projection.terminal_status in [:completed, :failed, :cancelled] do
-    {:ok, %{agent: dispatch_agent, runnables: []}}
-  end
-
-  defp schedule_pending_dispatches(storage, workflow_agent, dispatch_agent, now, retries_left) do
-    Squidie.Runtime.Journal.DispatchScheduler.schedule_pending_dispatches(
-      storage,
-      workflow_agent,
-      dispatch_agent,
-      now,
-      retries_left
-    )
   end
 
   defp validate_resume(attrs) do

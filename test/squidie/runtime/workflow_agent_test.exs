@@ -6,6 +6,7 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.CommandReceipt
+  alias Squidie.Runtime.Journal.DispatchScheduler
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
   alias Squidie.Test.TelemetryCapture
@@ -904,6 +905,46 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
                restarted_workflow_agent,
                empty_dispatch_agent,
                now: @visible_at
+             )
+
+    assert {:error, :not_found} = Journal.load_entries(@storage, {:dispatch, "default"})
+  end
+
+  test "does not recover an unscheduled runnable after a run continued" do
+    assert {:ok, run_started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, run_terminal} =
+             DispatchProtocol.new_entry(:run_terminal, %{
+               run_id: @run_id,
+               status: :continued,
+               occurred_at: @visible_at
+             })
+
+    assert {:ok, runnables_planned} =
+             DispatchProtocol.new_entry(:runnables_planned, %{
+               run_id: @run_id,
+               runnables: [planned_runnable()],
+               occurred_at: @visible_at
+             })
+
+    assert {:ok, %{rev: 3}} =
+             Journal.append_entries(@storage, [run_started, runnables_planned, run_terminal])
+
+    assert {:ok, continued_workflow_agent} = WorkflowAgent.rebuild(@storage, @run_id)
+    assert {:ok, empty_dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+
+    assert {:ok, %{agent: ^empty_dispatch_agent, runnables: []}} =
+             DispatchScheduler.schedule_pending_dispatches(
+               @storage,
+               continued_workflow_agent,
+               empty_dispatch_agent,
+               @completed_at,
+               25
              )
 
     assert {:error, :not_found} = Journal.load_entries(@storage, {:dispatch, "default"})

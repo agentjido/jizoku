@@ -20,7 +20,6 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
   alias Squidie.Runtime.WorkflowAgent.Projection
 
   @run_append_retries 25
-  @terminal_statuses [:completed, :failed, :cancelled]
 
   @type cancel_error ::
           :not_found
@@ -125,7 +124,7 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
        }) do
     status = Projection.status(projection)
 
-    if status in @terminal_statuses do
+    if Projection.terminal?(projection) do
       {:error, {:invalid_transition, status, :cancelling}}
     else
       linked_children_started?(storage, projection)
