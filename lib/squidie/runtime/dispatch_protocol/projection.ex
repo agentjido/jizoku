@@ -12,6 +12,8 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.Trace
 
+  @continuation_abort_reasons [:predecessor_changed, :predecessor_terminal]
+
   @continuation_blocked_entry_types [
     :attempt_scheduled,
     :attempt_claimed,
@@ -63,6 +65,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
           anomalies: [anomaly()],
           continuation_fences: %{optional(String.t()) => map()},
           continuation_repairs: %{optional(String.t()) => map()},
+          continuation_aborts: %{optional(String.t()) => map()},
           queued_run_ids: string_set(),
           terminal_runs: string_set()
         }
@@ -71,6 +74,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
             anomalies: [],
             continuation_fences: %{},
             continuation_repairs: %{},
+            continuation_aborts: %{},
             queued_run_ids: MapSet.new(),
             terminal_runs: MapSet.new()
 
@@ -80,6 +84,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     %__MODULE__{
       continuation_fences: %{},
       continuation_repairs: %{},
+      continuation_aborts: %{},
       queued_run_ids: MapSet.new(),
       terminal_runs: MapSet.new()
     }
@@ -103,8 +108,9 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     %__MODULE__{
       attempts: normalize_attempts(Map.get(projection, :attempts, %{})),
       anomalies: Map.get(projection, :anomalies, []),
-      continuation_fences: Map.get(projection, :continuation_fences, %{}),
-      continuation_repairs: Map.get(projection, :continuation_repairs, %{}),
+      continuation_fences: normalize_map(Map.get(projection, :continuation_fences, %{})),
+      continuation_repairs: normalize_map(Map.get(projection, :continuation_repairs, %{})),
+      continuation_aborts: normalize_map(Map.get(projection, :continuation_aborts, %{})),
       queued_run_ids: Map.get(projection, :queued_run_ids, MapSet.new()),
       terminal_runs: Map.get(projection, :terminal_runs, MapSet.new())
     }
@@ -113,8 +119,16 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @doc false
   @spec checkpoint_compatible?(term()) :: boolean()
   def checkpoint_compatible?(%__MODULE__{} = projection) do
-    Map.has_key?(projection, :continuation_fences) and
-      Map.has_key?(projection, :continuation_repairs)
+    with true <- Map.has_key?(projection, :continuation_fences),
+         true <- Map.has_key?(projection, :continuation_repairs),
+         true <- Map.has_key?(projection, :continuation_aborts),
+         true <- is_map(projection.continuation_fences),
+         true <- is_map(projection.continuation_repairs),
+         true <- is_map(projection.continuation_aborts) do
+      continuation_resolutions_compatible?(projection)
+    else
+      _missing_or_malformed -> false
+    end
   end
 
   def checkpoint_compatible?(_projection) do
@@ -199,14 +213,18 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
 
   @doc false
   @spec continuation_suppressed_run_ids(t()) :: MapSet.t(String.t())
-  def continuation_suppressed_run_ids(%__MODULE__{
-        continuation_fences: fences,
-        continuation_repairs: repairs
-      }) do
+  def continuation_suppressed_run_ids(
+        %__MODULE__{
+          continuation_fences: fences
+        } = projection
+      ) do
+    aborted_run_ids = resolved_continuation_abort_ids(projection)
+    repaired_run_ids = resolved_continuation_repair_ids(projection)
+
     pending_successor_run_ids =
       Enum.reduce(fences, MapSet.new(), fn {predecessor_run_id, fence}, run_ids ->
         case {
-          Map.has_key?(repairs, predecessor_run_id),
+          MapSet.member?(repaired_run_ids, predecessor_run_id),
           continuation_successor_run_id(fence)
         } do
           {false, successor_run_id} when is_binary(successor_run_id) and successor_run_id != "" ->
@@ -218,6 +236,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
       end)
 
     fences
+    |> Map.drop(MapSet.to_list(aborted_run_ids))
     |> Map.keys()
     |> MapSet.new()
     |> MapSet.union(pending_successor_run_ids)
@@ -238,10 +257,49 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   end
 
   @doc false
+  @spec continuation_abort(t(), String.t()) :: map() | nil
+  def continuation_abort(
+        %__MODULE__{} = projection,
+        run_id
+      )
+      when is_binary(run_id) do
+    if MapSet.member?(resolved_continuation_abort_ids(projection), run_id) do
+      Map.get(projection.continuation_aborts, run_id)
+    else
+      nil
+    end
+  end
+
+  def continuation_abort(_projection, _run_id) do
+    nil
+  end
+
+  @doc false
+  @spec continuation_fenced?(t(), String.t()) :: boolean()
+  def continuation_fenced?(
+        %__MODULE__{
+          continuation_fences: fences,
+          continuation_repairs: repairs,
+          continuation_aborts: aborts
+        },
+        run_id
+      )
+      when is_binary(run_id) do
+    Map.has_key?(fences, run_id) and
+      not (not Map.has_key?(repairs, run_id) and
+             matching_continuation_abort?(fences, aborts, run_id))
+  end
+
+  @doc false
   @spec pending_continuation_fences(t()) :: [map()]
   def pending_continuation_fences(%__MODULE__{} = projection) do
+    resolved_run_ids =
+      projection
+      |> resolved_continuation_abort_ids()
+      |> MapSet.union(resolved_continuation_repair_ids(projection))
+
     projection.continuation_fences
-    |> Map.drop(Map.keys(projection.continuation_repairs))
+    |> Map.drop(MapSet.to_list(resolved_run_ids))
     |> Map.values()
     |> Enum.sort_by(& &1.run_id)
   end
@@ -275,11 +333,22 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
          %__MODULE__{} = projection
        )
        when type in @continuation_blocked_entry_types do
-    if continuation_fenced?(projection, run_id) do
-      add_anomaly(projection, entry, :continuation_fenced)
-    else
-      apply_dispatch_mutation(entry, projection)
+    cond do
+      not (is_binary(run_id) and run_id != "") ->
+        add_anomaly(projection, entry, :malformed_entry)
+
+      continuation_fenced?(projection, run_id) ->
+        add_anomaly(projection, entry, :continuation_fenced)
+
+      true ->
+        apply_dispatch_mutation(entry, projection)
     end
+  end
+
+  defp apply_entry(%Entry{type: type} = entry, %__MODULE__{} = projection)
+       when type in @continuation_blocked_entry_types do
+    data = if is_map(entry.data), do: entry.data, else: %{}
+    add_anomaly(projection, %Entry{entry | data: data}, :malformed_entry)
   end
 
   defp apply_entry(
@@ -299,6 +368,17 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
        ) do
     if continuation_fence_data?(entry.data) do
       put_continuation_repair(projection, entry)
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :run_continuation_aborted} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if continuation_abort_data?(entry.data) do
+      put_continuation_abort(projection, entry)
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
@@ -424,12 +504,60 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
          %__MODULE__{} = projection,
          %Entry{data: %{run_id: run_id} = data} = entry
        ) do
-    case Map.fetch(projection.continuation_fences, run_id) do
-      {:ok, fence} ->
+    cond do
+      matching_continuation_abort?(
+        projection.continuation_fences,
+        projection.continuation_aborts,
+        run_id
+      ) ->
+        add_anomaly(projection, entry, :continuation_already_aborted)
+
+      fence = Map.get(projection.continuation_fences, run_id) ->
         put_matching_continuation_repair(projection, entry, fence, data)
 
-      :error ->
+      true ->
         add_anomaly(projection, entry, :orphaned_continuation_repair)
+    end
+  end
+
+  defp put_continuation_abort(
+         %__MODULE__{} = projection,
+         %Entry{data: %{run_id: run_id} = data} = entry
+       ) do
+    cond do
+      Map.has_key?(projection.continuation_repairs, run_id) ->
+        add_anomaly(projection, entry, :continuation_already_repaired)
+
+      fence = Map.get(projection.continuation_fences, run_id) ->
+        put_matching_continuation_abort(projection, entry, fence, data)
+
+      true ->
+        add_anomaly(projection, entry, :orphaned_continuation_abort)
+    end
+  end
+
+  defp put_matching_continuation_abort(projection, entry, fence, data) do
+    if same_continuation_fence?(fence, data) do
+      retain_continuation_abort(projection, entry, data)
+    else
+      add_anomaly(projection, entry, :conflicting_continuation_abort)
+    end
+  end
+
+  defp retain_continuation_abort(%__MODULE__{} = projection, entry, data) do
+    case Map.fetch(projection.continuation_aborts, data.run_id) do
+      {:ok, existing} ->
+        if same_continuation_fence?(existing, data) do
+          projection
+        else
+          add_anomaly(projection, entry, :conflicting_continuation_abort)
+        end
+
+      :error ->
+        %__MODULE__{
+          projection
+          | continuation_aborts: Map.put(projection.continuation_aborts, data.run_id, data)
+        }
     end
   end
 
@@ -485,6 +613,100 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   defp continuation_fence_data?(_data) do
     false
   end
+
+  defp continuation_abort_data?(data) when is_map(data) do
+    continuation_fence_data?(data) and valid_abort_reason?(Map.get(data, :abort_reason))
+  end
+
+  defp continuation_abort_data?(_data) do
+    false
+  end
+
+  defp resolved_continuation_abort_ids(%__MODULE__{
+         continuation_fences: fences,
+         continuation_repairs: repairs,
+         continuation_aborts: aborts
+       }) do
+    Enum.reduce(fences, MapSet.new(), fn {run_id, _fence}, run_ids ->
+      if not Map.has_key?(repairs, run_id) and
+           matching_continuation_abort?(fences, aborts, run_id) do
+        MapSet.put(run_ids, run_id)
+      else
+        run_ids
+      end
+    end)
+  end
+
+  defp resolved_continuation_repair_ids(%__MODULE__{
+         continuation_fences: fences,
+         continuation_repairs: repairs,
+         continuation_aborts: aborts
+       }) do
+    Enum.reduce(fences, MapSet.new(), fn {run_id, _fence}, run_ids ->
+      if not Map.has_key?(aborts, run_id) and
+           matching_continuation_repair?(fences, repairs, run_id) do
+        MapSet.put(run_ids, run_id)
+      else
+        run_ids
+      end
+    end)
+  end
+
+  defp matching_continuation_abort?(fences, aborts, run_id) do
+    case {Map.get(fences, run_id), Map.get(aborts, run_id)} do
+      {fence, abort} when is_map(fence) and is_map(abort) ->
+        Map.get(fence, :run_id) == run_id and Map.get(abort, :run_id) == run_id and
+          continuation_abort_data?(abort) and same_continuation_fence?(fence, abort)
+
+      _missing_or_malformed ->
+        false
+    end
+  end
+
+  defp matching_continuation_repair?(fences, repairs, run_id) do
+    case {Map.get(fences, run_id), Map.get(repairs, run_id)} do
+      {fence, repair} when is_map(fence) and is_map(repair) ->
+        Map.get(fence, :run_id) == run_id and Map.get(repair, :run_id) == run_id and
+          continuation_fence_data?(repair) and same_continuation_fence?(fence, repair)
+
+      _missing_or_malformed ->
+        false
+    end
+  end
+
+  defp continuation_resolutions_compatible?(%__MODULE__{} = projection) do
+    repair_ids = Map.keys(projection.continuation_repairs)
+    abort_ids = Map.keys(projection.continuation_aborts)
+
+    continuation_fences_compatible?(projection.continuation_fences) and
+      MapSet.disjoint?(MapSet.new(repair_ids), MapSet.new(abort_ids)) and
+      Enum.all?(repair_ids, fn run_id ->
+        matching_continuation_repair?(
+          projection.continuation_fences,
+          projection.continuation_repairs,
+          run_id
+        )
+      end) and
+      Enum.all?(abort_ids, fn run_id ->
+        matching_continuation_abort?(
+          projection.continuation_fences,
+          projection.continuation_aborts,
+          run_id
+        )
+      end)
+  end
+
+  defp continuation_fences_compatible?(fences) do
+    Enum.all?(fences, fn
+      {run_id, %{run_id: run_id} = fence} when is_binary(run_id) and run_id != "" ->
+        continuation_fence_data?(fence)
+
+      _malformed ->
+        false
+    end)
+  end
+
+  defp valid_abort_reason?(reason), do: reason in @continuation_abort_reasons
 
   defp valid_continuation_fence_identifiers?(data) do
     Enum.all?(
@@ -817,6 +1039,14 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     end)
   end
 
+  defp normalize_map(value) when is_map(value) do
+    value
+  end
+
+  defp normalize_map(_value) do
+    %{}
+  end
+
   defp put_claimed_attempt(projection, %ActionAttempt{} = attempt, data) do
     put_attempt(projection, %ActionAttempt{
       attempt
@@ -877,10 +1107,6 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     MapSet.member?(terminal_runs, run_id)
   end
 
-  defp continuation_fenced?(%__MODULE__{continuation_fences: fences}, run_id) do
-    Map.has_key?(fences, run_id)
-  end
-
   defp continuation_successor_run_id(fence) when is_map(fence) do
     Map.get(fence, :successor_run_id)
   end
@@ -894,15 +1120,17 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   end
 
   defp add_anomaly(%__MODULE__{} = projection, %Entry{} = entry, reason) do
+    data = if is_map(entry.data), do: entry.data, else: %{}
+
     anomaly =
       %{
         reason: reason,
         entry_type: entry.type
       }
-      |> maybe_put_run_id(Map.get(entry.data, :run_id))
-      |> maybe_put_runnable_key(Map.get(entry.data, :runnable_key))
-      |> maybe_put_claim_id(Map.get(entry.data, :claim_id))
-      |> maybe_put_claim_token_hash(Map.get(entry.data, :claim_token_hash))
+      |> maybe_put_run_id(Map.get(data, :run_id))
+      |> maybe_put_runnable_key(Map.get(data, :runnable_key))
+      |> maybe_put_claim_id(Map.get(data, :claim_id))
+      |> maybe_put_claim_token_hash(Map.get(data, :claim_token_hash))
 
     %__MODULE__{projection | anomalies: [anomaly | projection.anomalies]}
   end
