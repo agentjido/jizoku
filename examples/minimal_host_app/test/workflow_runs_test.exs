@@ -8,11 +8,35 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.Workers.SquidieWorker
   alias MinimalHostApp.WorkflowRuns
   alias MinimalHostApp.Workflows.DailyDigest
+  alias MinimalHostApp.Workflows.DependencyRecovery
   alias MinimalHostApp.Workflows.PaymentRecovery
   alias Oban.Job
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.ReadModel.Listing.Summary
   alias Squidie.Runtime.Signal
+
+  test "public test runtime drains the host dependency workflow in memory" do
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: DependencyRecovery,
+               now: ~U[2026-08-10 12:00:00Z]
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} =
+             Squidie.Test.start(runtime, %{
+               account_id: "account-test-kit",
+               invoice_id: "invoice-test-kit",
+               attempt_id: "attempt-test-kit"
+             })
+
+    drain_task = Task.async(fn -> Squidie.Test.drain(runtime, run) end)
+    assert {:completed, snapshot} = Task.await(drain_task)
+    assert snapshot.context.account.id == "account-test-kit"
+    assert snapshot.context.invoice.id == "invoice-test-kit"
+    assert snapshot.context.notification.channel == "email"
+  end
 
   defmodule InvalidRecurringIdempotentCronWorkflow do
     use Squidie.Workflow
