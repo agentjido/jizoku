@@ -60,16 +60,16 @@ defmodule Squidie.Runtime.Journal.Commands.ContinuationRecovery do
         match?({:ok, _reason}, abort_reason) ->
           {:ok, reason} = abort_reason
 
-          abort_fence(
-            storage,
-            dispatch_agent,
-            run_id,
-            queue,
-            reason,
-            opts,
-            retries_left,
-            repair_error
-          )
+          consume_and_abort(reason, %{
+            storage: storage,
+            dispatch_agent: dispatch_agent,
+            workflow_agent: workflow_agent,
+            run_id: run_id,
+            queue: queue,
+            opts: opts,
+            retries_left: retries_left,
+            repair_error: repair_error
+          })
 
         true ->
           {:error, repair_error}
@@ -77,15 +77,48 @@ defmodule Squidie.Runtime.Journal.Commands.ContinuationRecovery do
     end
   end
 
-  defp abort_fence(
-         storage,
-         dispatch_agent,
-         run_id,
-         queue,
+  defp consume_and_abort(
+         :predecessor_changed = reason,
+         %{
+           storage: storage,
+           dispatch_agent: dispatch_agent,
+           workflow_agent: workflow_agent,
+           run_id: run_id,
+           queue: queue,
+           opts: opts,
+           retries_left: retries_left
+         } = context
+       ) do
+    case Continuation.consume_native_source(storage, dispatch_agent, workflow_agent) do
+      {:ok, _workflow_agent} ->
+        abort_fence(reason, context)
+
+      {:error, :conflict} ->
+        resolve_fenced_run(storage, run_id, queue, opts, retries_left - 1)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp consume_and_abort(
          reason,
-         opts,
-         retries_left,
-         repair_error
+         context
+       ) do
+    abort_fence(reason, context)
+  end
+
+  defp abort_fence(
+         reason,
+         %{
+           storage: storage,
+           dispatch_agent: dispatch_agent,
+           run_id: run_id,
+           queue: queue,
+           opts: opts,
+           retries_left: retries_left,
+           repair_error: repair_error
+         }
        ) do
     case DispatchAgent.abort_continuation_fence(
            storage,

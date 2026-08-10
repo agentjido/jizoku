@@ -9,6 +9,7 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
   alias Squidie.Runtime.Journal.Commands.Starter
   alias Squidie.Runtime.Journal.Compensation
   alias Squidie.Runtime.Journal.ContinuationIntent
+  alias Squidie.Runtime.Journal.EntryBuilder
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.Journal.Storage
   alias Squidie.Runtime.Journal.WorkflowDefinitionLoader
@@ -121,7 +122,7 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
     with true <- Storage.partition(storage) == partition,
          {:ok, :new} <- predecessor_mode(workflow_agent, intent),
          :ok <- validate_static_boundary(storage, workflow_agent, intent, queue) do
-      validate_mode(storage, dispatch_agent, workflow_agent, intent, queue, :new)
+      validate_mode(storage, dispatch_agent, workflow_agent, intent, queue, :new, nil)
     else
       false -> {:error, {:unsafe_continuation, :partition_mismatch}}
       {:ok, :existing} -> {:error, :conflicting_continuation}
@@ -130,6 +131,84 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
   end
 
   def validate_new_intent(_storage, _dispatch_agent, _workflow_agent, _intent) do
+    {:error, {:invalid_continuation, :invalid}}
+  end
+
+  @doc false
+  @spec validate_native_intent(
+          Journal.storage_config(),
+          Agent.t(),
+          Agent.t(),
+          ContinuationIntent.t(),
+          String.t()
+        ) :: :ok | {:error, term()}
+  def validate_native_intent(
+        storage,
+        %Agent{
+          agent_module: DispatchAgent,
+          state: %{partition: partition, queue: queue}
+        } = dispatch_agent,
+        %Agent{
+          agent_module: WorkflowAgent,
+          state: %{partition: partition}
+        } = workflow_agent,
+        %ContinuationIntent{queue: queue} = intent,
+        source_runnable_key
+      )
+      when is_binary(source_runnable_key) and source_runnable_key != "" do
+    with true <- Storage.partition(storage) == partition,
+         {:ok, :new} <- predecessor_mode(workflow_agent, intent),
+         :ok <- validate_static_boundary(storage, workflow_agent, intent, queue),
+         :ok <- ContinuationIntent.validate_current_target(intent),
+         :ok <- validate_native_workflow_boundary(storage, workflow_agent, source_runnable_key) do
+      validate_native_dispatch_boundary(
+        dispatch_agent,
+        intent.run_id,
+        source_runnable_key,
+        :claimed
+      )
+    else
+      false -> {:error, {:unsafe_continuation, :partition_mismatch}}
+      {:ok, :existing} -> {:error, :conflicting_continuation}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def validate_native_intent(
+        _storage,
+        _dispatch_agent,
+        _workflow_agent,
+        _intent,
+        _source_runnable_key
+      ) do
+    {:error, {:invalid_continuation, :invalid}}
+  end
+
+  @doc false
+  @spec consume_native_source(Journal.storage_config(), Agent.t(), Agent.t()) ::
+          {:ok, Agent.t()} | {:error, term()}
+  def consume_native_source(
+        storage,
+        %Agent{agent_module: DispatchAgent} = dispatch_agent,
+        %Agent{
+          agent_module: WorkflowAgent,
+          state: %{run_id: run_id, projection: %Projection{} = projection}
+        } = workflow_agent
+      ) do
+    with {:ok, fence} <- continuation_fence(dispatch_agent, run_id),
+         source when is_map(source) <- native_source(fence) do
+      if MapSet.member?(Projection.applied_runnable_keys(projection), source.runnable_key) do
+        {:ok, workflow_agent}
+      else
+        append_native_source(storage, dispatch_agent, workflow_agent, fence, source)
+      end
+    else
+      nil -> {:ok, workflow_agent}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def consume_native_source(_storage, _dispatch_agent, _workflow_agent) do
     {:error, {:invalid_continuation, :invalid}}
   end
 
@@ -144,17 +223,27 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
          {:ok, workflow_agent} <- WorkflowAgent.rebuild(storage, run_id),
          {:ok, mode} <- predecessor_mode(workflow_agent, intent),
          :ok <- validate_static_boundary(storage, workflow_agent, intent, queue),
-         :ok <- validate_mode(storage, dispatch_agent, workflow_agent, intent, queue, mode) do
-      persist_predecessor(
-        mode,
-        storage,
-        run_id,
-        queue,
-        dispatch_agent,
-        workflow_agent,
-        intent,
-        retries_left
-      )
+         native_source = native_source(fence),
+         :ok <-
+           validate_mode(
+             storage,
+             dispatch_agent,
+             workflow_agent,
+             intent,
+             queue,
+             mode,
+             native_source
+           ) do
+      persist_predecessor(mode, %{
+        storage: storage,
+        run_id: run_id,
+        queue: queue,
+        dispatch_agent: dispatch_agent,
+        workflow_agent: workflow_agent,
+        intent: intent,
+        native_source: native_source,
+        retries_left: retries_left
+      })
     end
   end
 
@@ -192,14 +281,82 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
     end
   end
 
-  defp validate_mode(_storage, _dispatch_agent, _workflow_agent, _intent, _queue, :existing) do
+  defp validate_mode(
+         _storage,
+         _dispatch_agent,
+         _workflow_agent,
+         _intent,
+         _queue,
+         :existing,
+         _native_source
+       ) do
     :ok
   end
 
-  defp validate_mode(storage, dispatch_agent, workflow_agent, intent, _queue, :new) do
+  defp validate_mode(
+         storage,
+         dispatch_agent,
+         workflow_agent,
+         %ContinuationIntent{} = intent,
+         _queue,
+         :new,
+         %{runnable_key: source_runnable_key}
+       )
+       when is_binary(source_runnable_key) and source_runnable_key != "" do
+    with :ok <- ContinuationIntent.validate_current_target(intent),
+         :ok <- validate_native_workflow_boundary(storage, workflow_agent, source_runnable_key) do
+      validate_native_dispatch_boundary(
+        dispatch_agent,
+        intent.run_id,
+        source_runnable_key,
+        :completed
+      )
+    end
+  end
+
+  defp validate_mode(storage, dispatch_agent, workflow_agent, intent, _queue, :new, nil) do
     with :ok <- ContinuationIntent.validate_current_target(intent),
          :ok <- validate_workflow_boundary(storage, workflow_agent) do
       validate_dispatch_boundary(dispatch_agent, intent.run_id)
+    end
+  end
+
+  defp validate_native_workflow_boundary(storage, workflow_agent, source_runnable_key) do
+    projection = workflow_agent.state.projection
+
+    with :ok <- active_workflow(projection),
+         :ok <- workflow_without_anomalies(projection),
+         :ok <- workflow_without_manual_state(projection),
+         :ok <- workflow_without_unsafe_dynamic_work(projection),
+         :ok <- workflow_without_compensation(projection),
+         :ok <- native_applied_plan(projection, source_runnable_key) do
+      linked_children_started(storage, projection)
+    end
+  end
+
+  defp native_applied_plan(%Projection{} = projection, source_runnable_key) do
+    planned_keys = MapSet.new(Projection.planned_runnable_keys(projection))
+    applied_keys = Projection.applied_runnable_keys(projection)
+
+    if MapSet.difference(planned_keys, applied_keys) == MapSet.new([source_runnable_key]) do
+      :ok
+    else
+      unsafe(:unapplied_runnables)
+    end
+  end
+
+  defp validate_native_dispatch_boundary(
+         %Agent{agent_module: DispatchAgent, state: %{projection: dispatch_projection}},
+         run_id,
+         source_runnable_key,
+         source_status
+       ) do
+    expected_reason = if source_status == :claimed, do: :claimed_attempt, else: :pending_result
+    expected = [%{reason: expected_reason, runnable_key: source_runnable_key}]
+
+    case DispatchProtocol.Projection.continuation_blockers(dispatch_projection, run_id) do
+      ^expected -> :ok
+      blockers -> unsafe({:dispatch_blockers, blockers})
     end
   end
 
@@ -382,28 +539,25 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
 
   defp persist_predecessor(
          :existing,
-         _storage,
-         _run_id,
-         _queue,
-         _dispatch_agent,
-         workflow_agent,
-         intent,
-         _retries_left
+         %{workflow_agent: workflow_agent, intent: intent}
        ) do
     {:ok, commit_result(workflow_agent, intent, false)}
   end
 
   defp persist_predecessor(
          :new,
-         storage,
-         run_id,
-         queue,
-         _dispatch_agent,
-         workflow_agent,
-         intent,
-         retries_left
+         %{
+           storage: storage,
+           run_id: run_id,
+           queue: queue,
+           dispatch_agent: dispatch_agent,
+           workflow_agent: workflow_agent,
+           intent: intent,
+           native_source: native_source,
+           retries_left: retries_left
+         }
        ) do
-    with {:ok, entries} <- continuation_entries(intent) do
+    with {:ok, entries} <- continuation_entries(intent, dispatch_agent, native_source) do
       append_predecessor_entries(
         storage,
         run_id,
@@ -414,6 +568,96 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
         retries_left
       )
     end
+  end
+
+  defp continuation_entries(%ContinuationIntent{} = intent, _dispatch_agent, nil) do
+    continuation_entries(intent)
+  end
+
+  defp continuation_entries(
+         %ContinuationIntent{} = intent,
+         %Agent{agent_module: DispatchAgent, state: %{projection: dispatch_projection}},
+         %{runnable_key: source_runnable_key, request_input: request_input}
+       )
+       when is_binary(source_runnable_key) do
+    with {:ok, attempt} <- Map.fetch(dispatch_projection.attempts, source_runnable_key),
+         :ok <- validate_native_completed_attempt(attempt, intent, request_input),
+         {:ok, applied_entry} <-
+           EntryBuilder.runnable_applied(
+             attempt,
+             attempt.result,
+             nil,
+             intent.occurred_at,
+             attempt.execution_opts,
+             attempt.completed_at
+           ),
+         {:ok, continuation_entries} <- continuation_entries(intent) do
+      {:ok, [applied_entry | continuation_entries]}
+    else
+      :error -> {:error, {:invalid_continuation, :missing_source_attempt}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp append_native_source(storage, dispatch_agent, workflow_agent, fence, source) do
+    with {:ok, intent} <- ContinuationIntent.from_fence(fence),
+         {:ok, attempt} <-
+           Map.fetch(dispatch_agent.state.projection.attempts, source.runnable_key),
+         :ok <- validate_native_completed_attempt(attempt, intent, source.request_input),
+         {:ok, applied_entry} <-
+           EntryBuilder.runnable_applied(
+             attempt,
+             attempt.result,
+             nil,
+             intent.occurred_at,
+             attempt.execution_opts,
+             attempt.completed_at
+           ),
+         {:ok, _thread} <-
+           Journal.append_entries(storage, [applied_entry],
+             expected_rev: workflow_agent.state.thread_rev,
+             telemetry_projection: workflow_agent.state.projection
+           ) do
+      WorkflowAgent.rebuild(storage, workflow_agent.state.run_id)
+    else
+      :error -> {:error, {:invalid_continuation, :missing_source_attempt}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_native_completed_attempt(attempt, intent, request_input) do
+    directive = %{
+      input: request_input,
+      continuation_key: intent.continuation_key,
+      definition: :current
+    }
+
+    cond do
+      attempt.run_id != intent.run_id ->
+        unsafe(:source_run_mismatch)
+
+      attempt.status != :completed or not is_map(attempt.result) or
+          not match?(%DateTime{}, attempt.completed_at) ->
+        unsafe(:source_not_completed)
+
+      not (is_list(attempt.execution_opts) and Keyword.keyword?(attempt.execution_opts)) ->
+        unsafe(:source_directive_mismatch)
+
+      Keyword.get(attempt.execution_opts, :continue_as_new) != directive ->
+        unsafe(:source_directive_mismatch)
+
+      true ->
+        :ok
+    end
+  end
+
+  defp native_source(%{source_runnable_key: runnable_key} = fence)
+       when is_binary(runnable_key) and runnable_key != "" do
+    %{runnable_key: runnable_key, request_input: Map.get(fence, :request_input, fence.input)}
+  end
+
+  defp native_source(_fence) do
+    nil
   end
 
   defp append_predecessor_entries(
