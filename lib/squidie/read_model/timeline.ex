@@ -9,12 +9,14 @@ defmodule Squidie.ReadModel.Timeline do
   @event_order %{
     command_received: 0,
     run_started: 1,
+    run_continued_from: 2,
     attempt_claimed: 2,
     attempt_completed: 3,
     attempt_failed: 3,
     runnable_applied: 4,
     attempt_scheduled: 5,
     manual_step_paused: 6,
+    run_continued_to: 7,
     run_terminal: 7
   }
 
@@ -65,6 +67,7 @@ defmodule Squidie.ReadModel.Timeline do
     snapshot
     |> command_events()
     |> Kernel.++(run_started_events(snapshot))
+    |> Kernel.++(continuation_events(snapshot))
     |> Kernel.++(attempt_events(snapshot))
     |> Kernel.++(applied_events(snapshot))
     |> Kernel.++(manual_events(snapshot))
@@ -95,6 +98,47 @@ defmodule Squidie.ReadModel.Timeline do
   end
 
   defp run_started_events(%Snapshot{}), do: []
+
+  defp continuation_events(%Snapshot{} = snapshot) do
+    continuation = snapshot.continuation || %{}
+
+    Enum.reject(
+      [
+        continuation_event(
+          :run_continued_from,
+          snapshot.started_at,
+          snapshot.run_id,
+          Map.get(continuation, :continued_from)
+        ),
+        continuation_event(
+          :run_continued_to,
+          snapshot.terminal_at,
+          snapshot.run_id,
+          Map.get(continuation, :continued_to)
+        )
+      ],
+      &is_nil/1
+    )
+  end
+
+  defp continuation_event(type, %DateTime{} = occurred_at, run_id, edge)
+       when type in [:run_continued_from, :run_continued_to] and is_map(edge) do
+    linked_run_id = value(edge, :run_id)
+    continuation_key = value(edge, :continuation_key)
+
+    if is_binary(linked_run_id) and is_binary(continuation_key) do
+      event(type, occurred_at, run_id,
+        status: :linked,
+        summary: continuation_summary(type),
+        details: %{run_id: linked_run_id, continuation_key: continuation_key}
+      )
+    end
+  end
+
+  defp continuation_event(_type, _occurred_at, _run_id, _edge), do: nil
+
+  defp continuation_summary(:run_continued_from), do: "run continued from predecessor"
+  defp continuation_summary(:run_continued_to), do: "run continued to successor"
 
   defp attempt_events(%Snapshot{run_id: run_id, attempts: attempts}) do
     Enum.flat_map(attempts, fn attempt ->

@@ -29,6 +29,8 @@ defmodule Squidie.Inspection.GraphInspection do
           edges: [Edge.t()],
           child_runs: [map()],
           child_links: [map()],
+          continuation: map(),
+          continuation_links: [map()],
           dynamic_work: [map()],
           dynamic_work_overlays: [map()],
           graph_version: non_neg_integer(),
@@ -57,6 +59,8 @@ defmodule Squidie.Inspection.GraphInspection do
     :terminal?,
     child_runs: [],
     child_links: [],
+    continuation: %{continued_from: nil, continued_to: nil},
+    continuation_links: [],
     current_node_ids: [],
     nodes: [],
     edges: [],
@@ -103,6 +107,8 @@ defmodule Squidie.Inspection.GraphInspection do
       edges: graph_edges(definition, nodes) ++ dynamic_edges(snapshot.dynamic_work),
       child_runs: snapshot.child_runs,
       child_links: child_links(snapshot.child_runs),
+      continuation: snapshot.continuation,
+      continuation_links: continuation_links(snapshot.run_id, snapshot.continuation),
       dynamic_work: snapshot.dynamic_work,
       dynamic_work_overlays: dynamic_work_overlays(snapshot.dynamic_work),
       graph_version: graph_state.graph_version,
@@ -143,6 +149,8 @@ defmodule Squidie.Inspection.GraphInspection do
       edges: Enum.map(graph.edges, &Edge.to_map/1),
       child_runs: graph.child_runs,
       child_links: graph.child_links,
+      continuation: graph.continuation,
+      continuation_links: graph.continuation_links,
       dynamic_work: graph.dynamic_work,
       dynamic_work_overlays: graph.dynamic_work_overlays,
       graph_version: graph.graph_version,
@@ -215,6 +223,34 @@ defmodule Squidie.Inspection.GraphInspection do
   end
 
   defp child_links(_child_runs), do: []
+
+  defp continuation_links(run_id, continuation)
+       when is_binary(run_id) and is_map(continuation) do
+    continuation
+    |> Enum.flat_map(fn
+      {:continued_from, %{run_id: predecessor_run_id, continuation_key: key}} ->
+        [continuation_link(predecessor_run_id, run_id, key)]
+
+      {:continued_to, %{run_id: successor_run_id, continuation_key: key}} ->
+        [continuation_link(run_id, successor_run_id, key)]
+
+      _missing_or_invalid ->
+        []
+    end)
+    |> Enum.sort_by(&{&1.from, &1.to, &1.continuation_key})
+  end
+
+  defp continuation_links(_run_id, _continuation), do: []
+
+  defp continuation_link(from, to, continuation_key) do
+    %{
+      id: Enum.join([from, "continuation", to], ":"),
+      from: from,
+      to: to,
+      type: :continuation,
+      continuation_key: continuation_key
+    }
+  end
 
   defp child_link(child_run) when is_map(child_run) do
     origin = field(child_run, :origin)

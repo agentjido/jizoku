@@ -9,6 +9,7 @@ defmodule Squidie do
   """
 
   alias Squidie.Config
+  alias Squidie.ReadModel.ContinuationChain
   alias Squidie.ReadModel.Inspection
   alias Squidie.ReadModel.Listing
   alias Squidie.ReadModel.Timeline
@@ -356,6 +357,35 @@ defmodule Squidie do
     with {:ok, :read_model} <- Routing.read_model(overrides) do
       inspect_projected_run(run_id, overrides)
     end
+  end
+
+  @doc """
+  Traverses continue-as-new lineage with an explicit read bound.
+
+  Traversal follows predecessor links by default and never follows child-run or
+  replay lineage. `:max_hops` defaults to the host continuation-history policy;
+  `:direction` accepts `:backward` or `:forward`.
+  """
+  @spec inspect_continuation_chain(String.t(), keyword()) ::
+          {:ok, ContinuationChain.t()} | {:error, term()}
+  def inspect_continuation_chain(run_id, overrides \\ [])
+
+  def inspect_continuation_chain(run_id, overrides)
+      when is_list(overrides) do
+    if Keyword.keyword?(overrides) do
+      lineage_opts = Keyword.take(overrides, [:direction, :max_hops])
+
+      with {:ok, :read_model} <- Routing.read_model(overrides),
+           {:ok, storage} <- Routing.journal_storage(overrides) do
+        ContinuationChain.inspect(storage, run_id, lineage_opts)
+      end
+    else
+      {:error, {:invalid_option, {:opts, :invalid}}}
+    end
+  end
+
+  def inspect_continuation_chain(_run_id, _overrides) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
   end
 
   @doc """

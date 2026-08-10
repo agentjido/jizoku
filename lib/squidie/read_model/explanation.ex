@@ -55,6 +55,7 @@ defmodule Squidie.ReadModel.Explanation do
     dynamic_work_details = dynamic_work_details(snapshot.dynamic_work)
     guardrail_details = guardrail_details(snapshot.guardrails)
     deadline_details = deadline_details(snapshot.deadline)
+    continuation_details = continuation_details(snapshot.continuation)
 
     %Diagnostic{
       run_id: snapshot.run_id,
@@ -71,7 +72,8 @@ defmodule Squidie.ReadModel.Explanation do
         |> Map.merge(command_details)
         |> Map.merge(dynamic_work_details)
         |> Map.merge(guardrail_details)
-        |> Map.merge(deadline_details),
+        |> Map.merge(deadline_details)
+        |> Map.merge(continuation_details),
       next_actions: Enum.uniq(next_actions ++ deadline_next_actions(snapshot.deadline)),
       evidence: evidence(snapshot)
     }
@@ -191,6 +193,21 @@ defmodule Squidie.ReadModel.Explanation do
     }
   end
 
+  defp explanation_parts(%Snapshot{reason: :terminal, terminal_status: :continued} = snapshot) do
+    successor = get_in(snapshot.continuation, [:continued_to])
+
+    {
+      "The run continued as a fresh successor with durable lineage.",
+      %{
+        terminal?: true,
+        terminal_status: :continued,
+        continued_to: successor
+      },
+      [:inspect_continuation_successor],
+      nil
+    }
+  end
+
   defp explanation_parts(%Snapshot{reason: :terminal} = snapshot) do
     details =
       maybe_put(
@@ -250,6 +267,8 @@ defmodule Squidie.ReadModel.Explanation do
       manual_state: snapshot.manual_state,
       parent_run: snapshot.parent_run,
       child_runs: snapshot.child_runs,
+      continuation: snapshot.continuation,
+      history: snapshot.history,
       dynamic_work: snapshot.dynamic_work,
       guardrails: snapshot.guardrails,
       deadline: snapshot.deadline,
@@ -265,6 +284,16 @@ defmodule Squidie.ReadModel.Explanation do
       anomalies: snapshot.anomalies
     }
   end
+
+  defp continuation_details(%{continued_from: nil, continued_to: nil}) do
+    %{}
+  end
+
+  defp continuation_details(continuation) when is_map(continuation) do
+    %{continuation: continuation}
+  end
+
+  defp continuation_details(_continuation), do: %{}
 
   defp command_details([]), do: %{}
 

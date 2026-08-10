@@ -17,6 +17,7 @@ defmodule Squidie.ReadModel.Explanation.Diagnostic do
           | :wait_until_attempt_visible
           | :wait_for_attempt_completion
           | :resolve_manual_step
+          | :inspect_continuation_successor
           | :inspect_terminal_run
           | :wait_for_new_runnables
           | :inspect_dispatch_state

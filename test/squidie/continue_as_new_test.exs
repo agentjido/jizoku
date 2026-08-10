@@ -31,6 +31,7 @@ defmodule Squidie.ContinueAsNewTest do
 
     @impl Jido.Storage
     def load_thread(thread_id, opts) do
+      record(opts, {:storage_load, thread_id})
       call_or_probe(:load_thread, [thread_id], opts)
     end
 
@@ -213,6 +214,14 @@ defmodule Squidie.ContinueAsNewTest do
 
   test "terminalizes the predecessor and returns one fresh successor" do
     Application.put_env(:squidie, :continuation_fences, :enabled)
+    previous_history = Application.fetch_env(:squidie, :continuation_history)
+
+    Application.put_env(:squidie, :continuation_history,
+      run_warning_threshold: 4,
+      run_critical_threshold: 100
+    )
+
+    on_exit(fn -> restore_history(previous_history) end)
     seed_quiescent_predecessor()
 
     assert {:ok, successor} =
@@ -244,6 +253,158 @@ defmodule Squidie.ContinueAsNewTest do
 
     assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
     assert DispatchAgent.pending_continuation_fences(dispatch_agent) == []
+
+    assert successor.continuation == %{
+             continued_from: %{run_id: @run_id, continuation_key: "page-42"},
+             continued_to: nil
+           }
+
+    assert successor.history.thread_revision == 4
+    assert successor.history.level == :warning
+
+    assert {:ok, predecessor_snapshot} =
+             Squidie.inspect_run(@run_id, journal_storage: @storage, now: @now)
+
+    assert predecessor_snapshot.continuation.continued_to == %{
+             run_id: successor.run_id,
+             continuation_key: "page-42"
+           }
+
+    assert {:ok, summaries} =
+             Squidie.list_runs([], journal_storage: @storage, now: @now)
+
+    predecessor_summary = Enum.find(summaries, &(&1.run_id == @run_id))
+    successor_summary = Enum.find(summaries, &(&1.run_id == successor.run_id))
+    assert predecessor_summary.continuation == predecessor_snapshot.continuation
+    assert successor_summary.continuation == successor.continuation
+    assert predecessor_summary.history.thread_revision == predecessor_summary.thread_revision
+    assert successor_summary.history.level == :warning
+
+    assert {:ok, graph} =
+             Squidie.inspect_run_graph(successor.run_id, journal_storage: @storage, now: @now)
+
+    assert graph.continuation == successor.continuation
+
+    assert graph.continuation_links == [
+             %{
+               id: Enum.join([@run_id, "continuation", successor.run_id], ":"),
+               from: @run_id,
+               to: successor.run_id,
+               type: :continuation,
+               continuation_key: "page-42"
+             }
+           ]
+
+    assert {:ok, predecessor_graph} =
+             Squidie.inspect_run_graph(@run_id, journal_storage: @storage, now: @now)
+
+    assert predecessor_graph.continuation_links == graph.continuation_links
+
+    assert {:ok, predecessor_timeline} =
+             Squidie.inspect_run_timeline(@run_id, journal_storage: @storage, now: @now)
+
+    assert %{details: %{run_id: successor_run_id, continuation_key: "page-42"}} =
+             Enum.find(predecessor_timeline.events, &(&1.type == :run_continued_to))
+
+    assert successor_run_id == successor.run_id
+
+    assert {:ok, successor_timeline} =
+             Squidie.inspect_run_timeline(successor.run_id,
+               journal_storage: @storage,
+               now: @now
+             )
+
+    assert %{details: %{run_id: @run_id, continuation_key: "page-42"}} =
+             Enum.find(successor_timeline.events, &(&1.type == :run_continued_from))
+
+    assert {:ok, explanation} =
+             Squidie.explain_run(@run_id, journal_storage: @storage, now: @now)
+
+    assert explanation.summary ==
+             "The run continued as a fresh successor with durable lineage."
+
+    assert :inspect_continuation_successor in explanation.next_actions
+    assert explanation.evidence.continuation == predecessor_snapshot.continuation
+
+    assert explanation.details.continued_to == %{
+             run_id: successor.run_id,
+             continuation_key: "page-42"
+           }
+  end
+
+  test "continuation chain inspection remains bounded and reports large chains" do
+    Application.put_env(:squidie, :continuation_fences, :enabled)
+    previous_history = Application.fetch_env(:squidie, :continuation_history)
+
+    Application.put_env(:squidie, :continuation_history,
+      chain_warning_hops: 2,
+      max_chain_hops: 10
+    )
+
+    on_exit(fn -> restore_history(previous_history) end)
+
+    seed_quiescent_predecessor()
+
+    run_ids =
+      Enum.reduce(1..5, [@run_id], fn cursor, [current_run_id | _rest] = run_ids ->
+        assert {:ok, successor} =
+                 Squidie.continue_as_new(current_run_id,
+                   input: %{cursor: "page-#{cursor}"},
+                   continuation_key: "page-#{cursor}",
+                   runtime: :journal,
+                   journal_storage: @storage,
+                   queue: "default",
+                   now: DateTime.add(@now, cursor, :second)
+                 )
+
+        if cursor < 5 do
+          quiesce_existing_run(successor.run_id, cursor)
+        end
+
+        [successor.run_id | run_ids]
+      end)
+
+    [latest_run_id | _rest] = run_ids
+    recording_storage = {TestStorage, delegate: @storage, record?: true, test_pid: self()}
+
+    assert {:ok, chain} =
+             Squidie.inspect_continuation_chain(latest_run_id,
+               journal_storage: recording_storage,
+               direction: :backward,
+               max_hops: 2
+             )
+
+    assert chain.hops == 2
+    assert chain.truncated? == true
+    assert [_latest, _previous, _oldest] = chain.runs
+    assert Enum.map(chain.runs, & &1.run_id) == Enum.take(run_ids, 3)
+    assert chain.warnings == [%{code: :large_continuation_chain, hops: 2, threshold: 2}]
+    assert_receive {:storage_load, _first_run}
+    assert_receive {:storage_load, _second_run}
+    assert_receive {:storage_load, _third_run}
+    refute_receive {:storage_load, _unbounded_run}
+
+    assert {:ok, forward_chain} =
+             Squidie.inspect_continuation_chain(@run_id,
+               journal_storage: recording_storage,
+               direction: :forward,
+               max_hops: 10
+             )
+
+    assert forward_chain.hops == 5
+    assert forward_chain.truncated? == false
+    assert Enum.map(forward_chain.runs, & &1.run_id) == Enum.reverse(run_ids)
+
+    for _load <- 1..6 do
+      assert_receive {:storage_load, _run}
+    end
+
+    refute_receive {:storage_load, _run_after_natural_end}
+  end
+
+  test "continuation chain inspection rejects malformed option lists" do
+    assert Squidie.inspect_continuation_chain(@run_id, [:bad]) ==
+             {:error, {:invalid_option, {:opts, :invalid}}}
   end
 
   test "returns the same successor on exact retry and rejects changed input" do
@@ -585,6 +746,32 @@ defmodule Squidie.ContinueAsNewTest do
              Journal.append_entries(storage, [entry], expected_rev: thread.rev)
   end
 
+  defp quiesce_existing_run(run_id, cursor) do
+    assert {:ok, available_agent} = DispatchAgent.rebuild(@storage, "default")
+
+    assert {:ok, %{agent: claimed_agent, attempt: claimed_attempt}} =
+             DispatchAgent.claim_next(@storage, available_agent, "chain-worker-#{cursor}",
+               claim_id: "chain-claim-#{cursor}",
+               claim_token: "chain-token-#{cursor}",
+               now: DateTime.add(@now, cursor, :second)
+             )
+
+    assert claimed_attempt.run_id == run_id
+
+    assert {:ok, %{agent: _completed_agent}} =
+             DispatchAgent.complete(
+               @storage,
+               claimed_agent,
+               claimed_attempt.runnable_key,
+               "chain-claim-#{cursor}",
+               "chain-token-#{cursor}",
+               %{cursor: "page-#{cursor}"},
+               now: DateTime.add(@now, cursor, :second)
+             )
+
+    append_applied(@storage, run_id, claimed_attempt.runnable_key)
+  end
+
   defp normalize_validation_case({label, opts, expected, run_id}) do
     {label, opts, expected, run_id}
   end
@@ -742,6 +929,14 @@ defmodule Squidie.ContinueAsNewTest do
 
   defp restore_activation(:error) do
     Application.delete_env(:squidie, :continuation_fences)
+  end
+
+  defp restore_history({:ok, value}) do
+    Application.put_env(:squidie, :continuation_history, value)
+  end
+
+  defp restore_history(:error) do
+    Application.delete_env(:squidie, :continuation_history)
   end
 
   defp cleanup_storage do

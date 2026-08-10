@@ -7,6 +7,7 @@ defmodule Squidie.ReadModel.Listing do
   """
 
   alias Jido.Agent
+  alias Squidie.ReadModel.HistoryPolicy
   alias Squidie.ReadModel.Listing.Summary
   alias Squidie.Runtime.Deadline
   alias Squidie.Runtime.Journal
@@ -197,6 +198,8 @@ defmodule Squidie.ReadModel.Listing do
          partition: Storage.partition(storage),
          workflow: workflow,
          definition_version: projection.definition_version,
+         continuation: Projection.continuation(projection),
+         history: HistoryPolicy.summary(thread_rev),
          queue: queue,
          status: Projection.status(projection),
          terminal?: Projection.terminal?(projection),
