@@ -3,6 +3,7 @@ defmodule Squidie.Runtime.Journal.EntryBuilder do
 
   alias Squidie.Runtime.Deadline
   alias Squidie.Runtime.DispatchProtocol
+  alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Workflow.Definition
   alias Squidie.Workflow.GuardrailRegistry
 
@@ -55,6 +56,37 @@ defmodule Squidie.Runtime.Journal.EntryBuilder do
   def traced_run_terminal!(run_id, status, trace, %DateTime{} = now, error)
       when is_map(error) do
     entry!(:run_terminal, traced_run_terminal_attrs(run_id, status, trace, now, error))
+  end
+
+  @doc false
+  @spec runnable_applied(
+          ActionAttempt.t(),
+          map(),
+          map() | nil,
+          DateTime.t(),
+          keyword(),
+          DateTime.t()
+        ) :: {:ok, DispatchProtocol.Entry.t()} | {:error, term()}
+  def runnable_applied(
+        %ActionAttempt{} = attempt,
+        result,
+        transition,
+        %DateTime{} = now,
+        execution_opts,
+        %DateTime{} = applied_at
+      )
+      when is_map(result) and is_list(execution_opts) do
+    DispatchProtocol.new_entry(:runnable_applied, %{
+      run_id: attempt.run_id,
+      runnable_key: attempt.runnable_key,
+      result: result,
+      guardrails: attempt.guardrails,
+      execution_opts: execution_opts,
+      applied_at: applied_at,
+      transition: transition,
+      trace: attempt.trace,
+      occurred_at: now
+    })
   end
 
   @doc """

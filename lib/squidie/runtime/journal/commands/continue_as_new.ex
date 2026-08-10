@@ -4,19 +4,15 @@ defmodule Squidie.Runtime.Journal.Commands.ContinueAsNew do
   alias Jido.Agent
   alias Squidie.ReadModel.Inspection
   alias Squidie.Runtime.ContinuationActivation
-  alias Squidie.Runtime.ContinuationIdentity
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.Journal.Commands.Continuation
   alias Squidie.Runtime.Journal.Commands.ContinuationRecovery
   alias Squidie.Runtime.Journal.ContinuationIntent
   alias Squidie.Runtime.Journal.Options
-  alias Squidie.Runtime.Journal.Storage
   alias Squidie.Runtime.Journal.WorkflowDefinitionLoader
   alias Squidie.Runtime.Routing
-  alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
-  alias Squidie.Workflow.Definition
 
   @fence_retries 25
 
@@ -131,7 +127,7 @@ defmodule Squidie.Runtime.Journal.Commands.ContinueAsNew do
        ) do
     with :ok <- module_authored_workflow(storage, run_id),
          {:ok, intent} <-
-           build_intent(
+           ContinuationIntent.prepare_current(
              storage,
              workflow_agent,
              input,
@@ -218,64 +214,13 @@ defmodule Squidie.Runtime.Journal.Commands.ContinueAsNew do
     DispatchAgent.fence_run_for_continuation(
       storage,
       dispatch_agent,
-      fence_attrs(intent, request_input),
+      ContinuationIntent.fence_attrs(intent, request_input),
       now: intent.occurred_at
     )
   end
 
   defp refresh_workflow_agent(storage, %Agent{state: %{run_id: run_id}}) do
     WorkflowAgent.rebuild(storage, run_id)
-  end
-
-  defp build_intent(
-         storage,
-         %Agent{state: %{run_id: run_id, projection: %Projection{} = projection}},
-         input,
-         continuation_key,
-         queue,
-         now
-       ) do
-    with {:ok, definition, resolved_input} <- current_target(projection, input),
-         {:ok, successor_run_id} <-
-           ContinuationIdentity.successor_run_id(%{
-             partition: Storage.partition(storage),
-             predecessor_run_id: run_id,
-             continuation_key: continuation_key,
-             workflow: projection.workflow,
-             trigger: projection.trigger,
-             definition_version: definition.definition_version,
-             definition_fingerprint: Definition.fingerprint(definition)
-           }),
-         {:ok, trace} <-
-           Trace.child_of(
-             Projection.trace(projection),
-             "continuation:#{successor_run_id}"
-           ) do
-      {:ok,
-       %ContinuationIntent{
-         run_id: run_id,
-         successor_run_id: successor_run_id,
-         continuation_key: continuation_key,
-         workflow: projection.workflow,
-         trigger: projection.trigger,
-         input: resolved_input,
-         definition: :current,
-         definition_version: definition.definition_version,
-         definition_fingerprint: Definition.fingerprint(definition),
-         queue: queue,
-         trace: trace,
-         occurred_at: now
-       }}
-    end
-  end
-
-  defp current_target(%Projection{} = projection, input) do
-    with {:ok, _workflow, definition} <- Definition.load_serialized(projection.workflow),
-         {:ok, trigger_name} <- target_trigger_name(definition, projection.trigger),
-         {:ok, trigger} <- Definition.trigger(definition, trigger_name),
-         {:ok, resolved_input} <- Definition.resolve_payload(trigger, input) do
-      {:ok, definition, resolved_input}
-    end
   end
 
   defp matching_request(fence, input, continuation_key) do
@@ -297,16 +242,9 @@ defmodule Squidie.Runtime.Journal.Commands.ContinueAsNew do
   defp matching_input?(fence, input) do
     projection = %Projection{workflow: fence.workflow, trigger: fence.trigger}
 
-    case current_target(projection, input) do
+    case ContinuationIntent.resolve_current_input(projection, input) do
       {:ok, _definition, resolved_input} -> resolved_input == fence.input
       {:error, _reason} -> false
-    end
-  end
-
-  defp target_trigger_name(definition, serialized_trigger) do
-    case Definition.deserialize_trigger(definition, serialized_trigger) do
-      trigger_name when is_atom(trigger_name) -> {:ok, trigger_name}
-      _unknown -> {:error, {:invalid_continuation_target, :trigger}}
     end
   end
 
@@ -364,12 +302,5 @@ defmodule Squidie.Runtime.Journal.Commands.ContinueAsNew do
 
   defp continuation_key(_opts) do
     {:error, {:invalid_option, {:opts, :invalid}}}
-  end
-
-  defp fence_attrs(%ContinuationIntent{} = intent, request_input) do
-    intent
-    |> Map.from_struct()
-    |> Map.drop([:queue, :occurred_at])
-    |> Map.put(:request_input, request_input)
   end
 end

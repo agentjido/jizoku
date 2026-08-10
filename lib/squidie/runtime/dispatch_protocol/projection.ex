@@ -31,6 +31,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     :trigger,
     :input,
     :request_input,
+    :source_runnable_key,
     :definition,
     :definition_version,
     :definition_fingerprint,
@@ -631,6 +632,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
     ]) and
       Map.has_key?(data, :definition_version) and
       valid_continuation_fence_identifiers?(data) and
+      valid_continuation_source?(data) and
       valid_continuation_target?(data) and
       Trace.valid?(Map.fetch!(data, :trace)) and
       match?(%DateTime{}, Map.fetch!(data, :occurred_at))
@@ -643,6 +645,13 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   defp valid_continuation_request_input?(data) do
     case Map.fetch(data, :request_input) do
       {:ok, request_input} -> is_map(request_input)
+      :error -> true
+    end
+  end
+
+  defp valid_continuation_source?(data) do
+    case Map.fetch(data, :source_runnable_key) do
+      {:ok, runnable_key} -> non_empty_binary?(runnable_key)
       :error -> true
     end
   end

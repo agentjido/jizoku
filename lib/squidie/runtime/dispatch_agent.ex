@@ -33,6 +33,7 @@ defmodule Squidie.Runtime.DispatchAgent do
     :trigger,
     :input,
     :request_input,
+    :source_runnable_key,
     :definition,
     :definition_version,
     :definition_fingerprint,
@@ -62,6 +63,12 @@ defmodule Squidie.Runtime.DispatchAgent do
         }
   @type continuation_fence_update :: %{
           required(:agent) => Agent.t(),
+          required(:fence) => map(),
+          required(:created?) => boolean()
+        }
+  @type continuation_completion_update :: %{
+          required(:agent) => Agent.t(),
+          required(:attempt) => ActionAttempt.t(),
           required(:fence) => map(),
           required(:created?) => boolean()
         }
@@ -290,6 +297,62 @@ defmodule Squidie.Runtime.DispatchAgent do
 
   def fence_run_for_continuation(_storage, _agent, _fence, _opts) do
     {:error, {:invalid_continuation_fence, :invalid}}
+  end
+
+  @doc false
+  @spec complete_with_continuation_fence(storage_config(), Agent.t(), map(), keyword()) ::
+          {:ok, continuation_completion_update()} | {:error, term()}
+  def complete_with_continuation_fence(storage, agent, completion, opts \\ [])
+
+  def complete_with_continuation_fence(
+        storage,
+        %Agent{
+          agent_module: __MODULE__,
+          state: %State{
+            queue: queue,
+            projection: %Projection{} = projection,
+            thread_rev: thread_rev
+          }
+        } = agent,
+        %{
+          runnable_key: runnable_key,
+          claim_id: claim_id,
+          claim_token: claim_token,
+          result: result,
+          fence: fence
+        },
+        opts
+      )
+      when is_binary(queue) and is_binary(runnable_key) and is_binary(claim_id) and
+             is_binary(claim_token) and is_map(result) and is_map(fence) and
+             is_integer(thread_rev) and thread_rev >= 0 and is_list(opts) do
+    with :ok <- validate_agent_partition(storage, agent),
+         {:ok, now} <- lifecycle_now(opts),
+         {:ok, completion_target} <-
+           completion_target(projection, runnable_key, claim_id, claim_token, result, now),
+         {:ok, fence_entry} <- continuation_fence_entry(fence, queue, now: now),
+         :ok <- validate_continuation_fence_entry(fence_entry),
+         :ok <- validate_native_fence_source(fence_entry.data, completion_target),
+         :ok <- validate_native_completion_replay(completion_target, opts),
+         {:ok, mode} <-
+           native_continuation_mode(projection, completion_target, fence_entry.data) do
+      persist_native_continuation(mode, completion_target, %{
+        storage: storage,
+        agent: agent,
+        projection: projection,
+        thread_rev: thread_rev,
+        claim_id: claim_id,
+        claim_token: claim_token,
+        result: result,
+        fence_entry: fence_entry,
+        opts: opts,
+        now: now
+      })
+    end
+  end
+
+  def complete_with_continuation_fence(_storage, _agent, _completion, _opts) do
+    {:error, {:invalid_continuation_completion, :invalid}}
   end
 
   @doc false
@@ -689,6 +752,142 @@ defmodule Squidie.Runtime.DispatchAgent do
     else
       {:error, {:invalid_continuation_fence, :invalid}}
     end
+  end
+
+  defp validate_native_fence_source(
+         %{run_id: run_id, source_runnable_key: runnable_key},
+         {_mode, %ActionAttempt{run_id: run_id, runnable_key: runnable_key}}
+       ) do
+    :ok
+  end
+
+  defp validate_native_fence_source(_fence, _completion_target) do
+    {:error, {:invalid_continuation_fence, :invalid_source}}
+  end
+
+  defp validate_native_completion_replay({:claimed, %ActionAttempt{}}, _opts) do
+    :ok
+  end
+
+  defp validate_native_completion_replay({:completed, %ActionAttempt{} = attempt}, opts) do
+    if attempt.execution_opts == Keyword.get(opts, :execution_opts, []) and
+         attempt.guardrails == Keyword.get(opts, :guardrails, []) do
+      :ok
+    else
+      {:error, :conflicting_completion}
+    end
+  end
+
+  defp native_continuation_mode(
+         %Projection{} = projection,
+         {:claimed, %ActionAttempt{} = attempt},
+         fence
+       ) do
+    case Projection.continuation_fence(projection, fence.run_id) do
+      nil -> native_new_fence_mode(projection, attempt)
+      existing -> native_existing_fence_mode(projection, existing, fence, :claimed)
+    end
+  end
+
+  defp native_continuation_mode(
+         %Projection{} = projection,
+         {:completed, %ActionAttempt{}},
+         fence
+       ) do
+    case Projection.continuation_fence(projection, fence.run_id) do
+      nil -> {:error, {:incomplete_continuation_fence, fence.run_id}}
+      existing -> native_existing_fence_mode(projection, existing, fence, :completed)
+    end
+  end
+
+  defp native_new_fence_mode(%Projection{} = projection, %ActionAttempt{} = attempt) do
+    expected = [%{reason: :claimed_attempt, runnable_key: attempt.runnable_key}]
+
+    case Projection.continuation_blockers(projection, attempt.run_id) do
+      ^expected -> {:ok, :new}
+      blockers -> {:error, {:unsafe_continuation, blockers}}
+    end
+  end
+
+  defp native_existing_fence_mode(projection, existing, fence, completion_mode) do
+    cond do
+      not Projection.same_continuation_fence?(existing, fence) ->
+        {:error, :conflicting_continuation_fence}
+
+      completion_mode == :claimed ->
+        {:error, :continuation_fenced}
+
+      true ->
+        case existing_continuation_fence_mode(projection, fence.run_id, existing) do
+          {:ok, {:existing, retained}} -> {:ok, {:existing, retained}}
+          {:error, _reason} = error -> error
+        end
+    end
+  end
+
+  defp persist_native_continuation(
+         {:existing, fence},
+         {:completed, attempt},
+         %{agent: agent}
+       ) do
+    {:ok, continuation_completion_update(agent, attempt, fence, false)}
+  end
+
+  defp persist_native_continuation(
+         :new,
+         {:claimed, attempt},
+         %{
+           storage: storage,
+           agent: agent,
+           projection: projection,
+           thread_rev: thread_rev,
+           claim_id: claim_id,
+           claim_token: claim_token,
+           result: result,
+           fence_entry: fence_entry,
+           opts: opts,
+           now: now
+         }
+       ) do
+    with :ok <- active_run(storage, attempt.run_id),
+         {:ok, completed_entry} <-
+           DispatchProtocol.new_entry(:attempt_completed, %{
+             run_id: attempt.run_id,
+             runnable_key: attempt.runnable_key,
+             claim_id: claim_id,
+             claim_token_hash: claim_token_hash(claim_token),
+             queue: agent.state.queue,
+             trace: attempt.trace,
+             result: result,
+             guardrails: Keyword.get(opts, :guardrails, []),
+             execution_opts: Keyword.get(opts, :execution_opts, []),
+             occurred_at: now
+           }),
+         {:ok, thread} <-
+           Journal.append_entries(storage, [completed_entry, fence_entry],
+             expected_rev: thread_rev,
+             telemetry_projection: projection
+           ) do
+      completed_agent =
+        apply_dispatch_entries(
+          agent,
+          projection,
+          [completed_entry, fence_entry],
+          thread.rev
+        )
+
+      {:ok,
+       continuation_completion_update(
+         completed_agent,
+         claimed_attempt!(completed_agent, attempt.runnable_key),
+         Projection.continuation_fence(completed_agent.state.projection, attempt.run_id),
+         true
+       )}
+    end
+  end
+
+  defp continuation_completion_update(agent, attempt, fence, created?) do
+    %{agent: agent, attempt: attempt, fence: fence, created?: created?}
   end
 
   defp continuation_repair_entry(%Projection{} = projection, run_id, queue, opts) do
