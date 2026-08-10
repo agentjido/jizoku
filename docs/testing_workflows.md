@@ -52,6 +52,26 @@ assert diagnostic.run_id == run.run_id
 The diagnostic includes the last durable inspection snapshot so an unexpectedly
 busy workflow can be understood without a separate read.
 
+Use `execute_until/3` when a test needs to stop at an intermediate durable
+state. Pass `max_steps:` through `execute_until/4` when that call needs a
+different bound. The predicate receives each inspection snapshot before
+terminal, blocked, and bound classification:
+
+```elixir
+assert {:reached, snapshot} =
+         Squidie.Test.execute_until(runtime, run, fn snapshot ->
+           Map.has_key?(snapshot.context, :invoice)
+         end)
+
+refute Map.has_key?(snapshot.context, :notification)
+assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+```
+
+An initially matching predicate returns without executing work. When it never
+matches, the helper returns the same terminal, blocked, or execution-limit
+result as `drain/3`. Predicate exceptions propagate and still release the
+runtime execution lease.
+
 ## Virtual time
 
 The runtime clock starts at the `now:` value passed to `start_runtime/1` and
@@ -78,9 +98,10 @@ advance again after the helper finishes or reaches a blocked state.
 ## Current scope
 
 The test runtime covers isolated in-memory storage, normal workflow starts,
-bounded execution, blocked-state detection, virtual time, and inspection.
-Signals and manual commands, deterministic faults, restarts, golden histories,
-and reusable invariant assertions will build on this same runtime contract.
+bounded and predicate-based execution, blocked-state detection, virtual time,
+and inspection. Signals and manual commands, deterministic faults, restarts,
+golden histories, and reusable invariant assertions will build on this same
+runtime contract.
 
 Use the configured Ecto adapter for integration tests that need database
 transactions, migrations, or query behavior. The in-memory runtime is intended

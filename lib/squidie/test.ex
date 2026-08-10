@@ -30,6 +30,8 @@ defmodule Squidie.Test do
           {:blocked, Snapshot.t()}
           | {:cancelled | :completed | :continued | :failed, Snapshot.t()}
           | {:error, term()}
+  @type execute_until_result :: {:reached, Snapshot.t()} | execution_result()
+  @type snapshot_predicate :: (Snapshot.t() -> boolean())
   @type time_unit :: :second | :millisecond | :microsecond
 
   @doc """
@@ -153,6 +155,38 @@ defmodule Squidie.Test do
   end
 
   @doc """
+  Executes until a durable snapshot satisfies `predicate`.
+
+  The predicate runs after each inspection and before terminal, blocked, or
+  execution-limit classification. A match returns `{:reached, snapshot}`;
+  otherwise the helper preserves the same results as `execute_until_blocked/3`.
+  """
+  @spec execute_until(
+          Runtime.t(),
+          Ecto.UUID.t() | Snapshot.t(),
+          snapshot_predicate(),
+          keyword()
+        ) :: execute_until_result()
+  def execute_until(runtime, run, predicate, opts \\ [])
+
+  def execute_until(%Runtime{} = runtime, run, predicate, opts) when is_list(opts) do
+    with true <- Keyword.keyword?(opts),
+         :ok <- validate_predicate(predicate),
+         :ok <- reject_unknown_options(opts, @execution_options),
+         {:ok, limit} <- max_steps(opts, runtime.max_steps),
+         {:ok, target_run_id} <- target_run_id(runtime, run) do
+      execute_with_lease(runtime, target_run_id, limit, predicate)
+    else
+      false -> {:error, {:invalid_option, {:opts, :invalid}}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def execute_until(%Runtime{}, _run, _predicate, _opts) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
+  end
+
+  @doc """
   Executes until the target run is terminal or no work is currently eligible.
 
   Returns a terminal-status tuple or `{:blocked, snapshot}`. The optional
@@ -167,7 +201,7 @@ defmodule Squidie.Test do
          :ok <- reject_unknown_options(opts, @execution_options),
          {:ok, limit} <- max_steps(opts, runtime.max_steps),
          {:ok, target_run_id} <- target_run_id(runtime, run) do
-      execute_with_lease(runtime, target_run_id, limit)
+      execute_with_lease(runtime, target_run_id, limit, &never_reached?/1)
     else
       false -> {:error, {:invalid_option, {:opts, :invalid}}}
       {:error, _reason} = error -> error
@@ -187,9 +221,12 @@ defmodule Squidie.Test do
     execute_until_blocked(runtime, run, opts)
   end
 
-  defp execute(runtime, run_id, remaining, limit, now) do
+  defp execute(runtime, run_id, remaining, limit, now, predicate) do
     with {:ok, snapshot} <- inspect_at(runtime, run_id, now) do
       cond do
+        predicate.(snapshot) ->
+          {:reached, snapshot}
+
         snapshot.status in @terminal_statuses ->
           {snapshot.status, snapshot}
 
@@ -198,16 +235,16 @@ defmodule Squidie.Test do
            {:execution_limit_reached, %{limit: limit, run_id: run_id, snapshot: snapshot}}}
 
         true ->
-          execute_next(runtime, run_id, remaining, limit, now)
+          execute_next(runtime, run_id, remaining, limit, now, predicate)
       end
     end
   end
 
-  defp execute_with_lease(runtime, run_id, limit) do
+  defp execute_with_lease(runtime, run_id, limit, predicate) do
     case Storage.begin_execution(runtime.storage_server) do
       {:ok, now, lease_ref} ->
         try do
-          execute(runtime, run_id, limit, limit, now)
+          execute(runtime, run_id, limit, limit, now, predicate)
         after
           _result = Storage.end_execution(runtime.storage_server, lease_ref)
         end
@@ -248,24 +285,32 @@ defmodule Squidie.Test do
       :erlang.raise(kind, reason, __STACKTRACE__)
   end
 
-  defp execute_next(runtime, run_id, remaining, limit, now) do
+  defp execute_next(runtime, run_id, remaining, limit, now, predicate) do
     opts =
       runtime
       |> runtime_options(now)
       |> Keyword.put(:owner_id, runtime.id)
 
-    execute_next_result(Squidie.execute_next(opts), runtime, run_id, remaining, limit, now)
+    execute_next_result(
+      Squidie.execute_next(opts),
+      runtime,
+      run_id,
+      remaining,
+      limit,
+      now,
+      predicate
+    )
   end
 
-  defp execute_next_result(result, runtime, run_id, remaining, limit, now) do
+  defp execute_next_result(result, runtime, run_id, remaining, limit, now, predicate) do
     case result do
       {:ok, :none} ->
         with {:ok, snapshot} <- inspect_at(runtime, run_id, now) do
-          {:blocked, snapshot}
+          classify_final_snapshot(snapshot, predicate)
         end
 
       {:ok, _snapshot} ->
-        execute(runtime, run_id, remaining - 1, limit, now)
+        execute(runtime, run_id, remaining - 1, limit, now, predicate)
 
       {:error, _reason} = error ->
         error
@@ -279,6 +324,14 @@ defmodule Squidie.Test do
   defp common_runtime_options(%Runtime{} = runtime) do
     with {:ok, now} <- now(runtime) do
       {:ok, runtime_options(runtime, now)}
+    end
+  end
+
+  defp classify_final_snapshot(snapshot, predicate) do
+    cond do
+      predicate.(snapshot) -> {:reached, snapshot}
+      snapshot.status in @terminal_statuses -> {snapshot.status, snapshot}
+      true -> {:blocked, snapshot}
     end
   end
 
@@ -312,6 +365,10 @@ defmodule Squidie.Test do
     end
   end
 
+  defp never_reached?(_snapshot) do
+    false
+  end
+
   defp reject_unknown_options(opts, allowed) do
     case Keyword.keys(opts) -- allowed do
       [] -> :ok
@@ -327,6 +384,14 @@ defmodule Squidie.Test do
       {:ok, _other_run_id} -> {:error, :run_outside_runtime}
       {:error, _reason} = error -> error
     end
+  end
+
+  defp validate_predicate(predicate) when is_function(predicate, 1) do
+    :ok
+  end
+
+  defp validate_predicate(_predicate) do
+    {:error, {:invalid_option, {:predicate, :invalid}}}
   end
 
   defp run_id(%Snapshot{run_id: run_id}) do

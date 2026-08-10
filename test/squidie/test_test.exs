@@ -225,6 +225,134 @@ defmodule Squidie.TestTest do
     assert snapshot.context == %{value: 42}
   end
 
+  test "executes until a durable snapshot matches and resumes from there" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: TwoStepWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{value: 7})
+
+    assert {:reached, snapshot} =
+             Test.execute_until(runtime, run, fn snapshot ->
+               Map.has_key?(snapshot.context, :first)
+             end)
+
+    assert snapshot.status == :running
+    assert snapshot.context.first == 7
+    refute Map.has_key?(snapshot.context, :second)
+
+    assert {:completed, snapshot} = Test.drain(runtime, run)
+    assert snapshot.context.second == 7
+  end
+
+  test "returns an initially matching snapshot without executing work" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: CompleteWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{value: 42})
+
+    assert {:reached, snapshot} =
+             Test.execute_until(runtime, run, fn snapshot ->
+               snapshot.status == :running
+             end)
+
+    assert snapshot == run
+
+    assert {:completed, _snapshot} =
+             Test.execute_until(runtime, run, fn _snapshot -> false end)
+  end
+
+  test "preserves blocked and bounded results when the predicate is not reached" do
+    assert {:ok, blocked_runtime} = Test.start_runtime(workflow: WaitWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(blocked_runtime) end)
+
+    assert {:ok, blocked_run} = Test.start(blocked_runtime, %{value: 3})
+
+    assert {:blocked, %{status: :running}} =
+             Test.execute_until(blocked_runtime, blocked_run, fn _snapshot -> false end)
+
+    assert {:ok, reached_runtime} =
+             Test.start_runtime(workflow: TwoStepWorkflow, now: @now)
+
+    on_exit(fn -> Test.stop_runtime(reached_runtime) end)
+    assert {:ok, reached_run} = Test.start(reached_runtime, %{value: 7})
+
+    assert {:reached, %{context: %{first: 7}}} =
+             Test.execute_until(
+               reached_runtime,
+               reached_run,
+               fn snapshot -> Map.has_key?(snapshot.context, :first) end,
+               max_steps: 1
+             )
+
+    assert {:ok, bounded_runtime} =
+             Test.start_runtime(workflow: TwoStepWorkflow, now: @now)
+
+    on_exit(fn -> Test.stop_runtime(bounded_runtime) end)
+    assert {:ok, bounded_run} = Test.start(bounded_runtime, %{value: 7})
+
+    assert {:error, {:execution_limit_reached, %{limit: 1}}} =
+             Test.execute_until(
+               bounded_runtime,
+               bounded_run,
+               fn snapshot -> Map.has_key?(snapshot.context, :second) end,
+               max_steps: 1
+             )
+  end
+
+  test "validates predicates and releases the clock lease when one raises" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: CompleteWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{value: 42})
+
+    assert {:error, {:invalid_option, {:predicate, :invalid}}} =
+             Test.execute_until(runtime, run, :not_a_function)
+
+    assert {:error, {:invalid_option, {:opts, :invalid}}} =
+             Test.execute_until(runtime, run, fn _snapshot -> false end, [:bad])
+
+    assert_raise RuntimeError, "predicate failed", fn ->
+      Test.execute_until(runtime, run, fn _snapshot ->
+        raise "predicate failed"
+      end)
+    end
+
+    assert {:ok, advanced} = Test.advance_time(runtime, 1, :second)
+    assert advanced == DateTime.add(@now, 1, :second)
+  end
+
+  test "classifies the final snapshot after a concurrent drain completes the run" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: CompleteWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{value: 42})
+    parent = self()
+
+    execute_task =
+      Task.async(fn ->
+        Test.execute_until(runtime, run, fn snapshot ->
+          if snapshot.status == :running do
+            send(parent, {:predicate_paused, self()})
+
+            receive do
+              :release_predicate -> false
+            end
+          else
+            send(parent, {:predicate_final, snapshot.status})
+            snapshot.status == :completed
+          end
+        end)
+      end)
+
+    assert_receive {:predicate_paused, execute_pid}
+    assert {:completed, completed} = Test.drain(runtime, run)
+    send(execute_pid, :release_predicate)
+
+    assert {:reached, %{run_id: run_id, status: :completed}} = Task.await(execute_task)
+    assert run_id == completed.run_id
+    assert_receive {:predicate_final, :completed}
+  end
+
   test "keeps bounded execution scoped to the runtime's single root run" do
     assert {:ok, runtime} = Test.start_runtime(workflow: CompleteWorkflow, now: @now)
     on_exit(fn -> Test.stop_runtime(runtime) end)
