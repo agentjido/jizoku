@@ -21,6 +21,7 @@ defmodule Squidie.Test do
   alias Squidie.Workflow.Definition
 
   @default_max_steps 100
+  @control_options [:idempotency_key, :metadata]
   @runtime_options [:max_steps, :now, :partition, :queue, :workflow]
   @execution_options [:max_steps]
   @terminal_statuses [:cancelled, :completed, :continued, :failed]
@@ -155,6 +156,96 @@ defmodule Squidie.Test do
   end
 
   @doc """
+  Cancels the runtime's root run through `Squidie.cancel/2`.
+
+  The optional `:idempotency_key` and `:metadata` values are forwarded to the
+  durable command signal. Runtime routing and occurrence time always come from
+  the isolated test runtime.
+  """
+  @spec cancel(Runtime.t(), Ecto.UUID.t() | Snapshot.t(), keyword()) ::
+          {:ok, Snapshot.t()} | {:error, term()}
+  def cancel(runtime, run, opts \\ []) do
+    run_control(runtime, run, opts, &Squidie.cancel/2)
+  end
+
+  @doc """
+  Resumes the runtime's paused root run through `Squidie.resume/3`.
+  """
+  @spec resume(Runtime.t(), Ecto.UUID.t() | Snapshot.t()) ::
+          {:ok, Snapshot.t()} | {:error, term()}
+  def resume(runtime, run) do
+    resume(runtime, run, %{}, [])
+  end
+
+  @doc """
+  Resumes a paused run with either command options or manual action attributes.
+  """
+  @spec resume(Runtime.t(), Ecto.UUID.t() | Snapshot.t(), keyword()) ::
+          {:ok, Snapshot.t()} | {:error, term()}
+  def resume(runtime, run, opts) when is_list(opts) do
+    resume(runtime, run, %{}, opts)
+  end
+
+  @spec resume(Runtime.t(), Ecto.UUID.t() | Snapshot.t(), map()) ::
+          {:ok, Snapshot.t()} | {:error, term()}
+  def resume(runtime, run, attrs) when is_map(attrs) do
+    resume(runtime, run, attrs, [])
+  end
+
+  def resume(%Runtime{}, _run, _attrs) do
+    {:error, {:invalid_attributes, :expected_map}}
+  end
+
+  @doc """
+  Resumes a paused run with manual action attributes and command options.
+  """
+  @spec resume(Runtime.t(), Ecto.UUID.t() | Snapshot.t(), map(), keyword()) ::
+          {:ok, Snapshot.t()} | {:error, term()}
+  def resume(%Runtime{} = runtime, run, attrs, opts) when is_map(attrs) do
+    run_control(runtime, run, opts, fn run_id, control_opts ->
+      Squidie.resume(run_id, attrs, control_opts)
+    end)
+  end
+
+  def resume(%Runtime{}, _run, _attrs, _opts) do
+    {:error, {:invalid_attributes, :expected_map}}
+  end
+
+  @doc """
+  Approves the runtime's paused approval step through `Squidie.approve/3`.
+  """
+  @spec approve(Runtime.t(), Ecto.UUID.t() | Snapshot.t(), map(), keyword()) ::
+          {:ok, Snapshot.t()} | {:error, term()}
+  def approve(runtime, run, attrs, opts \\ [])
+
+  def approve(%Runtime{} = runtime, run, attrs, opts) when is_map(attrs) do
+    run_control(runtime, run, opts, fn run_id, control_opts ->
+      Squidie.approve(run_id, attrs, control_opts)
+    end)
+  end
+
+  def approve(%Runtime{}, _run, _attrs, _opts) do
+    {:error, {:invalid_attributes, :expected_map}}
+  end
+
+  @doc """
+  Rejects the runtime's paused approval step through `Squidie.reject/3`.
+  """
+  @spec reject(Runtime.t(), Ecto.UUID.t() | Snapshot.t(), map(), keyword()) ::
+          {:ok, Snapshot.t()} | {:error, term()}
+  def reject(runtime, run, attrs, opts \\ [])
+
+  def reject(%Runtime{} = runtime, run, attrs, opts) when is_map(attrs) do
+    run_control(runtime, run, opts, fn run_id, control_opts ->
+      Squidie.reject(run_id, attrs, control_opts)
+    end)
+  end
+
+  def reject(%Runtime{}, _run, _attrs, _opts) do
+    {:error, {:invalid_attributes, :expected_map}}
+  end
+
+  @doc """
   Executes until a durable snapshot satisfies `predicate`.
 
   The predicate runs after each inspection and before terminal, blocked, or
@@ -241,10 +332,16 @@ defmodule Squidie.Test do
   end
 
   defp execute_with_lease(runtime, run_id, limit, predicate) do
+    with_execution_lease(runtime, fn now ->
+      execute(runtime, run_id, limit, limit, now, predicate)
+    end)
+  end
+
+  defp with_execution_lease(runtime, operation) do
     case Storage.begin_execution(runtime.storage_server) do
       {:ok, now, lease_ref} ->
         try do
-          execute(runtime, run_id, limit, limit, now, predicate)
+          operation.(now)
         after
           _result = Storage.end_execution(runtime.storage_server, lease_ref)
         end
@@ -376,6 +473,19 @@ defmodule Squidie.Test do
     end
   end
 
+  defp run_control(%Runtime{} = runtime, run, opts, operation) do
+    with :ok <- validate_control_options(opts),
+         {:ok, target_run_id} <- target_run_id(runtime, run) do
+      with_execution_lease(runtime, fn now ->
+        operation.(target_run_id, control_runtime_options(runtime, now, opts))
+      end)
+    end
+  end
+
+  defp control_runtime_options(runtime, now, command_opts) do
+    Keyword.merge(runtime_options(runtime, now), command_opts)
+  end
+
   defp target_run_id(runtime, run) do
     target_run_id = run_id(run)
 
@@ -392,6 +502,20 @@ defmodule Squidie.Test do
 
   defp validate_predicate(_predicate) do
     {:error, {:invalid_option, {:predicate, :invalid}}}
+  end
+
+  defp validate_control_options(opts) when is_list(opts) do
+    with true <- Keyword.keyword?(opts),
+         :ok <- reject_unknown_options(opts, @control_options) do
+      :ok
+    else
+      false -> {:error, {:invalid_option, {:opts, :invalid}}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_control_options(_opts) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
   end
 
   defp run_id(%Snapshot{run_id: run_id}) do

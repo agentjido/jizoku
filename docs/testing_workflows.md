@@ -95,13 +95,38 @@ and visibility decisions stay coherent while helper tasks drain or inspect the
 run. Advancing while a drain is executing returns `{:error, :runtime_busy}`;
 advance again after the helper finishes or reaches a blocked state.
 
+## Manual controls
+
+Use the named control helpers after a workflow reaches durable manual state:
+
+```elixir
+assert {:blocked, %{status: :paused}} = Squidie.Test.drain(runtime, run)
+
+assert {:ok, resumed} =
+         Squidie.Test.approve(
+           runtime,
+           run,
+           %{actor: "reviewer-1", comment: "approved"},
+           idempotency_key: "approval-order-123"
+         )
+
+assert resumed.status == :running
+assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+```
+
+`approve/4`, `reject/4`, `resume/4`, and `cancel/3` use the same durable public
+commands as a host application. They inherit the runtime's isolated storage,
+queue, partition, and frozen clock. Callers may provide only `:idempotency_key`
+and signal `:metadata`; routing and occurrence time cannot escape the test
+runtime. Each helper accepts only the runtime's root run.
+
 ## Current scope
 
 The test runtime covers isolated in-memory storage, normal workflow starts,
 bounded and predicate-based execution, blocked-state detection, virtual time,
-and inspection. Signals and manual commands, deterministic faults, restarts,
-golden histories, and reusable invariant assertions will build on this same
-runtime contract.
+named manual controls, and inspection. Generic signals, deterministic faults,
+restarts, golden histories, and reusable invariant assertions will build on
+this same runtime contract.
 
 Use the configured Ecto adapter for integration tests that need database
 transactions, migrations, or query behavior. The in-memory runtime is intended
