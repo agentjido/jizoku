@@ -158,9 +158,14 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
       when is_binary(source_runnable_key) and source_runnable_key != "" do
     with true <- Storage.partition(storage) == partition,
          {:ok, :new} <- predecessor_mode(workflow_agent, intent),
-         :ok <- validate_static_boundary(storage, workflow_agent, intent, queue),
+         :ok <- validate_native_emission_static_boundary(storage, workflow_agent, intent, queue),
          :ok <- ContinuationIntent.validate_current_target(intent),
-         :ok <- validate_native_workflow_boundary(storage, workflow_agent, source_runnable_key) do
+         :ok <-
+           validate_native_emission_workflow_boundary(
+             storage,
+             workflow_agent,
+             source_runnable_key
+           ) do
       validate_native_dispatch_boundary(
         dispatch_agent,
         intent.run_id,
@@ -334,6 +339,16 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
     end
   end
 
+  defp validate_native_emission_workflow_boundary(
+         storage,
+         workflow_agent,
+         source_runnable_key
+       ) do
+    storage
+    |> validate_native_workflow_boundary(workflow_agent, source_runnable_key)
+    |> normalize_native_emission_storage_result()
+  end
+
   defp native_applied_plan(%Projection{} = projection, source_runnable_key) do
     planned_keys = MapSet.new(Projection.planned_runnable_keys(projection))
     applied_keys = Projection.applied_runnable_keys(projection)
@@ -365,6 +380,24 @@ defmodule Squidie.Runtime.Journal.Commands.Continuation do
          :ok <- single_queue_plan(workflow_agent.state.projection, queue) do
       module_authored_workflow(storage, intent.run_id)
     end
+  end
+
+  defp validate_native_emission_static_boundary(storage, workflow_agent, intent, queue) do
+    storage
+    |> validate_static_boundary(workflow_agent, intent, queue)
+    |> normalize_native_emission_storage_result()
+  end
+
+  defp normalize_native_emission_storage_result(:ok) do
+    :ok
+  end
+
+  defp normalize_native_emission_storage_result({:error, {:unsafe_continuation, _reason}} = error) do
+    error
+  end
+
+  defp normalize_native_emission_storage_result({:error, reason}) do
+    {:error, {:native_continuation_storage_failed, reason}}
   end
 
   defp validate_fence_identity(

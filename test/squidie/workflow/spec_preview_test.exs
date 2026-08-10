@@ -70,6 +70,21 @@ defmodule Squidie.Workflow.SpecPreviewTest do
     def dry_run(_input, _context), do: {:ok, %{}}
   end
 
+  defmodule ContinueInPreview do
+    use Squidie.Step,
+      name: "Continue in preview",
+      input_schema: [account_id: [type: :string, required: true]],
+      output_schema: []
+
+    @impl Squidie.Step
+    def run(_input, _context), do: raise("preview must not call durable run/2")
+
+    @spec dry_run(map(), map()) :: Squidie.Step.result()
+    def dry_run(input, _context) do
+      {:continue_as_new, input, key: "preview-next", definition: :current}
+    end
+  end
+
   defmodule AllowGuardrail do
     @spec validate_guardrail(map(), map()) :: {:ok, map()}
     def validate_guardrail(_value, context) do
@@ -279,6 +294,29 @@ defmodule Squidie.Workflow.SpecPreviewTest do
   test "rejects missing action registry before previewing runtime-authored actions" do
     assert {:error, {:invalid_option, {:action_registry, :required}}} =
              Squidie.preview_spec(spec(), %{account_id: "acct_123"})
+  end
+
+  test "rejects native continue-as-new results in dry-run previews" do
+    registry = %{
+      "billing.load_account" => [module: ContinueInPreview, dry_run: true]
+    }
+
+    assert {:ok, %SpecPreview{} = preview} =
+             Squidie.preview_spec(single_step_spec(), %{account_id: "acct_123"},
+               action_registry: registry
+             )
+
+    assert preview.status == :failed
+
+    assert [
+             %{
+               status: :failed,
+               error: %{
+                 message: "native continue-as-new is not supported in dry-run previews",
+                 retryable?: false
+               }
+             }
+           ] = preview.nodes
   end
 
   defp spec do

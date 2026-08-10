@@ -8,12 +8,19 @@ defmodule Squidie.Step do
   not need to depend on Jido for the common workflow-step path.
   """
 
+  alias Squidie.Runtime.Journal.Options
   alias Squidie.Step.Context
 
   @type schema :: keyword(keyword())
+  @type continuation_request :: %{
+          required(:input) => map(),
+          required(:continuation_key) => String.t(),
+          required(:definition) => :current
+        }
   @type result ::
           {:ok, map()}
           | {:ok, map(), keyword()}
+          | {:continue_as_new, map(), keyword()}
           | {:defer, term(), keyword()}
           | {:error, term()}
           | {:retry, term()}
@@ -88,14 +95,37 @@ defmodule Squidie.Step do
   end
 
   @doc false
-  @spec normalize_result(result()) :: {:ok, map(), keyword()} | {:error, map()}
+  @spec normalize_result(result()) ::
+          {:ok, map(), keyword()} | {:continue_as_new, continuation_request()} | {:error, map()}
   def normalize_result({:ok, output}) when is_map(output), do: {:ok, output, []}
 
   def normalize_result({:ok, output, opts}) when is_map(output) and is_list(opts) do
-    if Keyword.has_key?(opts, :defer) do
-      {:error, invalid_defer_options_error(:reserved_success_option)}
-    else
-      {:ok, output, opts}
+    cond do
+      not Keyword.keyword?(opts) ->
+        invalid_result({:ok, output, opts})
+
+      Keyword.has_key?(opts, :defer) ->
+        {:error, invalid_defer_options_error(:reserved_success_option)}
+
+      Keyword.has_key?(opts, :continue_as_new) ->
+        {:error, invalid_continuation_options_error(:reserved_success_option)}
+
+      true ->
+        {:ok, output, opts}
+    end
+  end
+
+  def normalize_result({:continue_as_new, input, opts}) when is_list(opts) do
+    with :ok <- continuation_keyword_options(opts),
+         :ok <- continuation_input(input),
+         {:ok, continuation_key} <- continuation_key(opts),
+         :ok <- continuation_definition(opts) do
+      {:continue_as_new,
+       %{
+         input: input,
+         continuation_key: continuation_key,
+         definition: :current
+       }}
     end
   end
 
@@ -117,10 +147,60 @@ defmodule Squidie.Step do
   def normalize_result({:error, reason}), do: {:error, terminal_error(reason)}
 
   def normalize_result(other) do
+    invalid_result(other)
+  end
+
+  defp continuation_keyword_options(opts) do
+    if Keyword.keyword?(opts) do
+      unknown_options = Keyword.keys(opts) -- [:key, :definition]
+
+      case unknown_options do
+        [] -> :ok
+        options -> {:error, invalid_continuation_options_error({:unknown_options, options})}
+      end
+    else
+      {:error, invalid_continuation_options_error(:invalid_options)}
+    end
+  end
+
+  defp continuation_input(input) when is_map(input) do
+    if Options.storage_safe_value?(input) do
+      :ok
+    else
+      {:error, invalid_continuation_options_error(:storage_unsafe_input)}
+    end
+  end
+
+  defp continuation_input(_input) do
+    {:error, invalid_continuation_options_error(:expected_map)}
+  end
+
+  defp continuation_key(opts) do
+    case Keyword.fetch(opts, :key) do
+      {:ok, key} ->
+        case Options.thread_part(key, :continuation_key) do
+          {:ok, continuation_key} -> {:ok, continuation_key}
+          {:error, _reason} -> {:error, invalid_continuation_options_error(:invalid_key)}
+        end
+
+      :error ->
+        {:error, invalid_continuation_options_error(:missing_key)}
+    end
+  end
+
+  defp continuation_definition(opts) do
+    case Keyword.fetch(opts, :definition) do
+      {:ok, :current} -> :ok
+      {:ok, _definition} -> {:error, invalid_continuation_options_error(:invalid_definition)}
+      :error -> {:error, invalid_continuation_options_error(:missing_definition)}
+    end
+  end
+
+  defp invalid_result(result) do
     {:error,
      %{
        message: "native step returned an invalid result",
-       result: inspect(other),
+       result: inspect(result),
        retryable?: false
      }}
   end
@@ -236,6 +316,26 @@ defmodule Squidie.Step do
 
   defp invalid_defer_options_message(_details) do
     "native step deferred continuation requires a positive :schedule_in option"
+  end
+
+  defp invalid_continuation_options_error(details) do
+    %{
+      message: invalid_continuation_options_message(details),
+      details: details,
+      retryable?: false
+    }
+  end
+
+  defp invalid_continuation_options_message(:reserved_success_option) do
+    "native step continuation must use {:continue_as_new, input, opts}; :continue_as_new is reserved in success options"
+  end
+
+  defp invalid_continuation_options_message(:invalid_options) do
+    "native step continuation options must be a keyword list"
+  end
+
+  defp invalid_continuation_options_message(_details) do
+    "native step continuation options are invalid"
   end
 
   defp normalize_defer_reason(%{} = reason), do: reason

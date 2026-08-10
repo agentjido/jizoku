@@ -849,7 +849,7 @@ defmodule Squidie.Runtime.DispatchAgent do
            now: now
          }
        ) do
-    with :ok <- active_run(storage, attempt.run_id),
+    with :ok <- active_run_for_native_continuation(storage, attempt.run_id),
          {:ok, completed_entry} <-
            DispatchProtocol.new_entry(:attempt_completed, %{
              run_id: attempt.run_id,
@@ -862,27 +862,62 @@ defmodule Squidie.Runtime.DispatchAgent do
              guardrails: Keyword.get(opts, :guardrails, []),
              execution_opts: Keyword.get(opts, :execution_opts, []),
              occurred_at: now
-           }),
-         {:ok, thread} <-
-           Journal.append_entries(storage, [completed_entry, fence_entry],
-             expected_rev: thread_rev,
-             telemetry_projection: projection
-           ) do
-      completed_agent =
-        apply_dispatch_entries(
-          agent,
-          projection,
-          [completed_entry, fence_entry],
-          thread.rev
-        )
+           }) do
+      persist_native_continuation_entries(
+        storage,
+        agent,
+        projection,
+        thread_rev,
+        attempt,
+        completed_entry,
+        fence_entry
+      )
+    end
+  end
 
-      {:ok,
-       continuation_completion_update(
-         completed_agent,
-         claimed_attempt!(completed_agent, attempt.runnable_key),
-         Projection.continuation_fence(completed_agent.state.projection, attempt.run_id),
-         true
-       )}
+  defp active_run_for_native_continuation(storage, run_id) do
+    case active_run(storage, run_id) do
+      :ok -> :ok
+      {:error, :terminal_run} = error -> error
+      {:error, reason} -> {:error, {:continuation_persistence_failed, reason}}
+    end
+  end
+
+  defp persist_native_continuation_entries(
+         storage,
+         agent,
+         projection,
+         thread_rev,
+         attempt,
+         completed_entry,
+         fence_entry
+       ) do
+    case Journal.append_entries(storage, [completed_entry, fence_entry],
+           expected_rev: thread_rev,
+           telemetry_projection: projection
+         ) do
+      {:ok, thread} ->
+        completed_agent =
+          apply_dispatch_entries(
+            agent,
+            projection,
+            [completed_entry, fence_entry],
+            thread.rev
+          )
+
+        {:ok,
+         continuation_completion_update(
+           completed_agent,
+           claimed_attempt!(completed_agent, attempt.runnable_key),
+           Projection.continuation_fence(completed_agent.state.projection, attempt.run_id),
+           true
+         )}
+
+      {:error, :conflict} = error ->
+        error
+
+      {:error, reason} ->
+        {:error, {:continuation_persistence_failed, reason}}
     end
   end
 

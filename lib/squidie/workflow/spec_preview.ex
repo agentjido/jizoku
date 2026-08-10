@@ -385,8 +385,18 @@ defmodule Squidie.Workflow.SpecPreview do
     result = apply(module, function, [runnable.input, context])
 
     case Step.normalize_result(result) do
-      {:ok, output, _opts} -> {:ok, output}
-      {:error, error} -> {:error, error}
+      {:ok, output, _opts} ->
+        {:ok, output}
+
+      {:continue_as_new, _request} ->
+        {:error,
+         %{
+           message: "native continue-as-new is not supported in dry-run previews",
+           retryable?: false
+         }}
+
+      {:error, error} ->
+        {:error, error}
     end
   rescue
     exception in [

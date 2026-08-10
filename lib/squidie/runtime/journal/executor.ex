@@ -17,6 +17,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Commands.ContinuationRecovery
+  alias Squidie.Runtime.Journal.Commands.NativeContinuation
   alias Squidie.Runtime.Journal.Compensation
   alias Squidie.Runtime.Journal.DispatchScheduler
   alias Squidie.Runtime.Journal.EntryBuilder
@@ -2928,19 +2929,54 @@ defmodule Squidie.Runtime.Journal.Executor do
          } = execution
        ) do
     run_with_heartbeat(execution, fn mark_finishing ->
-      result =
-        with {:ok, input_guardrails} <-
-               evaluate_runtime_guardrails(execution, :input, claim.attempt.input),
-             {:ok, action_guardrails} <-
-               evaluate_runtime_guardrails(execution, :action, claim.attempt.input),
-             {:ok, output, execution_opts} <- run_step_with_telemetry(execution),
-             {:ok, output_guardrails} <- evaluate_runtime_guardrails(execution, :output, output) do
-          {:ok, output, execution_opts,
-           input_guardrails ++ action_guardrails ++ output_guardrails}
-        end
+      result = evaluated_step_result(execution, claim)
 
       record_step_result(result, execution, mark_finishing)
     end)
+  end
+
+  defp record_step_result(
+         {:continue_as_new, request, guardrails},
+         %{
+           runtime: %RuntimeContext{storage: storage, queue: queue, now: now},
+           claim: %ClaimContext{} = claim,
+           workflow: workflow,
+           definition: definition,
+           step_name: step_name
+         } = execution,
+         mark_finishing
+       ) do
+    mark_finishing.()
+
+    with :ok <- run_test_before_completion_hook(execution.opts, claim.attempt) do
+      case NativeContinuation.complete_claim(storage, %{
+             dispatch_agent: claim.dispatch_agent,
+             workflow_agent: claim.workflow_agent,
+             attempt: claim.attempt,
+             claim_id: claim.claim_id,
+             claim_token: claim.claim_token,
+             request: request,
+             queue: queue,
+             now: now,
+             guardrails: guardrails
+           }) do
+        {:ok, snapshot} ->
+          {:ok, snapshot}
+
+        {:error, {:native_continuation_rejected, reason}} ->
+          fail_attempt(
+            execution.runtime,
+            claim,
+            workflow,
+            definition,
+            step_name,
+            native_continuation_error(reason)
+          )
+
+        {:error, _reason} = error ->
+          error
+      end
+    end
   end
 
   defp record_step_result(
@@ -3029,20 +3065,21 @@ defmodule Squidie.Runtime.Journal.Executor do
 
   defp run_transactional_step_and_record(repo, execution) do
     run_with_heartbeat(execution, fn mark_finishing ->
-      result =
-        with {:ok, input_guardrails} <-
-               evaluate_runtime_guardrails(execution, :input, execution.claim.attempt.input),
-             {:ok, action_guardrails} <-
-               evaluate_runtime_guardrails(execution, :action, execution.claim.attempt.input),
-             {:ok, output, execution_opts} <-
-               run_transactional_step_with_telemetry(execution),
-             {:ok, output_guardrails} <- evaluate_runtime_guardrails(execution, :output, output) do
-          {:ok, output, execution_opts,
-           input_guardrails ++ action_guardrails ++ output_guardrails}
-        end
+      result = evaluated_transactional_step_result(execution)
 
       record_transactional_step_result(result, repo, execution, mark_finishing)
     end)
+  end
+
+  defp record_transactional_step_result(
+         {:continue_as_new, _request, _guardrails},
+         repo,
+         _execution,
+         mark_finishing
+       ) do
+    mark_finishing.()
+
+    repo.rollback({:squidie_step_error, native_continuation_error(:unsupported_repo_transaction)})
   end
 
   defp record_transactional_step_result(
@@ -3103,6 +3140,55 @@ defmodule Squidie.Runtime.Journal.Executor do
     step_span(execution, fn ->
       run_step(execution.step, execution.claim.attempt.input, execution.context)
     end)
+  end
+
+  defp evaluated_step_result(execution, claim) do
+    with {:ok, input_guardrails} <-
+           evaluate_runtime_guardrails(execution, :input, claim.attempt.input),
+         {:ok, action_guardrails} <-
+           evaluate_runtime_guardrails(execution, :action, claim.attempt.input) do
+      evaluate_step_output(
+        run_step_with_telemetry(execution),
+        execution,
+        input_guardrails ++ action_guardrails
+      )
+    end
+  end
+
+  defp evaluated_transactional_step_result(execution) do
+    with {:ok, input_guardrails} <-
+           evaluate_runtime_guardrails(execution, :input, execution.claim.attempt.input),
+         {:ok, action_guardrails} <-
+           evaluate_runtime_guardrails(execution, :action, execution.claim.attempt.input) do
+      evaluate_step_output(
+        run_transactional_step_with_telemetry(execution),
+        execution,
+        input_guardrails ++ action_guardrails
+      )
+    end
+  end
+
+  defp evaluate_step_output({:ok, output, execution_opts}, execution, guardrails) do
+    with {:ok, output_guardrails} <- evaluate_runtime_guardrails(execution, :output, output) do
+      {:ok, output, execution_opts, guardrails ++ output_guardrails}
+    end
+  end
+
+  defp evaluate_step_output({:continue_as_new, request}, _execution, guardrails) do
+    {:continue_as_new, request, guardrails}
+  end
+
+  defp evaluate_step_output({:error, _reason} = error, _execution, _guardrails) do
+    error
+  end
+
+  defp native_continuation_error(reason) do
+    %{
+      code: "continue_as_new_rejected",
+      message: "native continue-as-new was rejected",
+      details: inspect(reason),
+      retryable?: false
+    }
   end
 
   defp run_transactional_step_with_telemetry(execution) do
