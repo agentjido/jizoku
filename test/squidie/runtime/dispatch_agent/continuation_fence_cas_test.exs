@@ -36,6 +36,7 @@ defmodule Squidie.Runtime.DispatchAgent.ContinuationFenceCASTest do
 
     @impl Jido.Storage
     def append_thread(thread_id, entries, opts) do
+      record_append(entries, opts)
       wait_at_barrier(thread_id, entries, opts)
       {adapter, delegate_opts} = delegate(opts)
 
@@ -53,8 +54,14 @@ defmodule Squidie.Runtime.DispatchAgent.ContinuationFenceCASTest do
     end
 
     defp wait_at_barrier(thread_id, entries, opts) do
+      case Keyword.fetch(opts, :barrier_ref) do
+        {:ok, ref} -> wait_at_configured_barrier(thread_id, entries, opts, ref)
+        :error -> :ok
+      end
+    end
+
+    defp wait_at_configured_barrier(thread_id, entries, opts, ref) do
       target = Keyword.fetch!(opts, :barrier_thread_id)
-      ref = Keyword.fetch!(opts, :barrier_ref)
 
       kind =
         entries
@@ -73,6 +80,15 @@ defmodule Squidie.Runtime.DispatchAgent.ContinuationFenceCASTest do
         after
           5_000 -> raise "append barrier timed out"
         end
+      end
+    end
+
+    defp record_append(entries, opts) do
+      if Keyword.get(opts, :record_appends?, false) do
+        send(
+          Keyword.fetch!(opts, :test_pid),
+          {:dispatch_append, Enum.map(entries, & &1.kind)}
+        )
       end
     end
 
@@ -127,6 +143,201 @@ defmodule Squidie.Runtime.DispatchAgent.ContinuationFenceCASTest do
     assert dispatch_entries() == before_duplicate
   end
 
+  test "completes a native claim and fences continuation in one ordered append" do
+    {claimed_agent, claim_id, claim_token} = claimed_agent()
+
+    recording_storage =
+      {CASBarrierStorage, delegate: @storage, record_appends?: true, test_pid: self()}
+
+    assert {:ok,
+            %{
+              agent: completed_agent,
+              attempt: %{status: :completed, result: %{cursor: "page-42"}},
+              fence: %{source_runnable_key: @runnable_key},
+              created?: true
+            }} =
+             DispatchAgent.complete_with_continuation_fence(
+               recording_storage,
+               claimed_agent,
+               native_completion(claim_id, claim_token),
+               now: @now
+             )
+
+    assert_receive {:dispatch_append, [:attempt_completed, :run_continuation_fenced]}
+    refute_receive {:dispatch_append, _other_entries}
+
+    assert Enum.map(dispatch_entries(), & &1.type) == [
+             :attempt_scheduled,
+             :attempt_claimed,
+             :attempt_completed,
+             :run_continuation_fenced
+           ]
+
+    assert DispatchAgent.results_ready_to_apply(completed_agent) == []
+  end
+
+  test "reuses an exact native completion fence and rejects conflicting completion" do
+    {claimed_agent, claim_id, claim_token} = claimed_agent()
+    completion = native_completion(claim_id, claim_token)
+    execution_opts = [continue_as_new: %{continuation_key: "page-42"}]
+    guardrails = [%{name: "native-continuation-output"}]
+    durable_opts = [now: @now, execution_opts: execution_opts, guardrails: guardrails]
+
+    assert {:ok, %{created?: true}} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               claimed_agent,
+               completion,
+               durable_opts
+             )
+
+    assert {:ok, rebuilt_agent} = DispatchAgent.rebuild(@storage, "default")
+    before_retry = dispatch_entries()
+
+    assert {:ok, %{created?: false}} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               rebuilt_agent,
+               completion,
+               now: DateTime.add(@now, 1, :second),
+               execution_opts: execution_opts,
+               guardrails: guardrails
+             )
+
+    assert dispatch_entries() == before_retry
+
+    assert {:error, :conflicting_completion} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               rebuilt_agent,
+               put_in(completion, [:result, :cursor], "page-99"),
+               durable_opts
+             )
+
+    assert dispatch_entries() == before_retry
+
+    assert {:error, :conflicting_completion} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               rebuilt_agent,
+               completion,
+               now: @now,
+               execution_opts: [continue_as_new: %{continuation_key: "page-99"}],
+               guardrails: guardrails
+             )
+
+    assert dispatch_entries() == before_retry
+
+    assert {:error, :conflicting_completion} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               rebuilt_agent,
+               completion,
+               now: @now,
+               execution_opts: execution_opts,
+               guardrails: [%{name: "different-output-guardrail"}]
+             )
+
+    assert dispatch_entries() == before_retry
+
+    conflicting_fence = put_in(completion, [:fence, :continuation_key], "page-99")
+
+    assert {:error, :conflicting_continuation_fence} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               rebuilt_agent,
+               conflicting_fence,
+               durable_opts
+             )
+
+    assert dispatch_entries() == before_retry
+  end
+
+  test "rejects a native fence for a different run before writing" do
+    {claimed_agent, claim_id, claim_token} = claimed_agent()
+    before_completion = dispatch_entries()
+
+    completion =
+      claim_id
+      |> native_completion(claim_token)
+      |> put_in([:fence, :run_id], @other_run_id)
+
+    assert {:error, {:invalid_continuation_fence, :invalid_source}} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               claimed_agent,
+               completion,
+               now: @now
+             )
+
+    assert dispatch_entries() == before_completion
+  end
+
+  test "rejects a missing or mismatched native source before writing" do
+    {claimed_agent, claim_id, claim_token} = claimed_agent()
+    before_completion = dispatch_entries()
+
+    fences = [
+      update_in(
+        native_completion(claim_id, claim_token),
+        [:fence],
+        &Map.delete(&1, :source_runnable_key)
+      ),
+      put_in(
+        native_completion(claim_id, claim_token),
+        [:fence, :source_runnable_key],
+        "#{@run_id}:other:1"
+      )
+    ]
+
+    for completion <- fences do
+      assert {:error, {:invalid_continuation_fence, :invalid_source}} =
+               DispatchAgent.complete_with_continuation_fence(
+                 @storage,
+                 claimed_agent,
+                 completion,
+                 now: @now
+               )
+
+      assert dispatch_entries() == before_completion
+    end
+  end
+
+  test "rejects native completion when another runnable is unsettled" do
+    {claimed_agent, claim_id, claim_token} = claimed_agent()
+    sibling_key = "#{@run_id}:notify:1"
+
+    assert {:ok, sibling} =
+             DispatchProtocol.new_entry(:attempt_scheduled, %{
+               scheduled_attrs(
+                 runnable_key: sibling_key,
+                 idempotency_key: "notify-page-42",
+                 step: "notify"
+               )
+               | occurred_at: DateTime.add(@now, 1, :second)
+             })
+
+    assert {:ok, _thread} = Journal.append_entries(@storage, [sibling])
+    assert {:ok, blocked_agent} = DispatchAgent.rebuild(@storage, "default")
+    before_completion = dispatch_entries()
+
+    assert {:error, {:unsafe_continuation, blockers}} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               blocked_agent,
+               native_completion(claim_id, claim_token),
+               now: @now
+             )
+
+    assert blockers == [
+             %{reason: :claimed_attempt, runnable_key: @runnable_key},
+             %{reason: :available_attempt, runnable_key: sibling_key}
+           ]
+
+    assert dispatch_entries() == before_completion
+    assert claimed_agent.state.thread_rev < blocked_agent.state.thread_rev
+  end
+
   test "reuses the first fence after checkpoint restart" do
     agent = queued_agent()
 
@@ -148,6 +359,39 @@ defmodule Squidie.Runtime.DispatchAgent.ContinuationFenceCASTest do
                rebuilt_agent,
                continuation_fence(trace: %{@trace | span_id: "b7ad6b7169203331"}),
                now: DateTime.add(@now, 1, :second)
+             )
+
+    assert dispatch_entries() == before_duplicate
+  end
+
+  test "reuses a native completion fence after checkpoint restart" do
+    {claimed_agent, claim_id, claim_token} = claimed_agent()
+    completion = native_completion(claim_id, claim_token)
+    execution_opts = [continue_as_new: %{continuation_key: "page-42"}]
+    guardrails = [%{name: "native-continuation-output"}]
+
+    assert {:ok, %{agent: completed_agent, created?: true}} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               claimed_agent,
+               completion,
+               now: @now,
+               execution_opts: execution_opts,
+               guardrails: guardrails
+             )
+
+    assert :ok = DispatchAgent.put_checkpoint(@storage, completed_agent)
+    assert {:ok, rebuilt_agent} = DispatchAgent.rebuild(@storage, "default")
+    before_duplicate = dispatch_entries()
+
+    assert {:ok, %{created?: false, fence: %{source_runnable_key: @runnable_key}}} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               rebuilt_agent,
+               completion,
+               now: DateTime.add(@now, 1, :second),
+               execution_opts: execution_opts,
+               guardrails: guardrails
              )
 
     assert dispatch_entries() == before_duplicate
@@ -1175,6 +1419,42 @@ defmodule Squidie.Runtime.DispatchAgent.ContinuationFenceCASTest do
     assert {:ok, _thread} = Journal.append_entries(@storage, [forced_fence_entry()])
     assert {:ok, fenced_agent} = DispatchAgent.rebuild(@storage, "default")
     {fenced_agent, claim_id, claim_token, dispatch_entries()}
+  end
+
+  defp claimed_agent do
+    assert {:ok, _thread} =
+             Journal.append_entries(@storage, [entry!(:attempt_scheduled, scheduled_attrs())])
+
+    assert {:ok, agent} = DispatchAgent.rebuild(@storage, "default")
+
+    assert {:ok,
+            %{
+              agent: claimed_agent,
+              claim_id: claim_id,
+              claim_token: claim_token
+            }} =
+             DispatchAgent.claim_next(@storage, agent, "worker-1",
+               now: @now,
+               lease_for: 300,
+               claim_id: "claim-1",
+               claim_token: "claim-token-1"
+             )
+
+    {claimed_agent, claim_id, claim_token}
+  end
+
+  defp native_completion(claim_id, claim_token) do
+    %{
+      runnable_key: @runnable_key,
+      claim_id: claim_id,
+      claim_token: claim_token,
+      result: %{cursor: "page-42"},
+      fence:
+        continuation_fence(
+          source_runnable_key: @runnable_key,
+          request_input: %{cursor: "page-42"}
+        )
+    }
   end
 
   defp fenced_agent do

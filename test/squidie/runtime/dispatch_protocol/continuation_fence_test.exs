@@ -167,6 +167,7 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
       trigger: "resume",
       input: %{cursor: "page-99"},
       request_input: %{cursor: "page-99"},
+      source_runnable_key: "run_123:other:1",
       definition_version: "v2",
       definition_fingerprint: "definition-fingerprint-v2",
       queue: "priority"
@@ -198,6 +199,14 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
            )
   end
 
+  test "validates optional native source while legacy fences remain valid" do
+    assert Projection.valid_continuation_fence?(continuation_fence_attrs())
+
+    assert Projection.valid_continuation_fence?(
+             continuation_fence_attrs(source_runnable_key: @runnable_key)
+           )
+  end
+
   test "caller-declared input participates in continuation fence identity" do
     first = continuation_fence_attrs(request_input: %{cursor: "page-42"})
     conflicting = continuation_fence_attrs(request_input: %{cursor: "page-43"})
@@ -221,6 +230,8 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
       continuation_fence_attrs(run_id: ""),
       continuation_fence_attrs(successor_run_id: 123),
       continuation_fence_attrs(input: "bad-input"),
+      continuation_fence_attrs(source_runnable_key: ""),
+      continuation_fence_attrs(source_runnable_key: 123),
       continuation_fence_attrs(definition: :historical),
       continuation_fence_attrs(definition_fingerprint: 123),
       continuation_fence_attrs(trace: %{trace_id: "bad", span_id: "bad"}),
