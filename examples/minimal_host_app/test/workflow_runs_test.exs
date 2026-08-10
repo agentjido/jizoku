@@ -32,8 +32,20 @@ defmodule MinimalHostApp.WorkflowRunsTest do
                attempt_id: "attempt-test-kit"
              })
 
-    drain_task = Task.async(fn -> Squidie.Test.drain(runtime, run) end)
-    assert {:completed, snapshot} = Task.await(drain_task)
+    execute_task =
+      Task.async(fn ->
+        Squidie.Test.execute_until(runtime, run, fn snapshot ->
+          Map.has_key?(snapshot.context, :account) and
+            Map.has_key?(snapshot.context, :invoice)
+        end)
+      end)
+
+    assert {:reached, intermediate} = Task.await(execute_task)
+    assert intermediate.context.account.id == "account-test-kit"
+    assert intermediate.context.invoice.id == "invoice-test-kit"
+    refute Map.has_key?(intermediate.context, :notification)
+
+    assert {:completed, snapshot} = Squidie.Test.drain(runtime, run)
     assert snapshot.context.account.id == "account-test-kit"
     assert snapshot.context.invoice.id == "invoice-test-kit"
     assert snapshot.context.notification.channel == "email"
