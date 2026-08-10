@@ -172,6 +172,47 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert Enum.map(graph.nodes, & &1.id) == ["record_digest_delivery"]
   end
 
+  test "continues a recurring cursor as a fresh linked run through the host boundary" do
+    queue = "minimal-host-continuation-#{System.unique_integer([:positive])}"
+
+    assert {:ok, predecessor} =
+             WorkflowRuns.start_recurring_cursor(%{cursor: 0}, queue: queue)
+
+    assert {:ok, successor} =
+             Squidie.execute_next(
+               queue: queue,
+               owner_id: "minimal-host-continuation-worker-1"
+             )
+
+    assert successor.run_id != predecessor.run_id
+    assert successor.input == %{cursor: 1}
+    assert successor.continuation.continued_from.run_id == predecessor.run_id
+
+    assert {:ok, completed_successor} =
+             Squidie.execute_next(
+               queue: queue,
+               owner_id: "minimal-host-continuation-worker-2"
+             )
+
+    assert completed_successor.run_id == successor.run_id
+    assert completed_successor.status == :completed
+
+    assert {:ok, continued_predecessor} =
+             WorkflowRuns.inspect_run(predecessor.run_id, queue: queue)
+
+    assert continued_predecessor.status == :continued
+    assert continued_predecessor.continuation.continued_to.run_id == successor.run_id
+
+    assert {:ok, chain} =
+             WorkflowRuns.inspect_continuation_chain(successor.run_id,
+               direction: :backward,
+               max_hops: 5
+             )
+
+    assert chain.truncated? == false
+    assert Enum.map(chain.runs, & &1.run_id) == [successor.run_id, predecessor.run_id]
+  end
+
   test "host app examples round-trip workflow specs through the editor JSON contract" do
     assert {:ok, spec} = Squidie.Workflow.to_spec(PaymentRecovery)
 
@@ -1136,6 +1177,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              nested_invite_delivery: nested_invite_delivery,
              nested_invite_child: nested_invite_child,
              journal_run: journal_run,
+             recurring_cursor: recurring_cursor,
              journal_recovery: journal_recovery,
              journal_cancellation: journal_cancellation,
              journal_replay: journal_replay,
@@ -1183,6 +1225,11 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     assert journal_run.status == :completed
     assert journal_run.applied_runnable_keys == journal_run.planned_runnable_keys
+
+    assert recurring_cursor.predecessor.status == :continued
+    assert recurring_cursor.successor.status == :completed
+    assert recurring_cursor.chain.truncated? == false
+    assert recurring_cursor.chain.hops == 1
     assert [%{signal_type: "start_run"}] = journal_run.command_history
 
     assert journal_recovery.status == :completed

@@ -24,6 +24,7 @@ as operational confidence grows.
 | Runtime-authored specs | Supported, scoped | `start_spec/3`, `start_spec/4`, safe action registry, editor spec validation | Maintain an action allowlist; replay is not yet available for these runs |
 | Child workflow starts | Supported, scoped | `start_child_run/4` and `/5` with parent lineage and idempotent child identity | Pick stable child keys and inspect parent-child lineage in host tooling |
 | Dynamic work | Supported, scoped | Preview, record, schedule, graph overlays, and duplicate-node validation | Keep action keys allowlisted; review replay safety for dynamic steps |
+| Continue as new | Supported, gated | Native/public continuation, deterministic recovery, bounded lineage inspection, and minimal-host smoke coverage | Upgrade all queue readers before enabling `continuation_fences`; keep stable continuation keys and explicit successor input |
 | Graph inspection and explanations | Supported | Projection-backed `inspect_run_graph/2`, `explain_run/2`, and graph contracts | Redact host-domain inputs, outputs, errors, and metadata before exposing externally |
 | Actor-scoped read views | Supported | Visibility policy docs and read-model redaction APIs | Define tenant/user roles and apply visibility policies at host boundaries |
 | Bedrock-backed delivery example | Reference integration | Bedrock minimal host app, stress coverage, leases, retry requeue, and dead-letter checks | Configure Bedrock or another backend as host infrastructure; workflow modules stay backend-neutral |

@@ -40,6 +40,8 @@ Use these when building or embedding Squidie in an application.
 - [Workflow authoring](workflow_authoring.md) - DSL syntax, payloads, triggers,
   steps, transitions, retries, waits, dependencies, mapping, compensation, and
   current boundaries.
+- [Continue as new](continue_as_new.md) - recurring workflow rollover, native
+  and public contracts, durable lineage, bounded inspection, and rollout.
 - [Operations](operations.md) - operational CLI diagnostics, retries,
   idempotency, replay, local transactions, leases, waits, cron activation, and
   production concerns.

@@ -11,6 +11,8 @@ This example shows how an application can:
   through `MinimalHostApp.RuntimeSignals`
 - activate cron workflows through a host-owned scheduler plugin
 - run repeatable smoke, resilience, and bounded soak paths during development
+- execute native continue-as-new through fresh linked runs and bounded lineage
+  inspection
 
 ## Setup
 
@@ -90,6 +92,9 @@ The smoke task:
   completes without using the workflow retry path
 - starts the dependency-based recovery workflow through
   `MinimalHostApp.WorkflowRuns.start_dependency_recovery/1`
+- runs `MinimalHostApp.Workflows.RecurringCursor` through a native
+  continue-as-new result, verifies the predecessor and successor, and inspects
+  the bounded continuation chain
 - starts a manual approval workflow through
   `MinimalHostApp.WorkflowRuns.start_manual_approval/1`
 - explains the paused approval run through `MinimalHostApp.WorkflowRuns.explain_run/1`
@@ -108,6 +113,13 @@ The smoke task:
   attempt telemetry event
 - activates the same digest workflow through the host app's cron plugin
 - verifies both digest triggers complete through the same workflow graph
+
+The sample enables `config :squidie, continuation_fences: :enabled` only in
+development and test because those smoke paths run one coherent application
+version. Its production configuration remains default-off. Production hosts
+must first upgrade and drain every worker that can read the affected queues;
+the flag is a host readiness assertion, not automatic cluster-version
+discovery.
 
 ## Restart Resilience
 

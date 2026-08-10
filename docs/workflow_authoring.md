@@ -673,11 +673,19 @@ Native steps may return:
 
 - `{:ok, output}` or `{:ok, output, opts}` for success
 - `{:defer, reason, schedule_in: seconds}` to intentionally defer the same logical step attempt until a future visibility time
+- `{:continue_as_new, input, key: stable_key, definition: :current}` to terminalize the current run and start one fresh linked successor
 - `{:error, reason}` for terminal failure that skips workflow retries and follows failure routing
 - `{:retry, reason}` or `{:retry, reason, opts}` for retryable failure governed by the workflow retry policy
 
 `:defer` is reserved for the explicit `{:defer, reason, opts}` return shape and
 is invalid inside `{:ok, output, opts}` success options.
+
+`:continue_as_new` is also reserved for its explicit return shape. The input
+must be a storage-safe map accepted by the current trigger contract, and the key
+must be stable across retries. Only that input enters the successor; accumulated
+run context does not. See [Continue as new](continue_as_new.md) for activation,
+durability, inspection, and comparison with child runs, replay, cron, deferred
+continuation, and dynamic work.
 
 When `output: :key` is declared on the workflow step, Squidie stores the
 native step's returned map under that key after the step returns. The

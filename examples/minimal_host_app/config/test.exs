@@ -27,6 +27,7 @@ config :minimal_host_app, MinimalHostApp.SquidieDeliveryAdapter,
 config :squidie,
   repo: MinimalHostApp.Repo,
   runtime: :journal,
-  read_model: :read_model
+  read_model: :read_model,
+  continuation_fences: :enabled
 
 config :logger, level: :warning

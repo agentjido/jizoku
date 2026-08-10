@@ -70,6 +70,9 @@
 - Return `{:defer, reason, schedule_in: seconds}` when a native step observes
   non-failed domain state that should continue from the same logical attempt
   later without consuming retry budget.
+- Return `{:continue_as_new, input, key: stable_key, definition: :current}`
+  when a recurring workflow should terminalize the current run and continue in
+  one fresh linked successor. Carry only explicit successor input.
 - Return `{:error, reason}` for terminal failure governed by workflow routing.
 - Return `{:retry, reason}` or `{:retry, reason, opts}` for retryable failure.
 - Keep side-effect idempotency inside the step or host domain boundary.
@@ -104,6 +107,8 @@
 - Use a normal handoff step plus a later signal or run when an external domain
   system owns polling, backoff, cancellation, and alert delivery.
 - Prefer cron or host scheduling when the whole workflow should start later.
+- Use continue-as-new when the same recurring workflow should start fresh now;
+  do not model it as a child run, replay, deferred attempt, or dynamic graph.
 
 ## Recovery
 
