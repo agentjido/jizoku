@@ -33,8 +33,12 @@ defmodule Squidie.TestTest do
     use Squidie.Step, name: :deferred
 
     @impl Squidie.Step
-    def run(_input, _context) do
-      {:defer, %{reason: "not_ready"}, schedule_in: 60_000}
+    def run(_input, %Squidie.Step.Context{runnable_key: runnable_key}) do
+      if String.ends_with?(runnable_key, ":deferred") do
+        {:ok, %{ready: true}}
+      else
+        {:defer, %{reason: "not_ready"}, schedule_in: 60}
+      end
     end
   end
 
@@ -46,8 +50,93 @@ defmodule Squidie.TestTest do
         manual()
       end
 
-      step :deferred, DeferredStep
+      step :deferred, DeferredStep,
+        deadline: [within: 60_000, due_soon: 20_000, escalation: :diagnostic]
+
       transition :deferred, on: :ok, to: :complete
+    end
+  end
+
+  defmodule RetryStep do
+    use Squidie.Step, name: :retry_once
+
+    @impl Squidie.Step
+    def run(_input, %Squidie.Step.Context{attempt: 1}) do
+      {:retry, %{message: "retry later", code: "retry_later"}}
+    end
+
+    def run(_input, %Squidie.Step.Context{}) do
+      {:ok, %{retried: true}}
+    end
+  end
+
+  defmodule RetryWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+      end
+
+      step :retry_once, RetryStep,
+        retry: [max_attempts: 2, backoff: [type: :exponential, min: 60_000, max: 60_000]]
+
+      transition :retry_once, on: :ok, to: :complete
+    end
+  end
+
+  defmodule WaitWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+
+        payload do
+          field :value, :integer
+        end
+      end
+
+      step :wait, :wait, duration: 60_000
+      step :record_wait, WaitWorkflow.RecordWait
+      transition :wait, on: :ok, to: :record_wait
+      transition :record_wait, on: :ok, to: :complete
+    end
+  end
+
+  defmodule WaitWorkflow.RecordWait do
+    use Squidie.Step, name: :record_wait
+
+    @impl Squidie.Step
+    def run(_input, _context) do
+      {:ok, %{waited: true}}
+    end
+  end
+
+  defmodule BarrierStep do
+    use Squidie.Step, name: :barrier
+
+    @impl Squidie.Step
+    def run(_input, %Squidie.Step.Context{run_id: run_id}) do
+      test_pid = :persistent_term.get({__MODULE__, run_id})
+      send(test_pid, {:barrier_entered, self()})
+
+      receive do
+        :release_barrier -> {:ok, %{released: true}}
+      end
+    end
+  end
+
+  defmodule BarrierWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+      end
+
+      step :barrier, BarrierStep
+      transition :barrier, on: :ok, to: :complete
     end
   end
 
@@ -253,7 +342,78 @@ defmodule Squidie.TestTest do
     assert :not_found = adapter.load_thread("thread-unsafe", opts)
   end
 
-  test "reports a durably blocked workflow without sleeping" do
+  test "advances the runtime clock explicitly" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: CompleteWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, @now} = Test.now(runtime)
+    assert {:ok, advanced} = Test.advance_time(runtime, 1, :second)
+    assert advanced == DateTime.add(@now, 1, :second)
+    assert {:ok, ^advanced} = Test.now(runtime)
+
+    task = Task.async(fn -> Test.advance_time(runtime, 1, :second) end)
+    assert {:error, :runtime_owner_required} = Task.await(task)
+
+    assert {:error, {:invalid_option, {:amount, :invalid}}} =
+             Test.advance_time(runtime, -1, :second)
+
+    assert {:error, {:invalid_option, {:unit, :invalid}}} =
+             Test.advance_time(runtime, 1, :minute)
+  end
+
+  test "does not advance the clock while execution holds an older instant" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: BarrierWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    :persistent_term.put({BarrierStep, run.run_id}, self())
+    on_exit(fn -> :persistent_term.erase({BarrierStep, run.run_id}) end)
+
+    drain_task = Task.async(fn -> Test.drain(runtime, run) end)
+    assert_receive {:barrier_entered, executor_pid}
+
+    assert {:error, :runtime_busy} = Test.advance_time(runtime, 1, :second)
+    assert {:ok, @now} = Test.now(runtime)
+
+    send(executor_pid, :release_barrier)
+    assert {:completed, %{terminal_at: @now}} = Task.await(drain_task)
+
+    assert {:ok, advanced} = Test.advance_time(runtime, 1, :second)
+    assert advanced == DateTime.add(@now, 1, :second)
+  end
+
+  test "releases the execution clock lease when a helper exits" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: BarrierWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    :persistent_term.put({BarrierStep, run.run_id}, self())
+    on_exit(fn -> :persistent_term.erase({BarrierStep, run.run_id}) end)
+
+    drain_task = Task.async(fn -> Test.drain(runtime, run) end)
+    assert_receive {:barrier_entered, executor_pid}
+    assert executor_pid == drain_task.pid
+    assert nil == Task.shutdown(drain_task, :brutal_kill)
+
+    assert {:ok, advanced} = Test.advance_time(runtime, 1, :second)
+    assert advanced == DateTime.add(@now, 1, :second)
+  end
+
+  test "advances a built-in wait without sleeping" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: WaitWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{value: 3})
+    assert {:blocked, snapshot} = Test.drain(runtime, run)
+    assert snapshot.next_visible_at == DateTime.add(@now, 60, :second)
+    assert [%{step: "record_wait"}] = snapshot.scheduled_attempts
+
+    assert {:ok, _now} = Test.advance_time(runtime, 60, :second)
+    assert {:completed, snapshot} = Test.drain(runtime, run)
+    assert snapshot.context.waited == true
+  end
+
+  test "advances deferred work and deadline classifications without sleeping" do
     assert {:ok, runtime} = Test.start_runtime(workflow: DeferredWorkflow, now: @now)
     on_exit(fn -> Test.stop_runtime(runtime) end)
 
@@ -261,7 +421,39 @@ defmodule Squidie.TestTest do
     assert {:blocked, snapshot} = Test.execute_until_blocked(runtime, run)
     assert snapshot.status == :running
     assert snapshot.started_at == @now
-    assert DateTime.after?(snapshot.next_visible_at, @now)
+    assert snapshot.next_visible_at == DateTime.add(@now, 60, :second)
+    assert snapshot.deadline.status == :on_time
+    assert snapshot.deadline.due_at == DateTime.add(@now, 60_000, :millisecond)
+
+    assert {:ok, _now} = Test.advance_time(runtime, 39, :second)
+    assert {:blocked, %{deadline: %{status: :on_time}}} = Test.drain(runtime, run)
+
+    assert {:ok, _now} = Test.advance_time(runtime, 1, :second)
+    assert {:ok, %{deadline: %{status: :due_soon}}} = Test.inspect(runtime, run)
+
+    assert {:ok, _now} = Test.advance_time(runtime, 20, :second)
+    assert {:ok, %{deadline: %{status: :overdue}}} = Test.inspect(runtime, run)
+
+    assert {:completed, snapshot} = Test.drain(runtime, run)
+    assert snapshot.context.ready == true
+  end
+
+  test "advances retry backoff without sleeping" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: RetryWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    assert {:blocked, snapshot} = Test.drain(runtime, run)
+    assert snapshot.next_visible_at == DateTime.add(@now, 60_000, :millisecond)
+
+    assert [
+             %{status: :failed, attempt_number: 1},
+             %{status: :retry_scheduled, attempt_number: 2}
+           ] = snapshot.attempts
+
+    assert {:ok, _now} = Test.advance_time(runtime, 60, :second)
+    assert {:completed, snapshot} = Test.drain(runtime, run)
+    assert snapshot.context.retried == true
   end
 
   test "routes every helper through the configured queue and partition" do

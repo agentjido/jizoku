@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Test.Storage do
   @moduledoc false
 
@@ -9,9 +10,9 @@ defmodule Squidie.Test.Storage do
 
   @type option :: {:server, pid()}
 
-  @spec start_link(pid()) :: GenServer.on_start()
-  def start_link(owner) when is_pid(owner) do
-    GenServer.start_link(__MODULE__, owner)
+  @spec start_link(pid(), DateTime.t()) :: GenServer.on_start()
+  def start_link(owner, %DateTime{} = now) when is_pid(owner) do
+    GenServer.start_link(__MODULE__, {owner, now})
   end
 
   @spec stop(pid()) :: :ok
@@ -41,6 +42,34 @@ defmodule Squidie.Test.Storage do
   @spec root_run_id(pid()) :: {:ok, Ecto.UUID.t()} | {:error, :run_not_started | :runtime_stopped}
   def root_run_id(server) when is_pid(server) do
     safe_call(server, :root_run_id)
+  end
+
+  @doc false
+  @spec now(pid()) :: {:ok, DateTime.t()} | {:error, :runtime_stopped}
+  def now(server) when is_pid(server) do
+    safe_call(server, :now)
+  end
+
+  @doc false
+  @spec begin_execution(pid()) ::
+          {:ok, DateTime.t(), reference()} | {:error, :runtime_stopped}
+  def begin_execution(server) when is_pid(server) do
+    safe_call(server, :begin_execution)
+  end
+
+  @doc false
+  @spec end_execution(pid(), reference()) :: :ok | {:error, term()}
+  def end_execution(server, lease_ref) when is_pid(server) and is_reference(lease_ref) do
+    safe_call(server, {:end_execution, lease_ref})
+  end
+
+  @doc false
+  @spec advance_time(pid(), non_neg_integer(), :second | :millisecond | :microsecond) ::
+          {:ok, DateTime.t()}
+          | {:error, :runtime_busy | :runtime_owner_required | :runtime_stopped}
+  def advance_time(server, amount, unit)
+      when is_pid(server) and is_integer(amount) and amount >= 0 do
+    safe_call(server, {:advance_time, amount, unit})
   end
 
   @doc false
@@ -90,12 +119,16 @@ defmodule Squidie.Test.Storage do
   end
 
   @impl GenServer
-  def init(owner) do
+  def init({owner, %DateTime{} = now}) do
     owner_ref = Process.monitor(owner)
 
     {:ok,
      %{
+       owner: owner,
        owner_ref: owner_ref,
+       now: now,
+       execution_leases: %{},
+       execution_monitors: %{},
        checkpoints: %{},
        threads: %{},
        root_run_id: nil,
@@ -203,6 +236,59 @@ defmodule Squidie.Test.Storage do
     {:reply, {:ok, state.root_run_id}, state}
   end
 
+  def handle_call(:now, _from, state) do
+    {:reply, {:ok, state.now}, state}
+  end
+
+  def handle_call(:begin_execution, {caller, _tag}, state) do
+    lease_ref = make_ref()
+    monitor_ref = Process.monitor(caller)
+
+    state =
+      state
+      |> put_in([:execution_leases, lease_ref], {caller, monitor_ref})
+      |> put_in([:execution_monitors, monitor_ref], lease_ref)
+
+    {:reply, {:ok, state.now, lease_ref}, state}
+  end
+
+  def handle_call({:end_execution, lease_ref}, {caller, _tag}, state) do
+    case Map.get(state.execution_leases, lease_ref) do
+      {^caller, monitor_ref} ->
+        Process.demonitor(monitor_ref, [:flush])
+
+        state = %{
+          state
+          | execution_leases: Map.delete(state.execution_leases, lease_ref),
+            execution_monitors: Map.delete(state.execution_monitors, monitor_ref)
+        }
+
+        {:reply, :ok, state}
+
+      _missing_or_unowned ->
+        {:reply, {:error, :execution_lease_not_owned}, state}
+    end
+  end
+
+  def handle_call(
+        {:advance_time, amount, unit},
+        {owner, _tag},
+        %{owner: owner} = state
+      ) do
+    state = drop_dead_execution_leases(state)
+
+    if map_size(state.execution_leases) == 0 do
+      now = DateTime.add(state.now, amount, unit)
+      {:reply, {:ok, now}, %{state | now: now}}
+    else
+      {:reply, {:error, :runtime_busy}, state}
+    end
+  end
+
+  def handle_call({:advance_time, _amount, _unit}, _from, state) do
+    {:reply, {:error, :runtime_owner_required}, state}
+  end
+
   def handle_call({:put_append_fault, thread_prefix, action}, _from, state) do
     {:reply, :ok, %{state | append_fault: {thread_prefix, action}}}
   end
@@ -217,6 +303,21 @@ defmodule Squidie.Test.Storage do
         %{start_reservation: {caller, reservation_ref}} = state
       ) do
     {:noreply, %{state | start_reservation: nil}}
+  end
+
+  def handle_info({:DOWN, monitor_ref, :process, _caller, _reason}, state) do
+    case Map.pop(state.execution_monitors, monitor_ref) do
+      {nil, _monitors} ->
+        {:noreply, state}
+
+      {lease_ref, monitors} ->
+        {:noreply,
+         %{
+           state
+           | execution_leases: Map.delete(state.execution_leases, lease_ref),
+             execution_monitors: monitors
+         }}
+    end
   end
 
   defp append(nil, thread_id, entries, opts) do
@@ -251,6 +352,23 @@ defmodule Squidie.Test.Storage do
 
   defp append_fault?(nil, _thread_id) do
     false
+  end
+
+  defp drop_dead_execution_leases(state) do
+    Enum.reduce(state.execution_leases, state, fn
+      {lease_ref, {caller, monitor_ref}}, state ->
+        if Process.alive?(caller) do
+          state
+        else
+          Process.demonitor(monitor_ref, [:flush])
+
+          %{
+            state
+            | execution_leases: Map.delete(state.execution_leases, lease_ref),
+              execution_monitors: Map.delete(state.execution_monitors, monitor_ref)
+          }
+        end
+    end)
   end
 
   defp call(opts, request) do

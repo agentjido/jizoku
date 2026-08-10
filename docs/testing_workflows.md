@@ -52,13 +52,35 @@ assert diagnostic.run_id == run.run_id
 The diagnostic includes the last durable inspection snapshot so an unexpectedly
 busy workflow can be understood without a separate read.
 
+## Virtual time
+
+The runtime clock starts at the `now:` value passed to `start_runtime/1` and
+remains frozen until the owner advances it. This makes delayed work, retry
+backoff, and deadline classifications testable without sleeping:
+
+```elixir
+assert {:blocked, retrying} = Squidie.Test.drain(runtime, run)
+assert retrying.next_visible_at == ~U[2026-08-10 12:01:00.000Z]
+
+assert {:ok, ~U[2026-08-10 12:01:00Z]} =
+         Squidie.Test.advance_time(runtime, 60, :second)
+
+assert {:completed, snapshot} = Squidie.Test.drain(runtime, run)
+```
+
+Use `Squidie.Test.now/1` to read the current instant. The runtime owner may
+advance time in seconds, milliseconds, or microseconds. Execution and
+inspection each capture one instant from that clock, so lifecycle timestamps
+and visibility decisions stay coherent while helper tasks drain or inspect the
+run. Advancing while a drain is executing returns `{:error, :runtime_busy}`;
+advance again after the helper finishes or reaches a blocked state.
+
 ## Current scope
 
-The initial test runtime covers isolated in-memory storage, normal workflow
-starts, bounded execution, blocked-state detection, and inspection. Virtual
-time advancement, signals and manual commands, deterministic faults, restarts,
-golden histories, and reusable invariant assertions will build on this same
-runtime contract.
+The test runtime covers isolated in-memory storage, normal workflow starts,
+bounded execution, blocked-state detection, virtual time, and inspection.
+Signals and manual commands, deterministic faults, restarts, golden histories,
+and reusable invariant assertions will build on this same runtime contract.
 
 Use the configured Ecto adapter for integration tests that need database
 transactions, migrations, or query behavior. The in-memory runtime is intended
