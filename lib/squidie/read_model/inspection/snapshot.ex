@@ -62,6 +62,11 @@ defmodule Squidie.ReadModel.Inspection.Snapshot do
           started_at: DateTime.t() | nil,
           context: map(),
           definition_version: String.t() | nil,
+          continuation: %{
+            required(:continued_from) => map() | nil,
+            required(:continued_to) => map() | nil
+          },
+          history: Squidie.ReadModel.HistoryPolicy.summary(),
           parent_run: map() | nil,
           child_runs: [map()],
           dynamic_work: [map()],
@@ -132,6 +137,13 @@ defmodule Squidie.ReadModel.Inspection.Snapshot do
     :terminal_error,
     :deadline,
     :thread_revisions,
+    continuation: %{continued_from: nil, continued_to: nil},
+    history: %{
+      thread_revision: 0,
+      level: :normal,
+      warning_threshold: 5_000,
+      critical_threshold: 20_000
+    },
     command_history: [],
     manual_state: nil,
     child_runs: [],

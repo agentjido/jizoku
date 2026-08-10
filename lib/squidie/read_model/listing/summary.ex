@@ -12,6 +12,11 @@ defmodule Squidie.ReadModel.Listing.Summary do
           partition: String.t() | nil,
           workflow: String.t(),
           definition_version: String.t() | nil,
+          continuation: %{
+            required(:continued_from) => map() | nil,
+            required(:continued_to) => map() | nil
+          },
+          history: Squidie.ReadModel.HistoryPolicy.summary(),
           queue: String.t(),
           status: atom(),
           terminal?: boolean(),
@@ -47,6 +52,13 @@ defmodule Squidie.ReadModel.Listing.Summary do
     :deadline,
     :indexed_at,
     :thread_revision,
+    continuation: %{continued_from: nil, continued_to: nil},
+    history: %{
+      thread_revision: 0,
+      level: :normal,
+      warning_threshold: 5_000,
+      critical_threshold: 20_000
+    },
     anomalies: []
   ]
 end

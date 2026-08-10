@@ -15,6 +15,7 @@ defmodule Squidie.ReadModel.Inspection do
   """
 
   alias Jido.Agent
+  alias Squidie.ReadModel.HistoryPolicy
   alias Squidie.ReadModel.Inspection.GraphState
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.ReadModel.Timeline
@@ -166,6 +167,8 @@ defmodule Squidie.ReadModel.Inspection do
       input: workflow_projection.input,
       started_at: workflow_projection.started_at,
       definition_version: workflow_projection.definition_version,
+      continuation: WorkflowAgent.Projection.continuation(workflow_projection),
+      history: HistoryPolicy.summary(run_thread_rev),
       context: snapshot_context(workflow_projection),
       parent_run: parent_run(workflow_projection),
       child_runs: WorkflowAgent.Projection.child_runs(workflow_projection),
