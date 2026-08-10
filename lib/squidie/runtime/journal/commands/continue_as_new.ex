@@ -13,7 +13,6 @@ defmodule Squidie.Runtime.Journal.Commands.ContinueAsNew do
   alias Squidie.Runtime.Routing
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
-  alias Squidie.Workflow.Definition
 
   @fence_retries 25
 
@@ -224,22 +223,6 @@ defmodule Squidie.Runtime.Journal.Commands.ContinueAsNew do
     WorkflowAgent.rebuild(storage, run_id)
   end
 
-  defp current_target(%Projection{} = projection, input) do
-    with {:ok, _workflow, definition} <- Definition.load_serialized(projection.workflow),
-         {:ok, trigger_name} <- target_trigger_name(definition, projection.trigger),
-         {:ok, trigger} <- Definition.trigger(definition, trigger_name),
-         {:ok, resolved_input} <- Definition.resolve_payload(trigger, input) do
-      {:ok, definition, resolved_input}
-    end
-  end
-
-  defp target_trigger_name(definition, serialized_trigger) do
-    case Definition.deserialize_trigger(definition, serialized_trigger) do
-      trigger_name when is_atom(trigger_name) -> {:ok, trigger_name}
-      _unknown -> {:error, {:invalid_continuation_target, :trigger}}
-    end
-  end
-
   defp matching_request(fence, input, continuation_key) do
     if fence.continuation_key == continuation_key and matching_input?(fence, input) do
       :ok
@@ -259,7 +242,7 @@ defmodule Squidie.Runtime.Journal.Commands.ContinueAsNew do
   defp matching_input?(fence, input) do
     projection = %Projection{workflow: fence.workflow, trigger: fence.trigger}
 
-    case current_target(projection, input) do
+    case ContinuationIntent.resolve_current_input(projection, input) do
       {:ok, _definition, resolved_input} -> resolved_input == fence.input
       {:error, _reason} -> false
     end

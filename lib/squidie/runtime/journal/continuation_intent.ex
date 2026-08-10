@@ -125,6 +125,13 @@ defmodule Squidie.Runtime.Journal.ContinuationIntent do
   end
 
   @doc false
+  @spec resolve_current_input(Projection.t(), map()) ::
+          {:ok, Definition.t(), map()} | {:error, term()}
+  def resolve_current_input(%Projection{} = projection, input) when is_map(input) do
+    current_target(projection, input)
+  end
+
+  @doc false
   @spec from_fence(term()) :: {:ok, t()} | {:error, {:invalid_continuation, :invalid}}
   def from_fence(fence) when is_map(fence) do
     if DispatchProtocol.Projection.valid_continuation_fence?(fence) do
