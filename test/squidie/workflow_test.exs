@@ -53,6 +53,17 @@ defmodule Squidie.WorkflowTest do
     defexception [:message, :code]
   end
 
+  defmodule NativeContinuationStep do
+    use Squidie.Step,
+      name: :continue_cursor,
+      output_schema: [required_output: [type: :string, required: true]]
+
+    @impl Squidie.Step
+    def run(_input, _context) do
+      {:continue_as_new, %{cursor: "page-42"}, key: "page-42", definition: :current}
+    end
+  end
+
   test "exposes a declarative workflow definition" do
     definition = InvoiceReminder.workflow_definition()
 
@@ -1267,6 +1278,81 @@ defmodule Squidie.WorkflowTest do
              Squidie.Step.normalize_result(
                {:ok, %{gateway: %{status: "pending"}}, defer: %{reason: :pending}}
              )
+  end
+
+  test "normalizes native continue-as-new results" do
+    assert {:continue_as_new,
+            %{
+              input: %{cursor: "page-42"},
+              continuation_key: "page-42",
+              definition: :current
+            }} =
+             Squidie.Step.normalize_result(
+               {:continue_as_new, %{cursor: "page-42"}, key: "page-42", definition: :current}
+             )
+  end
+
+  test "native continue-as-new bypasses current-step output validation" do
+    assert {:continue_as_new,
+            %{
+              input: %{cursor: "page-42"},
+              continuation_key: "page-42",
+              definition: :current
+            }} =
+             Squidie.Step.Action.run(
+               %{step: NativeContinuationStep, input: %{}},
+               %{
+                 run_id: "11111111-1111-5111-8111-111111111111",
+                 workflow: NativeStepContractWorkflow,
+                 step: :continue_cursor
+               }
+             )
+  end
+
+  test "rejects continue-as-new controls in success options" do
+    assert {:error,
+            %{
+              message:
+                "native step continuation must use {:continue_as_new, input, opts}; :continue_as_new is reserved in success options",
+              details: :reserved_success_option,
+              retryable?: false
+            }} =
+             Squidie.Step.normalize_result(
+               {:ok, %{cursor: "page-42"}, continue_as_new: %{key: "page-42"}}
+             )
+  end
+
+  test "rejects malformed native continue-as-new options without raising" do
+    malformed_opts = [{:key, "page-42"}, {:definition, :current}, :bad]
+
+    assert {:error,
+            %{
+              message: "native step continuation options must be a keyword list",
+              details: :invalid_options,
+              retryable?: false
+            }} =
+             Squidie.Step.normalize_result(
+               {:continue_as_new, %{cursor: "page-42"}, malformed_opts}
+             )
+  end
+
+  test "rejects invalid native continue-as-new inputs and options" do
+    cases = [
+      {{:continue_as_new, "page-42", [key: "page-42", definition: :current]}, :expected_map},
+      {{:continue_as_new, %{pid: self()}, [key: "page-42", definition: :current]},
+       :storage_unsafe_input},
+      {{:continue_as_new, %{}, [definition: :current]}, :missing_key},
+      {{:continue_as_new, %{}, [key: "", definition: :current]}, :invalid_key},
+      {{:continue_as_new, %{}, [key: "page-42"]}, :missing_definition},
+      {{:continue_as_new, %{}, [key: "page-42", definition: :next]}, :invalid_definition},
+      {{:continue_as_new, %{}, [key: "page-42", definition: :current, extra: true]},
+       {:unknown_options, [:extra]}}
+    ]
+
+    for {result, details} <- cases do
+      assert {:error, %{details: ^details, retryable?: false}} =
+               Squidie.Step.normalize_result(result)
+    end
   end
 
   test "supports explicit irreversible and non-compensatable step markers" do

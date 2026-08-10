@@ -19,10 +19,8 @@ defmodule Squidie.Step.Action do
   @impl Jido.Action
   def run(%{step: step, input: input}, context) when is_atom(step) and is_map(input) do
     with {:ok, input} <- Step.validate_input(step, input),
-         {:ok, result} <- run_native_step(step, input, Context.from_map(context)),
-         {:ok, output, opts} <- Step.normalize_result(result),
-         {:ok, output} <- maybe_validate_output(step, output, opts) do
-      {:ok, output, opts}
+         {:ok, result} <- run_native_step(step, input, Context.from_map(context)) do
+      normalize_result(step, result)
     end
   end
 
@@ -48,6 +46,21 @@ defmodule Squidie.Step.Action do
          origin: exception_origin(__STACKTRACE__),
          retryable?: false
        }}
+  end
+
+  defp normalize_result(step, result) do
+    case Step.normalize_result(result) do
+      {:ok, output, opts} ->
+        with {:ok, output} <- maybe_validate_output(step, output, opts) do
+          {:ok, output, opts}
+        end
+
+      {:continue_as_new, request} ->
+        {:continue_as_new, request}
+
+      {:error, _reason} = error ->
+        error
+    end
   end
 
   defp exception_origin([{module, function, arity_or_args, metadata} | _stacktrace]) do

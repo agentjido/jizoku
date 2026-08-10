@@ -423,6 +423,49 @@ defmodule SquidieTest do
     end
   end
 
+  defmodule RepoTransactionContinuationWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :repo_transaction_continuation do
+        manual()
+
+        payload do
+          field :account_id, :string
+        end
+      end
+
+      step :record_and_continue, RepoTransactionContinuationWorkflow.RecordAndContinue,
+        transaction: :repo
+
+      transition :record_and_continue, on: :ok, to: :complete
+    end
+  end
+
+  defmodule RepoTransactionContinuationWorkflow.RecordAndContinue do
+    use Squidie.Step,
+      name: :record_and_continue,
+      input_schema: [account_id: [type: :string, required: true]],
+      output_schema: []
+
+    @impl Squidie.Step
+    def run(%{account_id: account_id} = input, %Squidie.Step.Context{run_id: run_id}) do
+      now = NaiveDateTime.utc_now(:second)
+
+      Squidie.Test.Repo.insert_all("transactional_events", [
+        %{
+          run_id: Ecto.UUID.dump!(run_id),
+          account_id: account_id,
+          event: "continued",
+          inserted_at: now,
+          updated_at: now
+        }
+      ])
+
+      {:continue_as_new, input, key: "repo-next", definition: :current}
+    end
+  end
+
   defmodule ChildDigestWorkflow.DeliverDigest do
     use Squidie.Step,
       name: :deliver_digest,
@@ -12825,6 +12868,54 @@ defmodule SquidieTest do
       assert completed_snapshot.run_id == started_snapshot.run_id
       assert completed_snapshot.status == :completed
       assert transactional_events(started_snapshot.run_id) == ["recorded"]
+    end
+
+    test "execute_next/1 rejects native continuation inside a repo transaction" do
+      Repo.delete_all("transactional_events")
+
+      previous_activation = Application.fetch_env(:squidie, :continuation_fences)
+      Application.put_env(:squidie, :continuation_fences, :enabled)
+
+      on_exit(fn ->
+        case previous_activation do
+          {:ok, value} -> Application.put_env(:squidie, :continuation_fences, value)
+          :error -> Application.delete_env(:squidie, :continuation_fences)
+        end
+      end)
+
+      queue = "repo-transaction-continuation-#{System.unique_integer([:positive])}"
+      storage = {Squidie.Runtime.Journal.Storage.Ecto, repo: Repo}
+
+      assert {:ok, %Snapshot{} = started} =
+               Squidie.start(
+                 RepoTransactionContinuationWorkflow,
+                 :repo_transaction_continuation,
+                 %{account_id: "acct_repo_continuation"},
+                 runtime: :journal,
+                 journal_storage: storage,
+                 queue: queue,
+                 now: @read_model_started_at
+               )
+
+      assert {:ok, %Snapshot{} = failed} =
+               execute_journal_next(
+                 runtime: :journal,
+                 journal_storage: storage,
+                 queue: queue,
+                 owner_id: "repo-continuation-worker",
+                 now: @read_model_visible_at
+               )
+
+      assert failed.run_id == started.run_id
+      assert failed.status == :failed
+      assert transactional_events(started.run_id) == []
+
+      assert [%{status: :failed, error: error}] = failed.attempts
+      assert error.code == "continue_as_new_rejected"
+      assert error.retryable? == false
+
+      assert {:ok, dispatch_entries} = Journal.load_entries(storage, {:dispatch, queue})
+      refute Enum.any?(dispatch_entries, &(&1.type == :run_continuation_fenced))
     end
 
     test "repo transaction telemetry flushes after commit and is discarded after completion rollback" do
