@@ -24,11 +24,13 @@ defmodule Squidie.Test do
   @runtime_options [:max_steps, :now, :partition, :queue, :workflow]
   @execution_options [:max_steps]
   @terminal_statuses [:cancelled, :completed, :continued, :failed]
+  @time_units [:second, :millisecond, :microsecond]
 
   @type execution_result ::
           {:blocked, Snapshot.t()}
           | {:cancelled | :completed | :continued | :failed, Snapshot.t()}
           | {:error, term()}
+  @type time_unit :: :second | :millisecond | :microsecond
 
   @doc """
   Starts an isolated in-memory workflow runtime owned by the calling process.
@@ -45,7 +47,7 @@ defmodule Squidie.Test do
          {:ok, partition} <- Options.partition_from_opts(opts),
          {:ok, now} <- Options.now_from_opts(opts),
          {:ok, max_steps} <- max_steps(opts, @default_max_steps),
-         {:ok, storage_server} <- Storage.start_link(self()) do
+         {:ok, storage_server} <- Storage.start_link(self(), now) do
       storage = {Storage, server: storage_server}
 
       {:ok,
@@ -57,7 +59,6 @@ defmodule Squidie.Test do
          storage_server: storage_server,
          queue: queue,
          partition: partition,
-         now: now,
          max_steps: max_steps
        }}
     else
@@ -76,6 +77,45 @@ defmodule Squidie.Test do
   @spec stop_runtime(Runtime.t()) :: :ok
   def stop_runtime(%Runtime{storage_server: storage_server}) do
     Storage.stop(storage_server)
+  end
+
+  @doc """
+  Returns the runtime's current virtual time.
+  """
+  @spec now(Runtime.t()) :: {:ok, DateTime.t()} | {:error, :runtime_stopped}
+  def now(%Runtime{storage_server: storage_server}) do
+    Storage.now(storage_server)
+  end
+
+  @doc """
+  Advances the runtime's virtual time without sleeping.
+
+  Only the process that created the runtime may advance its clock. Supported
+  units are `:second`, `:millisecond`, and `:microsecond`.
+  """
+  @spec advance_time(Runtime.t(), non_neg_integer(), time_unit()) ::
+          {:ok, DateTime.t()}
+          | {:error,
+             :runtime_owner_required
+             | :runtime_busy
+             | :runtime_stopped
+             | {:invalid_option, {:amount | :unit, :invalid}}}
+  def advance_time(runtime, amount, unit \\ :millisecond)
+
+  def advance_time(%Runtime{owner: owner}, _amount, _unit) when owner != self() do
+    {:error, :runtime_owner_required}
+  end
+
+  def advance_time(%Runtime{}, amount, _unit) when not is_integer(amount) or amount < 0 do
+    {:error, {:invalid_option, {:amount, :invalid}}}
+  end
+
+  def advance_time(%Runtime{}, _amount, unit) when unit not in @time_units do
+    {:error, {:invalid_option, {:unit, :invalid}}}
+  end
+
+  def advance_time(%Runtime{storage_server: storage_server}, amount, unit) do
+    Storage.advance_time(storage_server, amount, unit)
   end
 
   @doc """
@@ -107,7 +147,9 @@ defmodule Squidie.Test do
   @spec inspect(Runtime.t(), Ecto.UUID.t() | Snapshot.t()) ::
           {:ok, Snapshot.t()} | {:error, term()}
   def inspect(%Runtime{} = runtime, run) do
-    Squidie.inspect_run(run_id(run), common_runtime_options(runtime))
+    with {:ok, opts} <- common_runtime_options(runtime) do
+      Squidie.inspect_run(run_id(run), opts)
+    end
   end
 
   @doc """
@@ -125,7 +167,7 @@ defmodule Squidie.Test do
          :ok <- reject_unknown_options(opts, @execution_options),
          {:ok, limit} <- max_steps(opts, runtime.max_steps),
          {:ok, target_run_id} <- target_run_id(runtime, run) do
-      execute(runtime, target_run_id, limit, limit)
+      execute_with_lease(runtime, target_run_id, limit)
     else
       false -> {:error, {:invalid_option, {:opts, :invalid}}}
       {:error, _reason} = error -> error
@@ -145,8 +187,8 @@ defmodule Squidie.Test do
     execute_until_blocked(runtime, run, opts)
   end
 
-  defp execute(runtime, run_id, remaining, limit) do
-    with {:ok, snapshot} <- inspect(runtime, run_id) do
+  defp execute(runtime, run_id, remaining, limit, now) do
+    with {:ok, snapshot} <- inspect_at(runtime, run_id, now) do
       cond do
         snapshot.status in @terminal_statuses ->
           {snapshot.status, snapshot}
@@ -156,8 +198,22 @@ defmodule Squidie.Test do
            {:execution_limit_reached, %{limit: limit, run_id: run_id, snapshot: snapshot}}}
 
         true ->
-          execute_next(runtime, run_id, remaining, limit)
+          execute_next(runtime, run_id, remaining, limit, now)
       end
+    end
+  end
+
+  defp execute_with_lease(runtime, run_id, limit) do
+    case Storage.begin_execution(runtime.storage_server) do
+      {:ok, now, lease_ref} ->
+        try do
+          execute(runtime, run_id, limit, limit, now)
+        after
+          _result = Storage.end_execution(runtime.storage_server, lease_ref)
+        end
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -182,41 +238,57 @@ defmodule Squidie.Test do
   end
 
   defp start_root(runtime, payload) do
-    runtime.workflow
-    |> Squidie.start(payload, common_runtime_options(runtime))
-    |> finish_start(runtime)
+    with {:ok, opts} <- common_runtime_options(runtime) do
+      runtime.workflow
+      |> Squidie.start(payload, opts)
+      |> finish_start(runtime)
+    end
   catch
     kind, reason ->
       :erlang.raise(kind, reason, __STACKTRACE__)
   end
 
-  defp execute_next(runtime, run_id, remaining, limit) do
+  defp execute_next(runtime, run_id, remaining, limit, now) do
     opts =
       runtime
-      |> common_runtime_options()
+      |> runtime_options(now)
       |> Keyword.put(:owner_id, runtime.id)
 
-    case Squidie.execute_next(opts) do
+    execute_next_result(Squidie.execute_next(opts), runtime, run_id, remaining, limit, now)
+  end
+
+  defp execute_next_result(result, runtime, run_id, remaining, limit, now) do
+    case result do
       {:ok, :none} ->
-        with {:ok, snapshot} <- inspect(runtime, run_id) do
+        with {:ok, snapshot} <- inspect_at(runtime, run_id, now) do
           {:blocked, snapshot}
         end
 
       {:ok, _snapshot} ->
-        execute(runtime, run_id, remaining - 1, limit)
+        execute(runtime, run_id, remaining - 1, limit, now)
 
       {:error, _reason} = error ->
         error
     end
   end
 
+  defp inspect_at(runtime, run, now) do
+    Squidie.inspect_run(run_id(run), runtime_options(runtime, now))
+  end
+
   defp common_runtime_options(%Runtime{} = runtime) do
+    with {:ok, now} <- now(runtime) do
+      {:ok, runtime_options(runtime, now)}
+    end
+  end
+
+  defp runtime_options(%Runtime{} = runtime, %DateTime{} = now) do
     [
       runtime: :journal,
       journal_storage: runtime.storage,
       queue: runtime.queue,
       partition: runtime.partition,
-      now: runtime.now
+      now: now
     ]
   end
 

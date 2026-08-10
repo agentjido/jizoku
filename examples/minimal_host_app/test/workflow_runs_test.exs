@@ -10,6 +10,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.Workflows.DailyDigest
   alias MinimalHostApp.Workflows.DependencyRecovery
   alias MinimalHostApp.Workflows.PaymentRecovery
+  alias MinimalHostApp.Workflows.RetryVerification
   alias Oban.Job
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.ReadModel.Listing.Summary
@@ -36,6 +37,36 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert snapshot.context.account.id == "account-test-kit"
     assert snapshot.context.invoice.id == "invoice-test-kit"
     assert snapshot.context.notification.channel == "email"
+  end
+
+  test "public test runtime advances a host retry without sleeping" do
+    now = ~U[2026-08-10 12:00:00Z]
+
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: RetryVerification,
+               now: now
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} =
+             Squidie.Test.start(runtime, %{attempt_id: "attempt-test-kit-virtual-time"})
+
+    on_exit(fn ->
+      :persistent_term.erase({MinimalHostApp.Steps.FailOnce, run.run_id})
+    end)
+
+    assert {:blocked, retrying} = Squidie.Test.drain(runtime, run)
+    assert retrying.next_visible_at == DateTime.add(now, 1_000, :millisecond)
+
+    assert {:ok, _now} = Squidie.Test.advance_time(runtime, 1, :second)
+    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+
+    assert completed.context.retry_probe == %{
+             attempt_id: "attempt-test-kit-virtual-time",
+             status: "ok"
+           }
   end
 
   defmodule InvalidRecurringIdempotentCronWorkflow do
