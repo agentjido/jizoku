@@ -82,6 +82,7 @@ defmodule Squidie.MixProject do
         "docs/storage_strategy.md",
         "docs/workflow_authoring.md",
         "docs/continue_as_new.md",
+        "docs/testing_workflows.md",
         "docs/graph_inspection.md",
         "docs/reference_workflows.md",
         "docs/host_app_integration.md",
@@ -110,6 +111,7 @@ defmodule Squidie.MixProject do
           "docs/host_app_integration.md",
           "docs/workflow_authoring.md",
           "docs/continue_as_new.md",
+          "docs/testing_workflows.md",
           "docs/operations.md",
           "docs/observability.md",
           "docs/actor_visibility.md"
