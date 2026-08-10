@@ -198,6 +198,21 @@ defmodule Squidie.Runtime.DispatchProtocol.ContinuationFenceTest do
            )
   end
 
+  test "caller-declared input participates in continuation fence identity" do
+    first = continuation_fence_attrs(request_input: %{cursor: "page-42"})
+    conflicting = continuation_fence_attrs(request_input: %{cursor: "page-43"})
+
+    refute Projection.same_continuation_fence?(first, conflicting)
+
+    projection =
+      Projection.rebuild([
+        entry!(:run_continuation_fenced, first),
+        entry!(:run_continuation_fenced, conflicting)
+      ])
+
+    assert [%{reason: :conflicting_continuation_fence}] = Projection.anomalies(projection)
+  end
+
   test "malformed fence facts do not hide legitimate work or crash replay" do
     malformed_data = [
       Map.delete(continuation_fence_attrs(), :run_id),
