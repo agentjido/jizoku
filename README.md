@@ -566,6 +566,35 @@ end
 
 Each child run has independent inspection, retry, replay, and cancellation. Repeating the same `child_key` returns the existing child instead of creating duplicates.
 
+## Continue As New
+
+Recurring workflows can terminalize the current run and continue in one fresh,
+durably linked successor:
+
+```elixir
+def run(%{cursor: cursor}, _context) do
+  {:continue_as_new, %{cursor: cursor + 1},
+   key: "cursor-#{cursor + 1}", definition: :current}
+end
+```
+
+The predecessor becomes `:continued`; the successor receives a new run id,
+fresh history, and only the declared input. Exact retries converge on the same
+successor. Host-owned control code can request the same transition with
+`Squidie.continue_as_new/2` after the run is quiescent.
+
+Continuation fence emission is disabled by default. Upgrade every runtime
+worker that reads the affected queues before setting:
+
+```elixir
+config :squidie, continuation_fences: :enabled
+```
+
+Immediate lineage is present in listing, inspection, graph, timeline, and
+explanation read models. Use `Squidie.inspect_continuation_chain/2` with an
+explicit `:max_hops` for bounded multi-run traversal. See
+[Continue as new](docs/continue_as_new.md) for the full contract and rollout.
+
 ## Inspectable Dynamic Work
 
 Host code can preview, record, or schedule bounded dynamic work for an active

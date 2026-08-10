@@ -157,6 +157,11 @@ defmodule MinimalHostApp.Smoke do
           nested_invite_delivery: Squidie.ReadModel.Inspection.Snapshot.t(),
           nested_invite_child: Squidie.ReadModel.Inspection.Snapshot.t(),
           journal_run: Squidie.ReadModel.Inspection.Snapshot.t(),
+          recurring_cursor: %{
+            predecessor: Squidie.ReadModel.Inspection.Snapshot.t(),
+            successor: Squidie.ReadModel.Inspection.Snapshot.t(),
+            chain: Squidie.ReadModel.ContinuationChain.t()
+          },
           journal_recovery: Squidie.ReadModel.Inspection.Snapshot.t(),
           journal_cancellation: Squidie.ReadModel.Inspection.Snapshot.t(),
           journal_replay: Squidie.ReadModel.Inspection.Snapshot.t(),
@@ -189,6 +194,7 @@ defmodule MinimalHostApp.Smoke do
     saga_checkout = run_saga_checkout!()
     {nested_invite_delivery, nested_invite_child} = run_nested_invite_delivery!()
     journal_run = run_journal_run!()
+    recurring_cursor = run_recurring_cursor!()
     journal_recovery = run_journal_recovery!()
     journal_cancellation = run_journal_cancellation!()
     journal_replay = run_journal_replay!()
@@ -219,6 +225,7 @@ defmodule MinimalHostApp.Smoke do
         nested_invite_delivery: nested_invite_delivery,
         nested_invite_child: nested_invite_child,
         journal_run: journal_run,
+        recurring_cursor: recurring_cursor,
         journal_recovery: journal_recovery,
         journal_cancellation: journal_cancellation,
         journal_replay: journal_replay,
@@ -722,6 +729,55 @@ defmodule MinimalHostApp.Smoke do
           raise "journal run smoke test failed: #{inspect(reason)}"
       end
     end)
+  end
+
+  @doc """
+  Runs one native continue-as-new cycle and verifies its bounded lineage.
+  """
+  @spec run_recurring_cursor!() :: %{
+          predecessor: Squidie.ReadModel.Inspection.Snapshot.t(),
+          successor: Squidie.ReadModel.Inspection.Snapshot.t(),
+          chain: Squidie.ReadModel.ContinuationChain.t()
+        }
+  def run_recurring_cursor! do
+    RuntimeHarness.ensure_runtime_started()
+    queue = journal_run_queue()
+
+    with {:ok, started_run} <- WorkflowRuns.start_recurring_cursor(%{cursor: 0}, queue: queue),
+         {:ok, successor} <-
+           Squidie.execute_next(
+             queue: queue,
+             owner_id: "minimal-host-continuation-worker-1"
+           ),
+         {:ok, completed_successor} <-
+           Squidie.execute_next(
+             queue: queue,
+             owner_id: "minimal-host-continuation-worker-2"
+           ),
+         {:ok, predecessor} <- WorkflowRuns.inspect_run(started_run.run_id, queue: queue),
+         {:ok, chain} <-
+           WorkflowRuns.inspect_continuation_chain(completed_successor.run_id,
+             direction: :backward,
+             max_hops: 5
+           ) do
+      expected_run_ids = [completed_successor.run_id, predecessor.run_id]
+
+      unless predecessor.status == :continued and
+               completed_successor.status == :completed and
+               successor.run_id == completed_successor.run_id and
+               successor.input == %{cursor: 1} and
+               predecessor.continuation.continued_to.run_id == completed_successor.run_id and
+               completed_successor.continuation.continued_from.run_id == predecessor.run_id and
+               Enum.map(chain.runs, & &1.run_id) == expected_run_ids and
+               chain.truncated? == false do
+        raise "unexpected recurring cursor continuation result"
+      end
+
+      %{predecessor: predecessor, successor: completed_successor, chain: chain}
+    else
+      {:error, reason} ->
+        raise "recurring cursor continuation smoke test failed: #{inspect(reason)}"
+    end
   end
 
   @doc """

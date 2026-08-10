@@ -14,6 +14,13 @@
   durable in the dispatch thread.
 - Preserve terminal-run fencing: later claims, completions, manual actions, or
   wakeups for a terminal run must not mutate terminal state.
+- Preserve continue-as-new ordering: complete and fence the native source in
+  one dispatch append, then apply the source, record continuation intent, and
+  terminalize the predecessor in one run-thread append before exposing the
+  deterministic successor.
+- Treat continuation activation as a host-level all-workers readiness gate.
+  Never accept request-level activation overrides, and never gate recovery of
+  a fence that is already durable.
 - Preserve child-run lineage as durable journal facts. Child starts must be
   idempotent for the parent run, parent step, child workflow, child trigger, and
   `child_key`.
@@ -67,6 +74,9 @@
 - Dynamic node retry must be persisted in the planned runnable metadata; do not
   recover retry behavior from current host code alone.
 - Terminal runs must reject new dynamic-work previews, records, and schedules.
+- After a continuation predecessor is terminal, ordinary scheduling, claims,
+  completion, failure, heartbeat, manual control, and wakeups must remain
+  fenced. Exact retries must repair or return the same successor.
 
 ## Runtime Command Signals
 

@@ -35,6 +35,10 @@ itself.
 - Use `Squidie.list_runs/2` for index views and
   `Squidie.inspect_run/2`, `Squidie.inspect_run_graph/2`,
   `Squidie.inspect_run_timeline/2`, or `Squidie.explain_run/2` for details.
+- Use continue-as-new to bound recurring workflow history. Keep successor input
+  explicit, choose a stable continuation key, and use
+  `Squidie.inspect_continuation_chain/2` with a bounded `:max_hops` when more
+  than the immediate lineage edge is required.
 - Use `Squidie.record_dynamic_work/3` when host/runtime code needs to persist
   bounded, inspection-only dynamic work metadata for a run.
 - Use `Squidie.preview_dynamic_work/3` when dashboards or visual editors need

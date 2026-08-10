@@ -21,6 +21,10 @@ defmodule MinimalHostApp.WorkflowRuns do
           required(:attempt_id) => String.t()
         }
 
+  @type recurring_cursor_attrs :: %{
+          required(:cursor) => non_neg_integer()
+        }
+
   @type dependency_recovery_attrs :: %{
           required(:account_id) => String.t(),
           required(:invoice_id) => String.t(),
@@ -92,6 +96,20 @@ defmodule MinimalHostApp.WorkflowRuns do
     Squidie.start(MinimalHostApp.Workflows.RetryVerification, :retry_verification, attrs)
   end
 
+  @doc """
+  Starts the recurring cursor example that continues into fresh linked runs.
+  """
+  @spec start_recurring_cursor(recurring_cursor_attrs(), keyword()) ::
+          {:ok, run_result()} | {:error, term()}
+  def start_recurring_cursor(attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
+    Squidie.start(
+      MinimalHostApp.Workflows.RecurringCursor,
+      :recurring_cursor,
+      attrs,
+      opts
+    )
+  end
+
   @spec start_dependency_recovery(dependency_recovery_attrs()) ::
           {:ok, run_result()} | {:error, term()}
   def start_dependency_recovery(attrs) when is_map(attrs) do
@@ -122,7 +140,10 @@ defmodule MinimalHostApp.WorkflowRuns do
   @spec start_runtime_digest(runtime_digest_attrs(), keyword()) ::
           {:ok, run_result()} | {:error, term()}
   def start_runtime_digest(attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
-    Squidie.start_spec(runtime_digest_spec(), :manual_digest, attrs,
+    Squidie.start_spec(
+      runtime_digest_spec(),
+      :manual_digest,
+      attrs,
       Keyword.put(opts, :action_registry, runtime_action_registry())
     )
   end
@@ -169,6 +190,12 @@ defmodule MinimalHostApp.WorkflowRuns do
   @spec inspect_run(Ecto.UUID.t(), keyword()) :: {:ok, run_result()} | {:error, term()}
   def inspect_run(run_id, opts \\ []) do
     Squidie.inspect_run(run_id, opts)
+  end
+
+  @spec inspect_continuation_chain(Ecto.UUID.t(), keyword()) ::
+          {:ok, Squidie.ReadModel.ContinuationChain.t()} | {:error, term()}
+  def inspect_continuation_chain(run_id, opts \\ []) do
+    Squidie.inspect_continuation_chain(run_id, opts)
   end
 
   @spec schedule_dynamic_work(Ecto.UUID.t(), map(), keyword()) ::

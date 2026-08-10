@@ -24,6 +24,8 @@ Use these public APIs as the stable observability boundary:
   views without parsing raw journal entries.
 - `Squidie.explain_run/2` - operator-facing reason, details, evidence, and
   next actions.
+- `Squidie.inspect_continuation_chain/2` - explicitly bounded traversal of
+  continue-as-new predecessor or successor lineage.
 
 All of these surfaces expose the selected `partition`. Treat
 `{partition, run_id}` as the minimum run identity in dashboards, links, caches,
@@ -138,9 +140,13 @@ signals:
 | Deadline health | `deadline`, attempt `deadline`, node `deadline` | Shows on-time, due-soon, overdue, and escalated workflow work without exposing payloads. |
 | Terminal outcomes | `terminal?`, `terminal_status` | Tracks completed, failed, cancelled, and replayed work. |
 | Runtime anomalies | `anomalies` | Surfaces inconsistent or malformed durable facts. |
+| Run history size | `history.thread_revision`, `history.level` | Warns when one durable run thread approaches host-configured size thresholds. |
+| Continuation lineage | `continuation`, `continuation_links` | Connects recurring predecessor and successor runs without recursively loading the chain. |
 
 For dashboards, start with `list_runs/2`, then inspect selected runs with
 history only when the caller needs detailed attempts or audit evidence.
+Use `inspect_continuation_chain/2` only when an operator explicitly needs more
+than the immediate continuation edge, and keep `max_hops` bounded.
 Deadline alerting belongs at the host boundary: use Squidie's deadline state
 as durable evidence, then route notifications or operator actions through the
 host application's policy and authorization layer.

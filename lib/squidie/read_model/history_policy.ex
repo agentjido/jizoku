@@ -1,5 +1,10 @@
 defmodule Squidie.ReadModel.HistoryPolicy do
-  @moduledoc false
+  @moduledoc """
+  Host-configured thresholds for durable run and continuation-chain history.
+
+  Public read models use this policy to classify run-thread size and choose the
+  default bound for explicit continuation-chain traversal.
+  """
 
   @default_run_warning_threshold 5_000
   @default_run_critical_threshold 20_000

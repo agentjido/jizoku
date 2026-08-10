@@ -30,6 +30,7 @@ modules live under `examples/minimal_host_app/lib/minimal_host_app/steps`.
 | `DependencyRecovery` | Manual | Independent roots, dependency joins, named path input mapping, and inspectable joined work. |
 | `SagaCheckout` | Manual | Reversible side-effect metadata and retry exhaustion on a later step. |
 | `DailyDigest` | Manual and cron | One workflow graph shared by manual and scheduled starts, including cron idempotency metadata. |
+| `RecurringCursor` | Manual | Native continue-as-new, fresh successor history, explicit lineage, and bounded chain inspection. |
 
 ## Payment Recovery
 
@@ -137,6 +138,21 @@ The workflow declares schedule intent. The host app owns recurring delivery and
 sends cron payloads into the runtime boundary. The smoke path verifies that a
 manual digest and a cron-activated digest complete through the same workflow
 graph.
+
+## Recurring Cursor
+
+`MinimalHostApp.Workflows.RecurringCursor` returns native continue-as-new from
+its first cursor step:
+
+```elixir
+{:continue_as_new, %{cursor: 1}, key: "cursor-1", definition: :current}
+```
+
+The smoke path executes both runs, verifies the predecessor is `:continued`,
+verifies the successor completes with only `%{cursor: 1}`, and traverses the
+two-run continuation chain through an explicit five-hop bound. This is the
+reference for recurring or paginated work that must periodically start with a
+fresh run history.
 
 ## How To Run Them
 
