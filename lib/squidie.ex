@@ -19,6 +19,7 @@ defmodule Squidie do
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.Journal.ChildStarter
   alias Squidie.Runtime.Journal.Commands.Cancellation
+  alias Squidie.Runtime.Journal.Commands.ContinueAsNew
   alias Squidie.Runtime.Journal.Commands.Replay
   alias Squidie.Runtime.Journal.Commands.SignalInterpreter
   alias Squidie.Runtime.Journal.Commands.Starter
@@ -707,6 +708,25 @@ defmodule Squidie do
     with {:ok, :journal} <- Routing.runtime(overrides) do
       cancel_run_with_runtime(:journal, run_id, overrides)
     end
+  end
+
+  @doc """
+  Continues an eligible run as one fresh, durably linked successor.
+
+  The host must first activate continuation fences with
+  `config :squidie, continuation_fences: :enabled` after every runtime worker
+  has been upgraded to a fence-aware Squidie release. `input:` and
+  `continuation_key:` are required. Only the declared input is carried into the
+  successor; accumulated workflow context is not copied.
+
+  Exact retries return the same successor. Reusing a continuation key with
+  different input fails closed.
+  """
+  @spec continue_as_new(Ecto.UUID.t(), keyword()) ::
+          {:ok, Squidie.ReadModel.Inspection.Snapshot.t()}
+          | {:error, term()}
+  def continue_as_new(run_id, overrides \\ []) do
+    ContinueAsNew.continue(run_id, overrides)
   end
 
   @doc """
