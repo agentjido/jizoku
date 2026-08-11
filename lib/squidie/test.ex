@@ -19,6 +19,7 @@ defmodule Squidie.Test do
   alias Squidie.ReadModel.Timeline
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Options
+  alias Squidie.Test.GoldenHistory
   alias Squidie.Test.Invariants
   alias Squidie.Test.Runtime
   alias Squidie.Test.Storage
@@ -57,6 +58,24 @@ defmodule Squidie.Test do
           required(:queue) => String.t(),
           required(:thread_revisions) => %{run: non_neg_integer(), dispatch: non_neg_integer()},
           required(:violations) => [invariant_violation()]
+        }
+  @type golden_history_event :: %{
+          required(:type) => atom(),
+          required(:offset_us) => integer() | nil,
+          required(:run) => String.t() | :malformed,
+          optional(:step) => String.t(),
+          optional(:runnable) => String.t() | :malformed,
+          optional(:status) => atom(),
+          optional(:details) => map()
+        }
+  @type golden_history :: %{
+          required(:schema_version) => pos_integer(),
+          required(:workflow) => String.t() | nil,
+          required(:queue) => String.t(),
+          required(:partition) => String.t() | nil,
+          required(:status) => atom(),
+          required(:terminal_status) => atom() | nil,
+          required(:events) => [golden_history_event()]
         }
   @type time_unit :: :second | :millisecond | :microsecond
 
@@ -232,6 +251,21 @@ defmodule Squidie.Test do
   def timeline(%Runtime{} = runtime, run) do
     with {:ok, opts} <- common_runtime_options(runtime) do
       Squidie.inspect_run_timeline(run_id(run), opts)
+    end
+  end
+
+  @doc """
+  Returns a versioned, redacted golden history for compatibility assertions.
+
+  Generated run and runnable identifiers are replaced with encounter-order
+  aliases, timestamps become offsets from run start, and event details use a
+  strict structural allowlist.
+  """
+  @spec golden_history(Runtime.t(), Ecto.UUID.t() | Snapshot.t()) ::
+          {:ok, golden_history()} | {:error, term()}
+  def golden_history(%Runtime{} = runtime, run) do
+    with {:ok, timeline} <- timeline(runtime, run) do
+      {:ok, GoldenHistory.from_timeline(timeline)}
     end
   end
 
