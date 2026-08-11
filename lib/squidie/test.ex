@@ -14,7 +14,9 @@ defmodule Squidie.Test do
 
   import Kernel, except: [inspect: 2]
 
+  alias Squidie.ReadModel.Explanation.Diagnostic
   alias Squidie.ReadModel.Inspection.Snapshot
+  alias Squidie.ReadModel.Timeline
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Test.Runtime
   alias Squidie.Test.Storage
@@ -152,6 +154,28 @@ defmodule Squidie.Test do
   def inspect(%Runtime{} = runtime, run) do
     with {:ok, opts} <- common_runtime_options(runtime) do
       Squidie.inspect_run(run_id(run), opts)
+    end
+  end
+
+  @doc """
+  Returns the run's chronological, redaction-safe operator timeline.
+  """
+  @spec timeline(Runtime.t(), Ecto.UUID.t() | Snapshot.t()) ::
+          {:ok, Timeline.t()} | {:error, term()}
+  def timeline(%Runtime{} = runtime, run) do
+    with {:ok, opts} <- common_runtime_options(runtime) do
+      Squidie.inspect_run_timeline(run_id(run), opts)
+    end
+  end
+
+  @doc """
+  Returns the run's structured operator explanation.
+  """
+  @spec explain(Runtime.t(), Ecto.UUID.t() | Snapshot.t()) ::
+          {:ok, Diagnostic.t()} | {:error, term()}
+  def explain(%Runtime{} = runtime, run) do
+    with {:ok, opts} <- common_runtime_options(runtime) do
+      Squidie.explain_run(run_id(run), opts)
     end
   end
 

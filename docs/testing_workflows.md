@@ -120,13 +120,37 @@ queue, partition, and frozen clock. Callers may provide only `:idempotency_key`
 and signal `:metadata`; routing and occurrence time cannot escape the test
 runtime. Each helper accepts only the runtime's root run.
 
+## Failure diagnostics
+
+`timeline/2` and `explain/2` expose the same diagnostic views as the public host
+read APIs. Use them when an assertion needs stable projected event order or an
+actionable reason for a blocked or failed run:
+
+```elixir
+assert {:blocked, snapshot} = Squidie.Test.drain(runtime, run)
+
+assert {:ok, explanation} = Squidie.Test.explain(runtime, run)
+assert explanation.reason == snapshot.reason
+assert explanation.next_actions == [:wait_until_attempt_visible]
+
+assert {:ok, timeline} = Squidie.Test.timeline(runtime, run)
+assert Enum.any?(timeline.events, &(&1.type == :attempt_failed))
+```
+
+Both helpers are read-only and inherit the runtime's storage, queue, partition,
+and frozen clock. Timeline details are redaction-safe. Explanations can include
+workflow application data in their evidence, so inspect or sanitize them before
+including them in shared CI output. Events with the same timestamp use the
+timeline projection's stable tie ordering; treat that order as a deterministic
+view, not as an additional causal trace.
+
 ## Current scope
 
 The test runtime covers isolated in-memory storage, normal workflow starts,
 bounded and predicate-based execution, blocked-state detection, virtual time,
-named manual controls, and inspection. Generic signals, deterministic faults,
-restarts, golden histories, and reusable invariant assertions will build on
-this same runtime contract.
+named manual controls, inspection, and failure diagnostics. Generic signals,
+deterministic faults, restarts, golden histories, and reusable invariant
+assertions will build on this same runtime contract.
 
 Use the configured Ecto adapter for integration tests that need database
 transactions, migrations, or query behavior. The in-memory runtime is intended

@@ -73,6 +73,14 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:blocked, retrying} = Squidie.Test.drain(runtime, run)
     assert retrying.next_visible_at == DateTime.add(now, 1_000, :millisecond)
 
+    assert {:ok, explanation} = Squidie.Test.explain(runtime, run)
+    assert explanation.reason == :attempt_scheduled_for_later
+    assert explanation.next_actions == [:wait_until_attempt_visible]
+    assert explanation.details.next_visible_at == retrying.next_visible_at
+
+    assert {:ok, timeline} = Squidie.Test.timeline(runtime, run)
+    assert Enum.any?(timeline.events, &(&1.type == :attempt_failed))
+
     assert {:ok, _now} = Squidie.Test.advance_time(runtime, 1, :second)
     assert {:completed, completed} = Squidie.Test.drain(runtime, run)
 
