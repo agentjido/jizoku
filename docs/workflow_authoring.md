@@ -697,6 +697,15 @@ through the same journal-backed runtime and receive the same safe context map,
 including `idempotency_key` and `claim_id` but not claim tokens. Applications
 should prefer `use Squidie.Step` for the common authoring path.
 
+Raw actions may return `{:ok, output}` or `{:ok, output, []}`. Squidie treats a
+non-empty directive list as an explicit, non-retryable compatibility failure
+instead of a successful attempt completion. Malformed extras fail at the same
+boundary. Directive payloads are excluded from the durable error. Normal
+workflow error transitions may handle that failed outcome. This fail-closed
+contract prevents `Emit`, `RunInstruction`, `Error`, custom directives, and
+other action effects from being silently discarded while their durable
+translations are added in focused interoperability slices.
+
 ### Deferred Continuation
 
 Use deferred continuation when a step made a durable domain observation that is
