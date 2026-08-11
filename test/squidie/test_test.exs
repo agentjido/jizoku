@@ -955,6 +955,99 @@ defmodule Squidie.TestTest do
     assert {:error, :runtime_stopped} = Test.explain(runtime, run)
   end
 
+  test "deletes checkpoints and rebuilds an active run from journal threads" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: TwoStepWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{value: 7})
+
+    assert {:reached, before_snapshot} =
+             Test.execute_until(runtime, run, fn snapshot ->
+               Map.has_key?(snapshot.context, :first)
+             end)
+
+    before_state = runtime_persistence_state(runtime)
+    assert map_size(before_state.checkpoints) >= 2
+
+    assert :ok = Test.delete_checkpoints(runtime)
+    after_delete = runtime_persistence_state(runtime)
+    assert after_delete.checkpoints == %{}
+    assert after_delete.threads == before_state.threads
+
+    assert {:ok, rebuilt} = Test.inspect(runtime, run)
+    assert rebuilt == before_snapshot
+    assert runtime_persistence_state(runtime) == after_delete
+
+    assert {:completed, completed} = Test.drain(runtime, run)
+    assert completed.context == %{first: 7, second: 7}
+  end
+
+  test "deletes checkpoints idempotently without changing a terminal journal" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: CompleteWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{value: 1})
+    assert {:completed, completed} = Test.drain(runtime, run)
+    before_threads = runtime_persistence_state(runtime).threads
+
+    assert :ok = Test.delete_checkpoints(runtime)
+    after_first_delete = runtime_persistence_state(runtime)
+    assert after_first_delete.checkpoints == %{}
+    assert :ok = Test.delete_checkpoints(runtime)
+    assert runtime_persistence_state(runtime) == after_first_delete
+    assert {:ok, rebuilt} = Test.inspect(runtime, run)
+    assert rebuilt == completed
+    assert runtime_persistence_state(runtime).threads == before_threads
+  end
+
+  test "fences checkpoint deletion by owner and active execution" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: BarrierWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    :persistent_term.put({BarrierStep, run.run_id}, self())
+    on_exit(fn -> :persistent_term.erase({BarrierStep, run.run_id}) end)
+
+    before_unauthorized = runtime_persistence_state(runtime)
+    task = Task.async(fn -> Test.delete_checkpoints(runtime) end)
+    assert {:error, :runtime_owner_required} = Task.await(task)
+    assert runtime_persistence_state(runtime) == before_unauthorized
+
+    drain_task = Task.async(fn -> Test.drain(runtime, run) end)
+    assert_receive {:barrier_entered, executor_pid}
+    before_state = runtime_persistence_state(runtime)
+    assert {:error, :runtime_busy} = Test.delete_checkpoints(runtime)
+    assert runtime_persistence_state(runtime) == before_state
+
+    send(executor_pid, :release_barrier)
+    assert {:completed, _snapshot} = Task.await(drain_task)
+    assert :ok = Test.delete_checkpoints(runtime)
+    assert runtime_persistence_state(runtime).checkpoints == %{}
+
+    assert :ok = Test.stop_runtime(runtime)
+    assert {:error, :runtime_stopped} = Test.delete_checkpoints(runtime)
+  end
+
+  test "deletes checkpoints after a drain holding a lease crashes" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: BarrierWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    :persistent_term.put({BarrierStep, run.run_id}, self())
+    on_exit(fn -> :persistent_term.erase({BarrierStep, run.run_id}) end)
+
+    drain_task = Task.async(fn -> Test.drain(runtime, run) end)
+    assert_receive {:barrier_entered, executor_pid}
+    assert executor_pid == drain_task.pid
+    before_state = runtime_persistence_state(runtime)
+    assert nil == Task.shutdown(drain_task, :brutal_kill)
+
+    assert :ok = Test.delete_checkpoints(runtime)
+    after_delete = runtime_persistence_state(runtime)
+    assert after_delete.checkpoints == %{}
+    assert after_delete.threads == before_state.threads
+  end
+
   test "stops abandoned runtime storage when its owner exits" do
     parent = self()
 
