@@ -15,6 +15,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
+  alias Squidie.Runtime.Jido.Directives
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Commands.ContinuationRecovery
   alias Squidie.Runtime.Journal.Commands.NativeContinuation
@@ -3344,10 +3345,16 @@ defmodule Squidie.Runtime.Journal.Executor do
 
     case result do
       {:ok, output} when is_map(output) -> {:ok, output, []}
-      {:ok, output, extras} when is_map(output) and is_list(extras) -> {:ok, output, []}
-      {:ok, output, _extras} when is_map(output) -> {:ok, output, []}
+      {:ok, output, extras} when is_map(output) -> normalize_action_extras(output, extras)
       {:error, reason} -> {:error, reason}
       other -> unexpected_exec_result(other)
+    end
+  end
+
+  defp normalize_action_extras(output, extras) when is_map(output) do
+    case Directives.normalize(extras) do
+      {:ok, []} -> {:ok, output, []}
+      {:error, _reason} = error -> error
     end
   end
 
@@ -3495,6 +3502,8 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp safe_error_message(message)
        when message in [
               "gateway timeout",
+              "Jido action directives are not supported",
+              "Jido action extras must be a list",
               "journal attempt is incompatible with the current workflow definition",
               "step execution failed"
             ] do

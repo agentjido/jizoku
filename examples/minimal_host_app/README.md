@@ -13,6 +13,8 @@ This example shows how an application can:
 - run repeatable smoke, resilience, and bounded soak paths during development
 - execute native continue-as-new through fresh linked runs and bounded lineage
   inspection
+- exercise raw Jido actions through Squidie's explicit directive compatibility
+  boundary
 
 ## Setup
 
@@ -120,6 +122,13 @@ version. Its production configuration remains default-off. Production hosts
 must first upgrade and drain every worker that can read the affected queues;
 the flag is a host readiness assertion, not automatic cluster-version
 discovery.
+
+The test suite also runs
+`MinimalHostApp.Workflows.JidoDirectiveBoundary`, whose raw `Jido.Action`
+returns an `Emit` directive. The current interoperability boundary rejects the
+directive as a redaction-safe, non-retryable failure and proves the action
+output is not applied. Later Jido slices will evolve this sample as durable
+signal and instruction effects become supported.
 
 ## Restart Resilience
 

@@ -9,6 +9,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.WorkflowRuns
   alias MinimalHostApp.Workflows.DailyDigest
   alias MinimalHostApp.Workflows.DependencyRecovery
+  alias MinimalHostApp.Workflows.JidoDirectiveBoundary
   alias MinimalHostApp.Workflows.ManualApproval
   alias MinimalHostApp.Workflows.PaymentRecovery
   alias MinimalHostApp.Workflows.RetryVerification
@@ -94,6 +95,28 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     refute Kernel.inspect(golden) =~ "account-test-kit"
     refute Kernel.inspect(golden) =~ "invoice-test-kit"
+  end
+
+  test "raw Jido action directives fail before their output is applied" do
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: JidoDirectiveBoundary,
+               now: ~U[2026-08-10 12:00:00Z]
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Squidie.Test.start(runtime, %{})
+    assert {:failed, failed} = Squidie.Test.drain(runtime, run)
+    assert failed.applied_runnable_keys == []
+
+    assert failed.terminal_error == %{
+             code: "unsupported_jido_directive",
+             message: "Jido action directives are not supported",
+             retryable?: false
+           }
+
+    refute inspect(failed) =~ "sample-secret"
   end
 
   test "public test runtime advances a host retry without sleeping" do

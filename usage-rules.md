@@ -24,6 +24,9 @@ itself.
 
 - Prefer `use Squidie.Step` for custom workflow steps.
 - Use raw `Jido.Action` modules only for explicit interop.
+- Return `{:ok, output}` or `{:ok, output, []}` from raw `Jido.Action`
+  modules. Squidie rejects non-empty or malformed action extras as an explicit
+  action failure; it never silently discards Jido directives.
 - Keep workflow definitions backend-neutral.
 - Keep delivery and job boundaries thin; call host-owned modules that wrap
   Squidie public APIs.

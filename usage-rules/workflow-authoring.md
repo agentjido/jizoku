@@ -80,6 +80,10 @@
   reconciliation and action idempotency. Never expose or persist claim tokens in
   step output, logs, or host-facing errors.
 - Use raw `Jido.Action` modules only for explicit interop.
+- Raw `Jido.Action` success results may include an empty extras list. Non-empty
+  or malformed extras become a non-retryable action failure instead of a
+  successful completion; do not return directives until their durable
+  compatibility slice is supported.
 
 ## Data Mapping
 
