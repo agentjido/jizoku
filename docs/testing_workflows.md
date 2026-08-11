@@ -167,13 +167,35 @@ the helper, and an active drain or control command makes it return
 `{:error, :runtime_busy}` so the test cannot delete checkpoints midway through
 one bounded operation.
 
+## Append conflicts
+
+Inject one expected-revision conflict into the runtime's exact root-run or
+configured dispatch thread to exercise normal retry and recovery behavior:
+
+```elixir
+assert :ok = Squidie.Test.inject_append_conflict(runtime, :dispatch)
+assert {:error, :conflict} = Squidie.Test.drain(runtime, run)
+assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+```
+
+The conflict is consumed atomically by the first append to the selected
+partitioned thread. Appends to other queues, partitions, and journal threads do
+not consume it. Production operations may handle a conflict internally, so a
+run-thread conflict can complete in the same helper call while still exercising
+the real expected-revision retry path.
+
+Only the runtime owner may arm a conflict, and the root run must already exist.
+Injection returns `{:error, :runtime_busy}` while a drain or control helper is
+active and rejects a second fault until the armed conflict has been consumed.
+
 ## Current scope
 
 The test runtime covers isolated in-memory storage, normal workflow starts,
 bounded and predicate-based execution, blocked-state detection, virtual time,
 named manual controls, inspection, failure diagnostics, and checkpoint-loss
-replay. Generic signals, deterministic faults, restarts, golden histories, and
-reusable invariant assertions will build on this same runtime contract.
+replay. It also supports deterministic one-shot append conflicts. Generic
+signals, broader deterministic faults, restarts, golden histories, and reusable
+invariant assertions will build on this same runtime contract.
 
 Use the configured Ecto adapter for integration tests that need database
 transactions, migrations, or query behavior. The in-memory runtime is intended
