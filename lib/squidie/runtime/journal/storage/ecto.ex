@@ -24,6 +24,7 @@ defmodule Squidie.Runtime.Journal.Storage.Ecto do
   alias Squidie.Persistence.JournalCheckpoint
   alias Squidie.Persistence.JournalEntry
   alias Squidie.Persistence.JournalThread
+  alias Squidie.Runtime.Journal.Storage.Metadata
 
   @encoded_term_tag :squidie_ecto_term_v1
 
@@ -98,7 +99,9 @@ defmodule Squidie.Runtime.Journal.Storage.Ecto do
   @spec append_thread(String.t(), [Jido.Thread.Entry.t()], opts()) ::
           {:ok, Thread.t()} | {:error, term()}
   def append_thread(thread_id, entries, opts) when is_binary(thread_id) and is_list(entries) do
-    with {:ok, repo} <- fetch_repo(opts) do
+    with {:ok, repo} <- fetch_repo(opts),
+         {:ok, metadata} <- Metadata.normalize(Keyword.get(opts, :metadata, %{})) do
+      opts = Keyword.put(opts, :metadata, metadata)
       expected_rev = Keyword.get(opts, :expected_rev)
       now_ms = System.system_time(:millisecond)
 
@@ -115,11 +118,6 @@ defmodule Squidie.Runtime.Journal.Storage.Ecto do
   @spec delete_thread(String.t(), opts()) :: :ok | {:error, term()}
   def delete_thread(thread_id, opts) when is_binary(thread_id) do
     with {:ok, repo} <- fetch_repo(opts) do
-      repo.delete_all(
-        from(entry in JournalEntry, where: entry.thread_id == ^thread_id),
-        repo_opts(opts)
-      )
-
       repo.delete_all(
         from(thread in JournalThread, where: thread.id == ^thread_id),
         repo_opts(opts)
@@ -245,25 +243,40 @@ defmodule Squidie.Runtime.Journal.Storage.Ecto do
   defp insert_entries(repo, thread_id, entries, opts) do
     now = DateTime.utc_now(:microsecond)
 
-    rows =
-      Enum.map(entries, fn entry ->
-        {:ok, entry_binary} = encode_term(entry)
+    with {:ok, rows} <- journal_entry_rows(entries, thread_id, now) do
+      rows_count = length(rows)
 
-        %{
-          id: Ecto.UUID.generate(),
-          thread_id: thread_id,
-          seq: entry.seq,
-          entry: entry_binary,
-          inserted_at: now,
-          updated_at: now
-        }
+      case repo.insert_all(JournalEntry, rows, repo_opts(opts)) do
+        {count, _rows} when count == rows_count -> :ok
+        {count, _rows} -> {:error, {:entries_not_inserted, count, rows_count}}
+      end
+    end
+  end
+
+  defp journal_entry_rows(entries, thread_id, now) do
+    result =
+      Enum.reduce_while(entries, {:ok, []}, fn entry, {:ok, rows} ->
+        case encode_term(entry) do
+          {:ok, entry_binary} ->
+            row = %{
+              id: Ecto.UUID.generate(),
+              thread_id: thread_id,
+              seq: entry.seq,
+              entry: entry_binary,
+              inserted_at: now,
+              updated_at: now
+            }
+
+            {:cont, {:ok, [row | rows]}}
+
+          {:error, reason} ->
+            {:halt, {:error, reason}}
+        end
       end)
 
-    rows_count = length(rows)
-
-    case repo.insert_all(JournalEntry, rows, repo_opts(opts)) do
-      {count, _rows} when count == rows_count -> :ok
-      {count, _rows} -> {:error, {:entries_not_inserted, count, rows_count}}
+    case result do
+      {:ok, rows} -> {:ok, Enum.reverse(rows)}
+      {:error, _reason} = error -> error
     end
   end
 
