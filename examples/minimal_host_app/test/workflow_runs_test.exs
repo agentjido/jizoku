@@ -134,6 +134,50 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            }
   end
 
+  test "public test runtime executes a runtime-authored spec with deterministic stubs" do
+    spec = %{
+      workflow: MinimalHostApp.RuntimeAuthoredStubTest,
+      definition_version: "minimal-host-test-stub-v1",
+      triggers: [%{name: :manual, type: :manual, config: %{}, payload: []}],
+      payload: [],
+      steps: [
+        %{name: :prepare, action: "test.prepare", opts: [output: :prepared]},
+        %{
+          name: :deliver,
+          action: "test.deliver",
+          opts: [input: [:prepared], output: :delivery]
+        }
+      ],
+      transitions: [
+        %{from: :prepare, on: :ok, to: :deliver},
+        %{from: :deliver, on: :ok, to: :complete}
+      ],
+      retries: [],
+      entry_steps: [:prepare],
+      initial_step: :prepare,
+      entry_step: :prepare
+    }
+
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: spec,
+               action_stubs: %{
+                 "test.prepare" => [{:ok, %{message_id: "message-123"}}],
+                 "test.deliver" => [{:ok, %{status: "delivered"}}]
+               }
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Squidie.Test.start(runtime, %{})
+    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert completed.context.prepared == %{message_id: "message-123"}
+    assert completed.context.delivery == %{status: "delivered"}
+
+    assert {:ok, calls} = Squidie.Test.stub_calls(runtime, "test.deliver")
+    assert [%{input: %{prepared: %{message_id: "message-123"}}}] = calls
+  end
+
   test "public test runtime starts a host cron trigger at frozen time" do
     now = ~U[2026-08-10 12:00:00Z]
 

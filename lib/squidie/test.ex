@@ -25,12 +25,22 @@ defmodule Squidie.Test do
   alias Squidie.Test.Invariants
   alias Squidie.Test.Runtime
   alias Squidie.Test.Storage
+  alias Squidie.Test.StubAction
   alias Squidie.Workflow.Definition
 
   @default_max_steps 100
   @control_options [:idempotency_key, :metadata]
   @cron_options [:idempotency_key, :metadata]
-  @runtime_options [:max_steps, :now, :partition, :queue, :workflow]
+  @runtime_options [
+    :action_registry,
+    :action_stubs,
+    :guardrail_registry,
+    :max_steps,
+    :now,
+    :partition,
+    :queue,
+    :workflow
+  ]
   @execution_options [:max_steps]
   @terminal_statuses [:cancelled, :completed, :continued, :failed]
   @time_units [:second, :millisecond, :microsecond]
@@ -85,7 +95,10 @@ defmodule Squidie.Test do
   @doc """
   Starts an isolated in-memory workflow runtime owned by the calling process.
 
-  `:workflow` is required. `:queue`, `:partition`, `:now`, and `:max_steps`
+  `:workflow` is required and may be a compiled workflow module or a
+  runtime-authored workflow spec. Runtime specs may use a host-owned
+  `:action_registry`, deterministic `:action_stubs`, and a
+  `:guardrail_registry`. `:queue`, `:partition`, `:now`, and `:max_steps`
   configure every helper call made through the returned runtime.
   """
   @spec start_runtime(keyword()) :: {:ok, Runtime.t()} | {:error, term()}
@@ -93,11 +106,22 @@ defmodule Squidie.Test do
     with true <- Keyword.keyword?(opts),
          :ok <- reject_unknown_options(opts, @runtime_options),
          {:ok, workflow} <- workflow(opts),
+         {:ok, action_registry} <- action_registry(opts),
+         {:ok, action_stubs} <- action_stubs(opts),
+         :ok <- validate_action_stub_workflow(workflow, action_stubs),
+         :ok <- validate_action_stub_keys(action_registry, action_stubs),
+         {:ok, guardrail_registry} <- guardrail_registry(opts),
+         :ok <-
+           validate_test_workflow(
+             workflow,
+             validation_action_registry(action_registry, action_stubs),
+             guardrail_registry
+           ),
          {:ok, queue} <- Options.queue_from_opts(opts),
          {:ok, partition} <- Options.partition_from_opts(opts),
          {:ok, now} <- Options.now_from_opts(opts),
          {:ok, max_steps} <- max_steps(opts, @default_max_steps),
-         {:ok, storage_server} <- Storage.start_link(self(), now) do
+         {:ok, storage_server} <- Storage.start_link(self(), now, action_stubs) do
       storage = {Storage, server: storage_server}
 
       {:ok,
@@ -109,7 +133,10 @@ defmodule Squidie.Test do
          storage_server: storage_server,
          queue: queue,
          partition: partition,
-         max_steps: max_steps
+         max_steps: max_steps,
+         action_registry: action_registry,
+         action_stub_keys: Map.keys(action_stubs),
+         guardrail_registry: guardrail_registry
        }}
     else
       false -> {:error, {:invalid_option, {:opts, :invalid}}}
@@ -236,6 +263,20 @@ defmodule Squidie.Test do
   end
 
   @doc """
+  Returns calls recorded by a configured deterministic action stub.
+
+  Calls are ordered by execution and include the application input plus durable
+  run, runnable, step, and attempt identity. This is explicit test data and is
+  not a redacted diagnostic surface.
+  """
+  @spec stub_calls(Runtime.t(), Squidie.Workflow.ActionRegistry.action_key()) ::
+          {:ok, [map()]}
+          | {:error, :run_not_started | :runtime_stopped | :unknown_action_stub}
+  def stub_calls(%Runtime{storage_server: storage_server}, action_key) do
+    Storage.action_stub_calls(storage_server, action_key)
+  end
+
+  @doc """
   Starts the runtime's workflow through `Squidie.start/3`.
 
   Each runtime owns one root run. Create another runtime when a test needs an
@@ -283,6 +324,11 @@ defmodule Squidie.Test do
 
   def start_cron(%Runtime{owner: owner}, _trigger, _input, _opts) when owner != self() do
     {:error, :runtime_owner_required}
+  end
+
+  def start_cron(%Runtime{workflow: workflow}, _trigger, _input, _opts)
+      when not is_atom(workflow) do
+    {:error, {:invalid_option, {:workflow, :cron_requires_module}}}
   end
 
   def start_cron(%Runtime{} = runtime, trigger, input, opts) do
@@ -588,9 +634,13 @@ defmodule Squidie.Test do
 
   defp start_root(runtime, payload) do
     with {:ok, opts} <- common_runtime_options(runtime) do
-      runtime.workflow
-      |> Squidie.start(payload, opts)
-      |> finish_start(runtime)
+      result =
+        case runtime.workflow do
+          workflow when is_atom(workflow) -> Squidie.start(workflow, payload, opts)
+          spec when is_map(spec) -> Squidie.start_spec(spec, payload, opts)
+        end
+
+      finish_start(result, runtime)
     end
   catch
     kind, reason ->
@@ -715,6 +765,8 @@ defmodule Squidie.Test do
       partition: runtime.partition,
       now: now
     ]
+    |> maybe_put_action_registry(runtime)
+    |> maybe_put_guardrail_registry(runtime)
   end
 
   defp append_target_thread_id(runtime, root_run_id, :run) do
@@ -733,9 +785,174 @@ defmodule Squidie.Test do
           {:error, _reason} -> {:error, {:invalid_option, {:workflow, :invalid}}}
         end
 
+      workflow when is_map(workflow) ->
+        {:ok, workflow}
+
       _invalid ->
         {:error, {:invalid_option, {:workflow, :invalid}}}
     end
+  end
+
+  defp action_registry(opts) do
+    case Keyword.get(opts, :action_registry, %{}) do
+      registry when is_map(registry) -> validate_action_registry(registry)
+      registry when is_list(registry) -> normalize_keyword_action_registry(registry)
+      _invalid -> {:error, {:invalid_option, {:action_registry, :invalid}}}
+    end
+  end
+
+  defp normalize_keyword_action_registry(registry) do
+    if Keyword.keyword?(registry) and unique_registry_keys?(registry) do
+      registry
+      |> Map.new()
+      |> validate_action_registry()
+    else
+      {:error, {:invalid_option, {:action_registry, :invalid}}}
+    end
+  end
+
+  defp unique_registry_keys?(registry) do
+    keys = Keyword.keys(registry)
+    length(keys) == MapSet.size(MapSet.new(keys))
+  end
+
+  defp validate_action_registry(registry) do
+    if Enum.all?(Map.keys(registry), &valid_action_stub_key?/1) do
+      {:ok, registry}
+    else
+      {:error, {:invalid_option, {:action_registry, :invalid}}}
+    end
+  end
+
+  defp action_stubs(opts) do
+    case Keyword.get(opts, :action_stubs, %{}) do
+      stubs when is_map(stubs) -> validate_action_stubs(stubs)
+      _invalid -> {:error, {:invalid_option, {:action_stubs, :invalid}}}
+    end
+  end
+
+  defp validate_action_stubs(stubs) do
+    if Enum.all?(stubs, fn {key, results} ->
+         valid_action_stub_key?(key) and is_list(results) and results != []
+       end) do
+      {:ok, stubs}
+    else
+      {:error, {:invalid_option, {:action_stubs, :invalid}}}
+    end
+  end
+
+  defp valid_action_stub_key?(key) when is_atom(key) do
+    true
+  end
+
+  defp valid_action_stub_key?(key) when is_binary(key) do
+    String.trim(key) != ""
+  end
+
+  defp valid_action_stub_key?(_key) do
+    false
+  end
+
+  defp validate_action_stub_workflow(workflow, action_stubs)
+       when is_atom(workflow) and map_size(action_stubs) > 0 do
+    {:error, {:invalid_option, {:action_stubs, :requires_runtime_spec}}}
+  end
+
+  defp validate_action_stub_workflow(_workflow, _action_stubs) do
+    :ok
+  end
+
+  defp validate_action_stub_keys(action_registry, action_stubs) do
+    registry_keys = Map.keys(action_registry)
+
+    if Enum.any?(Map.keys(action_stubs), &equivalent_registry_key?(&1, registry_keys)) do
+      {:error, {:invalid_option, {:action_stubs, :duplicate_action_key}}}
+    else
+      :ok
+    end
+  end
+
+  defp equivalent_registry_key?(key, keys) do
+    Enum.any?(keys, &(to_string(&1) == to_string(key)))
+  end
+
+  defp guardrail_registry(opts) do
+    case Keyword.fetch(opts, :guardrail_registry) do
+      {:ok, registry} when is_map(registry) or is_list(registry) -> {:ok, registry}
+      {:ok, _invalid} -> {:error, {:invalid_option, {:guardrail_registry, :invalid}}}
+      :error -> {:ok, nil}
+    end
+  end
+
+  defp validate_test_workflow(workflow, action_registry, guardrail_registry)
+       when is_map(workflow) do
+    opts =
+      maybe_put_option(
+        [action_registry: action_registry],
+        :guardrail_registry,
+        guardrail_registry
+      )
+
+    Squidie.Workflow.validate_spec(workflow, opts)
+  end
+
+  defp validate_test_workflow(_workflow, _action_registry, _guardrail_registry) do
+    :ok
+  end
+
+  defp validation_action_registry(action_registry, action_stubs) do
+    Map.merge(action_registry, stub_registry(Map.keys(action_stubs), nil, nil))
+  end
+
+  defp maybe_put_action_registry(opts, %Runtime{} = runtime) do
+    registry =
+      Map.merge(
+        runtime.action_registry,
+        stub_registry(
+          runtime.action_stub_keys,
+          runtime.storage_server,
+          runtime.test_action_stub_after_consume
+        )
+      )
+
+    if map_size(registry) == 0 do
+      opts
+    else
+      Keyword.put(opts, :action_registry, registry)
+    end
+  end
+
+  defp maybe_put_guardrail_registry(opts, %Runtime{guardrail_registry: nil}) do
+    opts
+  end
+
+  defp maybe_put_guardrail_registry(opts, %Runtime{guardrail_registry: registry}) do
+    Keyword.put(opts, :guardrail_registry, registry)
+  end
+
+  defp stub_registry(action_keys, storage_server, after_consume) do
+    Map.new(action_keys, fn action_key ->
+      action_opts =
+        maybe_put_option(
+          maybe_put_option(
+            [action_key: action_key],
+            :storage_server,
+            storage_server
+          ),
+          :after_consume,
+          after_consume
+        )
+
+      {action_key, [module: StubAction, action_opts: action_opts]}
+    end)
+  end
+
+  defp maybe_put_option(opts, _key, nil) do
+    opts
+  end
+
+  defp maybe_put_option(opts, key, value) do
+    Keyword.put(opts, key, value)
   end
 
   defp max_steps(opts, default) do
