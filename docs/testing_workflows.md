@@ -144,13 +144,36 @@ including them in shared CI output. Events with the same timestamp use the
 timeline projection's stable tie ordering; treat that order as a deterministic
 view, not as an additional causal trace.
 
+## Checkpoint loss
+
+Delete every projection checkpoint in the isolated runtime to prove that a
+workflow can rebuild from its journal history:
+
+```elixir
+assert {:reached, before_loss} =
+         Squidie.Test.execute_until(runtime, run, fn snapshot ->
+           Map.has_key?(snapshot.context, :invoice)
+         end)
+
+assert :ok = Squidie.Test.delete_checkpoints(runtime)
+assert {:ok, rebuilt} = Squidie.Test.inspect(runtime, run)
+assert rebuilt == before_loss
+assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+```
+
+Deletion is whole-runtime and atomic for the isolated adapter. It removes only
+checkpoint hints; journal threads remain unchanged. The runtime owner must call
+the helper, and an active drain or control command makes it return
+`{:error, :runtime_busy}` so the test cannot delete checkpoints midway through
+one bounded operation.
+
 ## Current scope
 
 The test runtime covers isolated in-memory storage, normal workflow starts,
 bounded and predicate-based execution, blocked-state detection, virtual time,
-named manual controls, inspection, and failure diagnostics. Generic signals,
-deterministic faults, restarts, golden histories, and reusable invariant
-assertions will build on this same runtime contract.
+named manual controls, inspection, failure diagnostics, and checkpoint-loss
+replay. Generic signals, deterministic faults, restarts, golden histories, and
+reusable invariant assertions will build on this same runtime contract.
 
 Use the configured Ecto adapter for integration tests that need database
 transactions, migrations, or query behavior. The in-memory runtime is intended

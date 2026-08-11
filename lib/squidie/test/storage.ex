@@ -73,6 +73,13 @@ defmodule Squidie.Test.Storage do
   end
 
   @doc false
+  @spec delete_checkpoints(pid()) ::
+          :ok | {:error, :runtime_busy | :runtime_owner_required | :runtime_stopped}
+  def delete_checkpoints(server) when is_pid(server) do
+    safe_call(server, :delete_checkpoints)
+  end
+
+  @doc false
   @spec put_append_fault(pid(), String.t(), {:error, term()} | {:raise, Exception.t()}) ::
           :ok | {:error, :runtime_stopped}
   def put_append_fault(server, thread_prefix, action)
@@ -286,6 +293,20 @@ defmodule Squidie.Test.Storage do
   end
 
   def handle_call({:advance_time, _amount, _unit}, _from, state) do
+    {:reply, {:error, :runtime_owner_required}, state}
+  end
+
+  def handle_call(:delete_checkpoints, {owner, _tag}, %{owner: owner} = state) do
+    state = drop_dead_execution_leases(state)
+
+    if map_size(state.execution_leases) == 0 do
+      {:reply, :ok, %{state | checkpoints: %{}}}
+    else
+      {:reply, {:error, :runtime_busy}, state}
+    end
+  end
+
+  def handle_call(:delete_checkpoints, _from, state) do
     {:reply, {:error, :runtime_owner_required}, state}
   end
 

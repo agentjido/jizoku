@@ -46,6 +46,10 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert intermediate.context.invoice.id == "invoice-test-kit"
     refute Map.has_key?(intermediate.context, :notification)
 
+    assert :ok = Squidie.Test.delete_checkpoints(runtime)
+    assert {:ok, rebuilt} = Squidie.Test.inspect(runtime, run)
+    assert rebuilt == intermediate
+
     assert {:completed, snapshot} = Squidie.Test.drain(runtime, run)
     assert snapshot.context.account.id == "account-test-kit"
     assert snapshot.context.invoice.id == "invoice-test-kit"

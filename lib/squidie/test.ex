@@ -124,6 +124,19 @@ defmodule Squidie.Test do
   end
 
   @doc """
+  Deletes every projection checkpoint in the isolated runtime.
+
+  Journal threads remain unchanged. The next inspection or execution rebuilds
+  projections through the normal journal replay path. Only the runtime owner
+  may delete checkpoints, and deletion fails while execution is active.
+  """
+  @spec delete_checkpoints(Runtime.t()) ::
+          :ok | {:error, :runtime_busy | :runtime_owner_required | :runtime_stopped}
+  def delete_checkpoints(%Runtime{storage_server: storage_server}) do
+    Storage.delete_checkpoints(storage_server)
+  end
+
+  @doc """
   Starts the runtime's workflow through `Squidie.start/3`.
 
   Each runtime owns one root run. Create another runtime when a test needs an
