@@ -255,6 +255,29 @@ the helper, and an active drain or control command makes it return
 `{:error, :runtime_busy}` so the test cannot delete checkpoints midway through
 one bounded operation.
 
+## Runtime restart and stale claims
+
+Restart the isolated runtime process without losing its journal, checkpoints,
+root identity, or virtual clock:
+
+```elixir
+assert {:ok, restarted_runtime} = Squidie.Test.restart_runtime(runtime)
+assert restarted_runtime.id != runtime.id
+assert {:error, :runtime_stopped} = Squidie.Test.inspect(runtime, run)
+assert {:ok, rebuilt} = Squidie.Test.inspect(restarted_runtime, run)
+```
+
+The returned runtime has a fresh worker identity and storage process. Restart is
+owner-only and fails with `:runtime_busy` while a live drain, control command,
+or start reservation is active. Armed deterministic append faults remain armed.
+The old runtime handle is stopped after the replacement has initialized from
+one serialized state handoff.
+
+If a test kills a drain after an attempt is durably claimed, restart preserves
+that claim. Before its lease expires, the new runtime remains blocked. Advance
+the virtual clock to `lease_until` and drain again to exercise production stale
+claim takeover without sleeping; the original claim token remains fenced.
+
 ## Append conflicts
 
 Inject one expected-revision conflict into the runtime's exact root-run or
@@ -281,9 +304,10 @@ active and rejects a second fault until the armed conflict has been consumed.
 The test runtime covers isolated in-memory storage, manual and cron workflow starts,
 bounded and predicate-based execution, blocked-state detection, virtual time,
 named manual controls, inspection, failure diagnostics, and checkpoint-loss
-replay. It also supports deterministic one-shot append conflicts, invariant
-checks, and versioned golden histories. Generic signals, broader deterministic
-faults, and restarts will build on this same runtime contract.
+replay. It also supports durable runtime restart, stale-claim recovery,
+deterministic one-shot append conflicts, invariant checks, and versioned golden
+histories. Generic signals and broader deterministic faults will build on this
+same runtime contract.
 
 Use the configured Ecto adapter for integration tests that need database
 transactions, migrations, or query behavior. The in-memory runtime is intended

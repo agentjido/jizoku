@@ -1308,6 +1308,132 @@ defmodule Squidie.TestTest do
     assert after_delete.threads == before_state.threads
   end
 
+  test "restarts durable state and recovers an expired stale claim" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: BarrierWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    :persistent_term.put({BarrierStep, run.run_id}, self())
+    on_exit(fn -> :persistent_term.erase({BarrierStep, run.run_id}) end)
+
+    crashed_drain = Task.async(fn -> Test.drain(runtime, run) end)
+    assert_receive {:barrier_entered, crashed_pid}
+    assert crashed_pid == crashed_drain.pid
+    assert nil == Task.shutdown(crashed_drain, :brutal_kill)
+
+    assert {:ok, claimed} = Test.inspect(runtime, run)
+
+    assert [%{step: "barrier", lease_until: lease_until}] =
+             Enum.filter(claimed.attempts, &(&1.status == :claimed))
+
+    assert lease_until == DateTime.add(@now, 300, :second)
+
+    before_restart = runtime_persistence_state(runtime)
+    assert map_size(before_restart.checkpoints) > 0
+    assert {:ok, restarted} = Test.restart_runtime(runtime)
+    on_exit(fn -> Test.stop_runtime(restarted) end)
+
+    assert restarted.id != runtime.id
+    assert restarted.storage_server != runtime.storage_server
+    assert {:error, :runtime_stopped} = Test.inspect(runtime, run)
+    assert runtime_persistence_state(restarted) == before_restart
+    assert {:ok, ^claimed} = Test.inspect(restarted, run)
+
+    assert {:ok, before_expiry} = Test.advance_time(restarted, 299, :second)
+    assert before_expiry == DateTime.add(@now, 299, :second)
+    before_blocked_drain = runtime_persistence_state(restarted)
+    assert {:blocked, before_expiry_snapshot} = Test.drain(restarted, run)
+    assert runtime_persistence_state(restarted) == before_blocked_drain
+
+    assert [%{lease_until: ^lease_until} = before_expiry_attempt] =
+             Enum.filter(before_expiry_snapshot.attempts, &(&1.status == :claimed))
+
+    assert before_expiry_attempt ==
+             Enum.find(claimed.attempts, &(&1.status == :claimed))
+
+    refute_receive {:barrier_entered, _pid}
+
+    assert {:ok, ^lease_until} = Test.advance_time(restarted, 1, :second)
+    recovered_drain = Task.async(fn -> Test.drain(restarted, run) end)
+    assert_receive {:barrier_entered, recovery_pid}
+    send(recovery_pid, :release_barrier)
+
+    assert {:completed, completed} = Task.await(recovered_drain)
+    assert completed.context.released == true
+
+    dispatch_entries = runtime_dispatch_entries(restarted)
+    assert Enum.count(dispatch_entries, &(&1.type == :attempt_claimed)) == 2
+    assert Enum.count(dispatch_entries, &(&1.type == :attempt_completed)) == 1
+  end
+
+  test "fences restart by owner and live execution" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: BarrierWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    :persistent_term.put({BarrierStep, run.run_id}, self())
+    on_exit(fn -> :persistent_term.erase({BarrierStep, run.run_id}) end)
+
+    before_unauthorized = runtime_full_state(runtime)
+    task = Task.async(fn -> Test.restart_runtime(runtime) end)
+    assert {:error, :runtime_owner_required} = Task.await(task)
+    assert runtime_full_state(runtime) == before_unauthorized
+
+    drain_task = Task.async(fn -> Test.drain(runtime, run) end)
+    assert_receive {:barrier_entered, executor_pid}
+    before_busy = runtime_full_state(runtime)
+    assert {:error, :runtime_busy} = Test.restart_runtime(runtime)
+    assert runtime_full_state(runtime) == before_busy
+
+    send(executor_pid, :release_barrier)
+    assert {:completed, _snapshot} = Task.await(drain_task)
+  end
+
+  test "fences restart during start reservation and preserves armed append faults" do
+    assert {:ok, reserved_runtime} =
+             Test.start_runtime(workflow: CompleteWorkflow, now: @now)
+
+    on_exit(fn -> Test.stop_runtime(reserved_runtime) end)
+
+    assert :ok = Squidie.Test.Storage.reserve_start(reserved_runtime.storage_server)
+    before_reserved_restart = runtime_full_state(reserved_runtime)
+    assert {:error, :runtime_busy} = Test.restart_runtime(reserved_runtime)
+    assert runtime_full_state(reserved_runtime) == before_reserved_restart
+    assert :ok = Squidie.Test.Storage.release_start(reserved_runtime.storage_server)
+    assert {:ok, restarted_reserved_runtime} = Test.restart_runtime(reserved_runtime)
+    on_exit(fn -> Test.stop_runtime(restarted_reserved_runtime) end)
+
+    assert {:ok, conflict_runtime} =
+             Test.start_runtime(workflow: CompleteWorkflow, now: @now)
+
+    on_exit(fn -> Test.stop_runtime(conflict_runtime) end)
+    assert {:ok, run} = Test.start(conflict_runtime, %{value: 1})
+    assert :ok = Test.inject_append_conflict(conflict_runtime, :dispatch)
+    armed_conflict = runtime_fault_state(conflict_runtime)
+    assert {:ok, restarted_conflict_runtime} = Test.restart_runtime(conflict_runtime)
+    on_exit(fn -> Test.stop_runtime(restarted_conflict_runtime) end)
+    assert runtime_fault_state(restarted_conflict_runtime) == armed_conflict
+    assert {:error, :conflict} = Test.drain(restarted_conflict_runtime, run)
+    assert {:completed, _snapshot} = Test.drain(restarted_conflict_runtime, run)
+
+    assert {:ok, fault_runtime} =
+             Test.start_runtime(workflow: CompleteWorkflow, now: @now)
+
+    on_exit(fn -> Test.stop_runtime(fault_runtime) end)
+
+    assert :ok =
+             Squidie.Test.Storage.put_append_fault(
+               fault_runtime.storage_server,
+               "jido:thread:run:",
+               {:error, :persistent_fault}
+             )
+
+    armed_fault = :sys.get_state(fault_runtime.storage_server).append_fault
+    assert {:ok, restarted_fault_runtime} = Test.restart_runtime(fault_runtime)
+    on_exit(fn -> Test.stop_runtime(restarted_fault_runtime) end)
+    assert :sys.get_state(restarted_fault_runtime.storage_server).append_fault == armed_fault
+  end
+
   test "stops abandoned runtime storage when its owner exits" do
     parent = self()
 
@@ -1383,6 +1509,16 @@ defmodule Squidie.TestTest do
       Squidie.Runtime.Journal.Storage.scope(runtime.storage, runtime.partition)
 
     {:ok, entries} = Squidie.Runtime.Journal.load_entries(storage, {:run, run_id})
+    entries
+  end
+
+  defp runtime_dispatch_entries(runtime) do
+    {:ok, storage} =
+      Squidie.Runtime.Journal.Storage.scope(runtime.storage, runtime.partition)
+
+    {:ok, entries} =
+      Squidie.Runtime.Journal.load_entries(storage, {:dispatch, runtime.queue})
+
     entries
   end
 end

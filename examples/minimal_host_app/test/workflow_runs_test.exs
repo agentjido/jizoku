@@ -46,17 +46,22 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert intermediate.context.invoice.id == "invoice-test-kit"
     refute Map.has_key?(intermediate.context, :notification)
 
-    assert :ok = Squidie.Test.delete_checkpoints(runtime)
-    assert {:ok, rebuilt} = Squidie.Test.inspect(runtime, run)
+    assert {:ok, restarted_runtime} = Squidie.Test.restart_runtime(runtime)
+    on_exit(fn -> Squidie.Test.stop_runtime(restarted_runtime) end)
+    assert restarted_runtime.id != runtime.id
+    assert {:error, :runtime_stopped} = Squidie.Test.inspect(runtime, run)
+
+    assert :ok = Squidie.Test.delete_checkpoints(restarted_runtime)
+    assert {:ok, rebuilt} = Squidie.Test.inspect(restarted_runtime, run)
     assert rebuilt == intermediate
 
-    assert :ok = Squidie.Test.inject_append_conflict(runtime, :dispatch)
-    assert {:error, :conflict} = Squidie.Test.drain(runtime, run)
-    assert {:completed, snapshot} = Squidie.Test.drain(runtime, run)
+    assert :ok = Squidie.Test.inject_append_conflict(restarted_runtime, :dispatch)
+    assert {:error, :conflict} = Squidie.Test.drain(restarted_runtime, run)
+    assert {:completed, snapshot} = Squidie.Test.drain(restarted_runtime, run)
     assert snapshot.context.account.id == "account-test-kit"
     assert snapshot.context.invoice.id == "invoice-test-kit"
     assert snapshot.context.notification.channel == "email"
-    assert {:ok, ^snapshot} = Squidie.Test.check_invariants(runtime, run)
+    assert {:ok, ^snapshot} = Squidie.Test.check_invariants(restarted_runtime, run)
 
     assert {:ok,
             %{
@@ -67,7 +72,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
               status: :completed,
               terminal_status: :completed,
               events: golden_events
-            } = golden} = Squidie.Test.golden_history(runtime, run)
+            } = golden} = Squidie.Test.golden_history(restarted_runtime, run)
 
     assert Enum.map(golden_events, &{&1.type, Map.get(&1, :step), Map.get(&1, :runnable)}) == [
              {:command_received, nil, nil},

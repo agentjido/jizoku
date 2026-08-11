@@ -94,6 +94,14 @@ defmodule Squidie.Test.Storage do
   end
 
   @doc false
+  @spec restart(pid()) ::
+          {:ok, pid()}
+          | {:error, :runtime_busy | :runtime_owner_required | :runtime_stopped | term()}
+  def restart(server) when is_pid(server) do
+    safe_call(server, :restart)
+  end
+
+  @doc false
   @spec put_append_fault(pid(), String.t(), {:error, term()} | {:raise, Exception.t()}) ::
           :ok | {:error, :runtime_stopped}
   def put_append_fault(server, thread_prefix, action)
@@ -148,23 +156,16 @@ defmodule Squidie.Test.Storage do
 
   @impl GenServer
   def init({owner, %DateTime{} = now}) do
-    owner_ref = Process.monitor(owner)
+    {:ok, initial_state(owner, now)}
+  end
 
-    {:ok,
-     %{
-       owner: owner,
-       owner_ref: owner_ref,
-       now: now,
-       execution_leases: %{},
-       execution_monitors: %{},
-       checkpoints: %{},
-       threads: %{},
-       root_run_id: nil,
-       start_reservation: nil,
-       next_append_conflict: nil,
-       append_conflict_counts: %{},
-       append_fault: nil
-     }}
+  def init({:restore, owner, persisted_state}) when is_pid(owner) and is_map(persisted_state) do
+    state =
+      owner
+      |> initial_state(Map.fetch!(persisted_state, :now))
+      |> Map.merge(persisted_state)
+
+    {:ok, state}
   end
 
   @impl GenServer
@@ -362,6 +363,26 @@ defmodule Squidie.Test.Storage do
     {:reply, {:error, :runtime_owner_required}, state}
   end
 
+  def handle_call(:restart, {owner, _tag}, %{owner: owner} = state) do
+    state = drop_dead_execution_leases(state)
+
+    if restart_busy?(state) do
+      {:reply, {:error, :runtime_busy}, state}
+    else
+      case GenServer.start(__MODULE__, {:restore, owner, restart_state(state)}) do
+        {:ok, restarted_server} ->
+          {:stop, :normal, {:ok, restarted_server}, state}
+
+        {:error, _reason} = error ->
+          {:reply, error, state}
+      end
+    end
+  end
+
+  def handle_call(:restart, _from, state) do
+    {:reply, {:error, :runtime_owner_required}, state}
+  end
+
   def handle_call({:put_append_fault, thread_prefix, action}, _from, state) do
     {:reply, :ok, %{state | append_fault: {thread_prefix, action}}}
   end
@@ -405,6 +426,40 @@ defmodule Squidie.Test.Storage do
 
   defp append(%Thread{} = thread, _thread_id, entries, _opts) do
     Thread.append(thread, entries)
+  end
+
+  defp initial_state(owner, now) do
+    %{
+      owner: owner,
+      owner_ref: Process.monitor(owner),
+      now: now,
+      execution_leases: %{},
+      execution_monitors: %{},
+      checkpoints: %{},
+      threads: %{},
+      root_run_id: nil,
+      start_reservation: nil,
+      next_append_conflict: nil,
+      append_conflict_counts: %{},
+      append_fault: nil
+    }
+  end
+
+  defp restart_busy?(state) do
+    map_size(state.execution_leases) > 0 or
+      not is_nil(state.start_reservation)
+  end
+
+  defp restart_state(state) do
+    Map.take(state, [
+      :append_fault,
+      :append_conflict_counts,
+      :checkpoints,
+      :next_append_conflict,
+      :now,
+      :root_run_id,
+      :threads
+    ])
   end
 
   defp append_thread(state, thread_id, entries, opts) do
