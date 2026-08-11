@@ -144,6 +144,31 @@ including them in shared CI output. Events with the same timestamp use the
 timeline projection's stable tie ordering; treat that order as a deterministic
 view, not as an additional causal trace.
 
+## Invariant checks
+
+Check one durable inspection snapshot for universal runtime invariants:
+
+```elixir
+assert {:ok, snapshot} = Squidie.Test.check_invariants(runtime, run)
+```
+
+Healthy running, retry, claim, manual, pending-dispatch, and pending-result
+states are accepted. Violations cover projection anomalies, incoherent terminal
+state, malformed or duplicate runnable keys, unknown runnable lineage, and
+keys that appear in incompatible pending/applied views.
+
+Invariant failures return `{:error, {:invariant_violations, report}}`. The
+versioned report contains redaction-safe structural metadata such as run and
+runnable identifiers, partition, queue, per-thread revisions, violation codes,
+counts, projection reason/source atoms, collection names, and terminal-state
+classifications. It does not include workflow input, context, action results,
+or raw errors.
+
+The helper is read-only and evaluates one returned public inspection snapshot.
+Workflow and dispatch journals are rebuilt sequentially, so the report records
+their individual revisions rather than claiming a globally atomic cross-thread
+read.
+
 ## Checkpoint loss
 
 Delete every projection checkpoint in the isolated runtime to prove that a
@@ -194,8 +219,8 @@ The test runtime covers isolated in-memory storage, normal workflow starts,
 bounded and predicate-based execution, blocked-state detection, virtual time,
 named manual controls, inspection, failure diagnostics, and checkpoint-loss
 replay. It also supports deterministic one-shot append conflicts. Generic
-signals, broader deterministic faults, restarts, golden histories, and reusable
-invariant assertions will build on this same runtime contract.
+signals, broader deterministic faults, restarts, and golden histories will
+build on this same runtime contract.
 
 Use the configured Ecto adapter for integration tests that need database
 transactions, migrations, or query behavior. The in-memory runtime is intended

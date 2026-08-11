@@ -19,6 +19,7 @@ defmodule Squidie.Test do
   alias Squidie.ReadModel.Timeline
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Options
+  alias Squidie.Test.Invariants
   alias Squidie.Test.Runtime
   alias Squidie.Test.Storage
   alias Squidie.Workflow.Definition
@@ -37,6 +38,26 @@ defmodule Squidie.Test do
   @type execute_until_result :: {:reached, Snapshot.t()} | execution_result()
   @type snapshot_predicate :: (Snapshot.t() -> boolean())
   @type append_target :: :run | :dispatch
+  @type invariant_violation_code ::
+          :duplicate_runnable_key
+          | :malformed_runnable_key
+          | :pending_and_applied
+          | :pending_in_multiple_views
+          | :projection_anomaly
+          | :terminal_state_incoherent
+          | :unknown_runnable
+  @type invariant_violation :: %{
+          required(:code) => invariant_violation_code(),
+          required(:details) => map()
+        }
+  @type invariant_report :: %{
+          required(:version) => pos_integer(),
+          required(:run_id) => String.t(),
+          required(:partition) => String.t() | nil,
+          required(:queue) => String.t(),
+          required(:thread_revisions) => %{run: non_neg_integer(), dispatch: non_neg_integer()},
+          required(:violations) => [invariant_violation()]
+        }
   @type time_unit :: :second | :millisecond | :microsecond
 
   @doc """
@@ -222,6 +243,25 @@ defmodule Squidie.Test do
   def explain(%Runtime{} = runtime, run) do
     with {:ok, opts} <- common_runtime_options(runtime) do
       Squidie.explain_run(run_id(run), opts)
+    end
+  end
+
+  @doc """
+  Checks universal workflow invariants against one durable inspection snapshot.
+
+  A successful check returns the inspected snapshot. Failures contain
+  redaction-safe structural metadata such as stable identifiers, counts,
+  classifications, and violation codes; workflow inputs, outputs, context, and
+  raw errors are excluded.
+  """
+  @spec check_invariants(Runtime.t(), Ecto.UUID.t() | Snapshot.t()) ::
+          {:ok, Snapshot.t()}
+          | {:error, {:invariant_violations, invariant_report()}}
+          | {:error, term()}
+  def check_invariants(%Runtime{} = runtime, run) do
+    case inspect(runtime, run) do
+      {:ok, snapshot} -> check_snapshot_invariants(snapshot)
+      {:error, _reason} = error -> error
     end
   end
 
@@ -491,6 +531,13 @@ defmodule Squidie.Test do
   defp common_runtime_options(%Runtime{} = runtime) do
     with {:ok, now} <- now(runtime) do
       {:ok, runtime_options(runtime, now)}
+    end
+  end
+
+  defp check_snapshot_invariants(%Snapshot{} = snapshot) do
+    case Invariants.check(snapshot) do
+      :ok -> {:ok, snapshot}
+      {:error, {:invariant_violations, _report}} = error -> error
     end
   end
 

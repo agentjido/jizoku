@@ -56,6 +56,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert snapshot.context.account.id == "account-test-kit"
     assert snapshot.context.invoice.id == "invoice-test-kit"
     assert snapshot.context.notification.channel == "email"
+    assert {:ok, ^snapshot} = Squidie.Test.check_invariants(runtime, run)
   end
 
   test "public test runtime advances a host retry without sleeping" do
