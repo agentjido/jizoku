@@ -152,6 +152,7 @@ defmodule Squidie.Jido.DirectivesTest do
       assert {:error,
               %{
                 code: "invalid_jido_action_extras",
+                directive_types: [],
                 message: "Jido action extras must be a list",
                 retryable?: false
               }} = Directives.normalize(%{secret: "extras-secret"})

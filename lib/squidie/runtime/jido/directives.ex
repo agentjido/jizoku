@@ -33,6 +33,7 @@ defmodule Squidie.Runtime.Jido.Directives do
     {:error,
      %{
        code: "invalid_jido_action_extras",
+       directive_types: [],
        message: "Jido action extras must be a list",
        retryable?: false
      }}
