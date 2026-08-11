@@ -5,7 +5,12 @@ defmodule Squidie.Test.Assertions do
   alias Squidie.ReadModel.Inspection.Snapshot
 
   @doc false
-  @spec raise_status_failure(atom(), term(), Snapshot.t() | nil, map() | nil) :: no_return()
+  @spec raise_status_failure(
+          atom(),
+          term(),
+          Snapshot.t() | nil,
+          map() | :unavailable | nil
+        ) :: no_return()
   def raise_status_failure(expected_status, result, snapshot, golden) do
     raise ExUnit.AssertionError,
       message: failure_message(expected_status, result, snapshot, golden)
