@@ -63,8 +63,26 @@ defmodule Squidie.Runtime.ScheduleMetadata do
           | {:error, {:invalid_schedule_signal_id, term()}}
           | {:error, {:invalid_schedule_intended_window, term()}}
           | {:error, {:missing_schedule_idempotency_key, atom()}}
-  def cron_context(workflow, %{name: trigger_name, type: :cron, config: config}, payload)
-      when is_atom(workflow) and is_map(config) and is_map(payload) do
+          | {:error, {:invalid_schedule_trigger_type, atom() | :invalid}}
+  def cron_context(workflow, trigger, payload) do
+    cron_context(workflow, trigger, payload, DateTime.utc_now(:second))
+  end
+
+  @doc """
+  Builds cron context using an explicit runtime receive time.
+
+  Runtime entrypoints should use this arity so the schedule receipt and journal
+  command share one resolved operation timestamp.
+  """
+  @spec cron_context(module(), Squidie.Workflow.Definition.trigger(), map(), DateTime.t()) ::
+          {:ok, %{schedule: t()}}
+          | {:error, {:invalid_schedule_signal_id, term()}}
+          | {:error, {:invalid_schedule_intended_window, term()}}
+          | {:error, {:missing_schedule_idempotency_key, atom()}}
+          | {:error, {:invalid_schedule_received_at, :expected_datetime}}
+          | {:error, {:invalid_schedule_trigger_type, atom() | :invalid}}
+  def cron_context(workflow, %{name: trigger_name, type: :cron, config: config}, payload, now)
+      when is_atom(workflow) and is_map(config) and is_map(payload) and is_struct(now, DateTime) do
     workflow_name = Squidie.Workflow.Definition.serialize_workflow(workflow)
     raw_trigger_name = trigger_name
     trigger_name = Squidie.Workflow.Definition.serialize_trigger(trigger_name)
@@ -83,13 +101,26 @@ defmodule Squidie.Runtime.ScheduleMetadata do
              # every compiled cron trigger before the runtime can load it.
              cron_expression: Map.fetch!(config, :expression),
              timezone: Map.fetch!(config, :timezone),
-             received_at: received_at()
+             received_at: DateTime.to_iso8601(now)
            }
            |> maybe_put_signal_id(signal_id)
            |> maybe_put_idempotency(idempotency, idempotency_key)
            |> maybe_put(:intended_window, intended_window)
        }}
     end
+  end
+
+  def cron_context(_workflow, %{type: type}, _payload, %DateTime{})
+      when is_atom(type) and type != :cron do
+    {:error, {:invalid_schedule_trigger_type, type}}
+  end
+
+  def cron_context(_workflow, _trigger, _payload, %DateTime{}) do
+    {:error, {:invalid_schedule_trigger_type, :invalid}}
+  end
+
+  def cron_context(_workflow, _trigger, _payload, _now) do
+    {:error, {:invalid_schedule_received_at, :expected_datetime}}
   end
 
   defp idempotency_key(nil, _signal_id, _trigger_name), do: {:ok, :none}
@@ -108,10 +139,6 @@ defmodule Squidie.Runtime.ScheduleMetadata do
       {:error, {:invalid_schedule_identity, :missing_signal_id}} -> {:ok, :none}
       {:error, _reason} = error -> error
     end
-  end
-
-  defp received_at do
-    DateTime.to_iso8601(DateTime.utc_now(:second))
   end
 
   defp maybe_put(map, _key, nil), do: map

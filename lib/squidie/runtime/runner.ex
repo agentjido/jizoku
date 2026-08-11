@@ -120,13 +120,15 @@ defmodule Squidie.Runtime.Runner do
   end
 
   defp start_new_cron_trigger(workflow_name, trigger_name, signal_payload, overrides) do
-    with {:ok, workflow, definition} <-
+    with {:ok, now} <- Options.now_from_opts(overrides),
+         overrides = Keyword.put(overrides, :now, now),
+         {:ok, workflow, definition} <-
            Definition.load_serialized(workflow_name),
          trigger when is_atom(trigger) <-
            Definition.deserialize_trigger(definition, trigger_name),
          {:ok, trigger_definition} <- Definition.trigger(definition, trigger),
          {:ok, schedule_context} <-
-           ScheduleMetadata.cron_context(workflow, trigger_definition, signal_payload),
+           ScheduleMetadata.cron_context(workflow, trigger_definition, signal_payload, now),
          {:ok, run_result} <- start_cron_run(workflow, trigger, schedule_context, overrides) do
       cron_start_result(run_result)
     else

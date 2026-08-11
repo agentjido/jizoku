@@ -2118,6 +2118,7 @@ defmodule SquidieTest do
       assert started.context.schedule.signal_id == "journal_signal_123"
       assert started.context.schedule.trigger_name == "scheduled_capture"
       assert started.context.schedule.intended_window.start_at == "2026-05-15T09:00:00Z"
+      assert started.context.schedule.received_at == DateTime.to_iso8601(started_at)
 
       assert [
                %{
@@ -2222,6 +2223,7 @@ defmodule SquidieTest do
 
       assert started.trigger == "scheduled_capture"
       assert started.queue == queue
+      assert started.context.schedule.received_at == DateTime.to_iso8601(started_at)
 
       assert [
                %{

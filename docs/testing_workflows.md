@@ -95,6 +95,37 @@ and visibility decisions stay coherent while helper tasks drain or inspect the
 run. Advancing while a drain is executing returns `{:error, :runtime_busy}`;
 advance again after the helper finishes or reaches a blocked state.
 
+## Cron activation
+
+Start a declared cron trigger through the same durable command-signal path used
+by a host scheduler:
+
+```elixir
+assert {:ok, run} =
+         Squidie.Test.start_cron(
+           runtime,
+           :hourly_sync,
+           %{
+             signal_id: "hourly-sync-2026-08-10T12",
+             account_id: "account-123"
+           },
+           metadata: %{source: "workflow-test"}
+         )
+```
+
+The runtime's frozen clock becomes both the command occurrence time and the
+schedule `received_at` value. Storage, queue, and partition also come from the
+runtime and cannot be overridden. Callers may provide only signal `:metadata`
+and `:idempotency_key`; schedule identity can be supplied through `signal_id`
+or a complete `intended_window` in the cron input.
+
+`start_cron/4` is owner-only and uses the runtime's single-root reservation, so
+a failed validation does not consume the root while a successful manual or cron
+start prevents a second unrelated root. Exact redelivery of an idempotent cron
+signal reaches the production duplicate path and returns the existing run;
+reusing that identity with different input returns a conflict without writing.
+Use `advance_time/3` and `drain/3` for delayed work after activation.
+
 ## Manual controls
 
 Use the named control helpers after a workflow reaches durable manual state:
@@ -247,7 +278,7 @@ active and rejects a second fault until the armed conflict has been consumed.
 
 ## Current scope
 
-The test runtime covers isolated in-memory storage, normal workflow starts,
+The test runtime covers isolated in-memory storage, manual and cron workflow starts,
 bounded and predicate-based execution, blocked-state detection, virtual time,
 named manual controls, inspection, failure diagnostics, and checkpoint-loss
 replay. It also supports deterministic one-shot append conflicts, invariant

@@ -265,6 +265,31 @@ defmodule Squidie.TestTest do
     end
   end
 
+  defmodule CronWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+      end
+
+      trigger :scheduled do
+        cron "@hourly", timezone: "Etc/UTC", idempotency: :return_existing_run
+
+        payload do
+          field :signal_id, :string
+          field :intended_window, :map, required: false
+          field :value, :integer
+        end
+      end
+
+      step :wait, :wait, duration: 60_000
+      step :record_value, CompleteStep
+      transition :wait, on: :ok, to: :record_value
+      transition :record_value, on: :ok, to: :complete
+    end
+  end
+
   @now ~U[2026-08-09 12:00:00Z]
 
   test "isolates runtime storage and cleans it up with the runtime process" do
@@ -289,6 +314,101 @@ defmodule Squidie.TestTest do
     assert {:completed, snapshot} = Test.drain(runtime, run)
     assert snapshot.run_id == run.run_id
     assert snapshot.context == %{value: 42}
+  end
+
+  test "starts a cron trigger at frozen time and advances through its wait" do
+    assert {:ok, runtime} =
+             Test.start_runtime(
+               workflow: CronWorkflow,
+               queue: "cron-priority",
+               partition: "tenant_acme",
+               now: @now
+             )
+
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    input = %{
+      signal_id: "cron-window-1",
+      intended_window: %{
+        start_at: "2026-08-09T12:00:00Z",
+        end_at: "2026-08-09T13:00:00Z"
+      },
+      value: 42
+    }
+
+    assert {:ok, run} =
+             Test.start_cron(runtime, :scheduled, input, metadata: %{source: "frozen-test"})
+
+    assert run.trigger == "scheduled"
+    assert run.queue == "cron-priority"
+    assert run.partition == "tenant_acme"
+    assert run.started_at == @now
+    assert run.context.schedule.received_at == DateTime.to_iso8601(@now)
+    assert run.context.schedule.signal_id == "cron-window-1"
+    assert run.context.schedule.intended_window.start_at == "2026-08-09T12:00:00Z"
+
+    assert [
+             %{
+               signal_type: "start_cron",
+               idempotency_key: "cron-window-1",
+               metadata: %{source: "frozen-test"},
+               occurred_at: @now
+             }
+           ] = run.command_history
+
+    assert {:blocked, blocked} = Test.drain(runtime, run)
+    assert [%{step: "record_value", visible_at: visible_at}] = blocked.scheduled_attempts
+    assert visible_at == DateTime.add(@now, 60, :second)
+
+    assert {:ok, ^visible_at} = Test.advance_time(runtime, 60, :second)
+    assert {:completed, completed} = Test.drain(runtime, run)
+    assert completed.context.value == 42
+  end
+
+  test "rejects invalid cron starts without reserving or writing the root" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: CronWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    before_state = runtime_full_state(runtime)
+
+    task =
+      Task.async(fn ->
+        Test.start_cron(runtime, :scheduled, %{signal_id: "foreign", value: 1})
+      end)
+
+    assert {:error, :runtime_owner_required} = Task.await(task)
+    assert runtime_full_state(runtime) == before_state
+
+    assert {:error, {:invalid_schedule_trigger_type, :manual}} =
+             Test.start_cron(runtime, :manual, %{value: 1})
+
+    assert {:error, {:invalid_signal, {:metadata, :expected_map}}} =
+             Test.start_cron(runtime, :scheduled, %{signal_id: "invalid", value: 1},
+               metadata: :invalid
+             )
+
+    assert {:error, {:invalid_option, {:opts, :invalid}}} =
+             Test.start_cron(runtime, :scheduled, %{}, [:bad])
+
+    assert runtime_full_state(runtime) == before_state
+
+    input = %{signal_id: "valid", value: 1}
+    assert {:ok, run} = Test.start_cron(runtime, :scheduled, input)
+    started_state = runtime_full_state(runtime)
+
+    assert {:ok, duplicate} = Test.start_cron(runtime, :scheduled, input)
+    assert duplicate.run_id == run.run_id
+    assert runtime_full_state(runtime) == started_state
+
+    assert {:error, :conflict} =
+             Test.start_cron(runtime, :scheduled, %{signal_id: "valid", value: 2})
+
+    assert runtime_full_state(runtime) == started_state
+
+    assert {:error, :runtime_already_started} =
+             Test.start_cron(runtime, :scheduled, %{signal_id: "second", value: 2})
+
+    assert runtime_full_state(runtime) == started_state
   end
 
   test "executes until a durable snapshot matches and resumes from there" do
@@ -1244,6 +1364,12 @@ defmodule Squidie.TestTest do
     runtime.storage_server
     |> :sys.get_state()
     |> Map.take([:checkpoints, :threads])
+  end
+
+  defp runtime_full_state(runtime) do
+    runtime.storage_server
+    |> :sys.get_state()
+    |> Map.take([:checkpoints, :root_run_id, :start_reservation, :threads])
   end
 
   defp runtime_fault_state(runtime) do

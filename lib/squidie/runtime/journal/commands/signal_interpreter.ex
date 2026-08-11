@@ -194,7 +194,12 @@ defmodule Squidie.Runtime.Journal.Commands.SignalInterpreter do
     with {:ok, _validated_opts} <- start_options(signal, workflow, trigger, opts),
          {:ok, trigger_definition} <- Definition.trigger(definition, trigger),
          {:ok, schedule_context} <-
-           ScheduleMetadata.cron_context(workflow, trigger_definition, input),
+           ScheduleMetadata.cron_context(
+             workflow,
+             trigger_definition,
+             cron_schedule_payload(signal, input),
+             signal.occurred_at
+           ),
          {:ok, start_opts} <-
            start_options(
              signal,
@@ -284,6 +289,17 @@ defmodule Squidie.Runtime.Journal.Commands.SignalInterpreter do
 
   defp signal_trigger_name(trigger) when is_atom(trigger),
     do: Definition.serialize_trigger(trigger)
+
+  defp cron_schedule_payload(%Signal{idempotency_key: nil}, input) do
+    input
+  end
+
+  defp cron_schedule_payload(%Signal{idempotency_key: idempotency_key}, input)
+       when is_binary(idempotency_key) do
+    input
+    |> Map.delete("signal_id")
+    |> Map.put(:signal_id, idempotency_key)
+  end
 
   defp schedule_idempotency_key(context) when is_map(context) do
     context

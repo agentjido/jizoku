@@ -129,6 +129,34 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            }
   end
 
+  test "public test runtime starts a host cron trigger at frozen time" do
+    now = ~U[2026-08-10 12:00:00Z]
+
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: DailyDigest,
+               now: now
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} =
+             Squidie.Test.start_cron(
+               runtime,
+               :daily_digest,
+               %{channel: "ops", digest_date: "2026-08-10"},
+               idempotency_key: "daily-digest-test-kit"
+             )
+
+    assert run.started_at == now
+    assert run.context.schedule.received_at == DateTime.to_iso8601(now)
+    assert run.context.schedule.signal_id == "daily-digest-test-kit"
+
+    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert completed.context.digest_delivery.channel == "ops"
+    assert completed.context.digest_delivery.digest_date == "2026-08-10"
+  end
+
   test "public test runtime approves a host workflow without a worker" do
     now = ~U[2026-08-10 12:00:00Z]
 
