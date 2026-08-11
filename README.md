@@ -868,7 +868,16 @@ See the [Actor Visibility Guide](docs/actor_visibility.md) for comprehensive doc
 
 ## Optional Dashboard
 
-[SquidSonar](https://github.com/dark-trench/squid_sonar) is the optional read-only Phoenix LiveView dashboard for Squidie. Mount it inside a Phoenix host application to inspect recent runs, filter by status, search runtime metadata, and view run detail pages with diagnosis, history counts, last error information, and workflow graph visualization.
+[SquidSonar](https://github.com/dark-trench/squid_sonar) is the optional
+embeddable Phoenix LiveView operator dashboard for Squidie. Mount it inside a
+Phoenix host application to inspect recent runs, filter by status, search
+runtime metadata, and view run detail pages with diagnosis, history counts,
+last error information, and workflow graph visualization. It also exposes
+eligible operator actions including cancel, resume, approve, reject, replay,
+and starting runs from host-provided workflow modules or runtime specs.
+Mutation controls require Squidie's `:operator` visibility policy, an eligible
+run action, and authentication and authorization supplied by the host
+application; the `:auditor` and `:external` policies remain read-only.
 
 ## Contributing
 
