@@ -7,6 +7,7 @@ defmodule Squidie.Test.Storage do
   @behaviour Jido.Storage
 
   alias Jido.Thread
+  alias Squidie.Runtime.Journal.Storage.Metadata
 
   @type option :: {:server, pid()}
 
@@ -102,19 +103,24 @@ defmodule Squidie.Test.Storage do
 
   @impl Jido.Storage
   def get_checkpoint(key, opts) do
-    call(opts, {:get_checkpoint, key})
+    with :ok <- validate_durable(key) do
+      call(opts, {:get_checkpoint, key})
+    end
   end
 
   @impl Jido.Storage
   def put_checkpoint(key, data, opts) do
-    with :ok <- validate_durable(data) do
+    with :ok <- validate_durable(key),
+         :ok <- validate_durable(data) do
       call(opts, {:put_checkpoint, key, data})
     end
   end
 
   @impl Jido.Storage
   def delete_checkpoint(key, opts) do
-    call(opts, {:delete_checkpoint, key})
+    with :ok <- validate_durable(key) do
+      call(opts, {:delete_checkpoint, key})
+    end
   end
 
   @impl Jido.Storage
@@ -125,7 +131,9 @@ defmodule Squidie.Test.Storage do
   @impl Jido.Storage
   def append_thread(thread_id, entries, opts) do
     with :ok <- validate_durable(entries),
-         :ok <- validate_durable(Keyword.get(opts, :metadata, %{})) do
+         {:ok, metadata} <- Metadata.normalize(Keyword.get(opts, :metadata, %{})) do
+      opts = Keyword.put(opts, :metadata, metadata)
+
       case call(opts, {:append_thread, thread_id, entries, opts}) do
         {:raise, exception} -> raise exception
         result -> result
