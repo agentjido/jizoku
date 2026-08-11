@@ -11,9 +11,10 @@ defmodule Squidie.Test.Storage do
 
   @type option :: {:server, pid()}
 
-  @spec start_link(pid(), DateTime.t()) :: GenServer.on_start()
-  def start_link(owner, %DateTime{} = now) when is_pid(owner) do
-    GenServer.start_link(__MODULE__, {owner, now})
+  @spec start_link(pid(), DateTime.t(), map()) :: GenServer.on_start()
+  def start_link(owner, %DateTime{} = now, action_stubs \\ %{})
+      when is_pid(owner) and is_map(action_stubs) do
+    GenServer.start_link(__MODULE__, {owner, now, action_stubs})
   end
 
   @spec stop(pid()) :: :ok
@@ -102,6 +103,20 @@ defmodule Squidie.Test.Storage do
   end
 
   @doc false
+  @spec consume_action_stub(pid(), term(), term(), map()) ::
+          {:ok, Squidie.Step.result()} | {:error, term()}
+  def consume_action_stub(server, action_key, invocation_key, call)
+      when is_pid(server) and is_map(call) do
+    safe_call(server, {:consume_action_stub, action_key, invocation_key, call})
+  end
+
+  @doc false
+  @spec action_stub_calls(pid(), term()) :: {:ok, [map()]} | {:error, term()}
+  def action_stub_calls(server, action_key) when is_pid(server) do
+    safe_call(server, {:action_stub_calls, action_key})
+  end
+
+  @doc false
   @spec put_append_fault(pid(), String.t(), {:error, term()} | {:raise, Exception.t()}) ::
           :ok | {:error, :runtime_stopped}
   def put_append_fault(server, thread_prefix, action)
@@ -155,14 +170,14 @@ defmodule Squidie.Test.Storage do
   end
 
   @impl GenServer
-  def init({owner, %DateTime{} = now}) do
-    {:ok, initial_state(owner, now)}
+  def init({owner, %DateTime{} = now, action_stubs}) when is_map(action_stubs) do
+    {:ok, initial_state(owner, now, action_stubs)}
   end
 
   def init({:restore, owner, persisted_state}) when is_pid(owner) and is_map(persisted_state) do
     state =
       owner
-      |> initial_state(Map.fetch!(persisted_state, :now))
+      |> initial_state(Map.fetch!(persisted_state, :now), %{})
       |> Map.merge(persisted_state)
 
     {:ok, state}
@@ -271,6 +286,27 @@ defmodule Squidie.Test.Storage do
 
   def handle_call(:root_run_id, _from, state) do
     {:reply, {:ok, state.root_run_id}, state}
+  end
+
+  def handle_call({:action_stub_calls, _action_key}, _from, %{root_run_id: nil} = state) do
+    {:reply, {:error, :run_not_started}, state}
+  end
+
+  def handle_call({:action_stub_calls, action_key}, _from, state) do
+    case Map.fetch(state.action_stubs, action_key) do
+      {:ok, stub} -> {:reply, {:ok, Enum.reverse(stub.calls)}, state}
+      :error -> {:reply, {:error, :unknown_action_stub}, state}
+    end
+  end
+
+  def handle_call({:consume_action_stub, action_key, invocation_key, call}, _from, state) do
+    case consume_stub_result(state.action_stubs, action_key, invocation_key, call) do
+      {:ok, result, action_stubs} ->
+        {:reply, {:ok, result}, %{state | action_stubs: action_stubs}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call(:now, _from, state) do
@@ -428,7 +464,7 @@ defmodule Squidie.Test.Storage do
     Thread.append(thread, entries)
   end
 
-  defp initial_state(owner, now) do
+  defp initial_state(owner, now, action_stubs) do
     %{
       owner: owner,
       owner_ref: Process.monitor(owner),
@@ -441,7 +477,8 @@ defmodule Squidie.Test.Storage do
       start_reservation: nil,
       next_append_conflict: nil,
       append_conflict_counts: %{},
-      append_fault: nil
+      append_fault: nil,
+      action_stubs: action_stub_state(action_stubs)
     }
   end
 
@@ -454,12 +491,60 @@ defmodule Squidie.Test.Storage do
     Map.take(state, [
       :append_fault,
       :append_conflict_counts,
+      :action_stubs,
       :checkpoints,
       :next_append_conflict,
       :now,
       :root_run_id,
       :threads
     ])
+  end
+
+  defp action_stub_state(action_stubs) do
+    Map.new(action_stubs, fn {action_key, results} ->
+      {action_key, %{assignments: %{}, calls: [], remaining: results}}
+    end)
+  end
+
+  defp consume_stub_result(action_stubs, action_key, invocation_key, call) do
+    case Map.fetch(action_stubs, action_key) do
+      {:ok, stub} ->
+        replay_or_assign_stub_result(action_stubs, action_key, invocation_key, call, stub)
+
+      :error ->
+        {:error, :unknown_action_stub}
+    end
+  end
+
+  defp replay_or_assign_stub_result(action_stubs, action_key, invocation_key, call, stub) do
+    case Map.fetch(stub.assignments, invocation_key) do
+      {:ok, result} ->
+        call = Map.put(call, :replayed?, true)
+        stub = %{stub | calls: [call | stub.calls]}
+        {:ok, result, Map.put(action_stubs, action_key, stub)}
+
+      :error ->
+        assign_stub_result(action_stubs, action_key, invocation_key, call, stub)
+    end
+  end
+
+  defp assign_stub_result(action_stubs, action_key, invocation_key, call, stub) do
+    case stub.remaining do
+      [result | remaining] ->
+        call = Map.put(call, :replayed?, false)
+
+        stub = %{
+          stub
+          | assignments: Map.put(stub.assignments, invocation_key, result),
+            calls: [call | stub.calls],
+            remaining: remaining
+        }
+
+        {:ok, result, Map.put(action_stubs, action_key, stub)}
+
+      [] ->
+        {:error, :action_stub_sequence_exhausted}
+    end
   end
 
   defp append_thread(state, thread_id, entries, opts) do

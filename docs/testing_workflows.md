@@ -126,6 +126,43 @@ signal reaches the production duplicate path and returns the existing run;
 reusing that identity with different input returns a conflict without writing.
 Use `advance_time/3` and `drain/3` for delayed work after activation.
 
+## Runtime-authored action stubs
+
+Pass a runtime-authored workflow spec to `start_runtime/1` when a test needs
+deterministic action results through the normal action-registry boundary:
+
+```elixir
+assert {:ok, runtime} =
+         Squidie.Test.start_runtime(
+           workflow: payment_spec,
+           action_stubs: %{
+             "payments.authorize" => [{:ok, %{authorization: "approved"}}],
+             "payments.capture" => [{:ok, %{status: "paid"}}]
+           },
+           guardrail_registry: payment_guardrails
+         )
+```
+
+Each stub key becomes a host-approved `ActionRegistry` entry backed by an
+internal native step. Trigger payload resolution, runnable input mapping,
+guardrails, output mapping, result application, and terminal behavior
+still run through production journal paths. Stubs are rejected for
+module-authored workflows rather than being silently ignored.
+
+Result sequences are assigned once per new durable runnable identity in the
+order calls reach the isolated storage process. If the same runnable is
+executed again after an unknown outcome, it receives its previously assigned
+result instead of consuming the next one. Remaining results and assignments
+survive `restart_runtime/1`. An exhausted sequence fails the action
+nonretryably. Use distinct stub keys for concurrently eligible actions when
+their results must not depend on scheduler arrival order.
+
+Use `stub_calls/2` to inspect execution-order calls, including input, run,
+runnable, step, and attempt identity. Those calls contain application test data
+and are not a redacted diagnostic surface. A runtime spec may also combine
+stubs with real entries supplied through `:action_registry`; duplicate keys are
+rejected.
+
 ## Manual controls
 
 Use the named control helpers after a workflow reaches durable manual state:
@@ -301,13 +338,14 @@ active and rejects a second fault until the armed conflict has been consumed.
 
 ## Current scope
 
-The test runtime covers isolated in-memory storage, manual and cron workflow starts,
-bounded and predicate-based execution, blocked-state detection, virtual time,
-named manual controls, inspection, failure diagnostics, and checkpoint-loss
-replay. It also supports durable runtime restart, stale-claim recovery,
-deterministic one-shot append conflicts, invariant checks, and versioned golden
-histories. Generic signals and broader deterministic faults will build on this
-same runtime contract.
+The test runtime covers isolated in-memory storage, manual, cron, and
+runtime-authored workflow starts, bounded and predicate-based execution,
+blocked-state detection, virtual time, registry-backed deterministic action
+stubs, named manual controls, inspection, failure diagnostics, and
+checkpoint-loss replay. It also supports durable runtime restart, stale-claim
+recovery, deterministic one-shot append conflicts, invariant checks, and
+versioned golden histories. Generic external events require a corresponding
+production signal contract and are not synthesized by the test kit.
 
 Use the configured Ecto adapter for integration tests that need database
 transactions, migrations, or query behavior. The in-memory runtime is intended
