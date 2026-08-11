@@ -113,6 +113,48 @@ defmodule Squidie.TestTest do
     end
   end
 
+  defmodule ManualResultStep do
+    use Squidie.Step, name: :manual_result
+
+    @impl Squidie.Step
+    def run(_input, %Squidie.Step.Context{step: step}) do
+      {:ok, %{manual_path: Atom.to_string(step)}}
+    end
+  end
+
+  defmodule PauseControlWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+      end
+
+      step :pause, :pause
+      step :after_resume, ManualResultStep
+      transition :pause, on: :ok, to: :after_resume
+      transition :after_resume, on: :ok, to: :complete
+    end
+  end
+
+  defmodule ApprovalControlWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+      end
+
+      approval_step :review, output: :approval
+      step :approved, ManualResultStep
+      step :rejected, ManualResultStep
+      transition :review, on: :ok, to: :approved
+      transition :review, on: :error, to: :rejected
+      transition :approved, on: :ok, to: :complete
+      transition :rejected, on: :ok, to: :complete
+    end
+  end
+
   defmodule BarrierStep do
     use Squidie.Step, name: :barrier
 
@@ -351,6 +393,192 @@ defmodule Squidie.TestTest do
     assert {:reached, %{run_id: run_id, status: :completed}} = Task.await(execute_task)
     assert run_id == completed.run_id
     assert_receive {:predicate_final, :completed}
+  end
+
+  test "resumes a paused workflow at the runtime clock" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: PauseControlWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    assert {:blocked, %{status: :paused}} = Test.drain(runtime, run)
+    assert {:ok, resumed_at} = Test.advance_time(runtime, 5, :second)
+
+    attrs = %{actor: "ops-1", comment: "resume", metadata: %{reason: "verified"}}
+
+    assert {:ok, resumed} =
+             Test.resume(runtime, run, attrs,
+               idempotency_key: "resume-1",
+               metadata: %{source: "test"}
+             )
+
+    assert resumed.status == :running
+    assert resumed.manual_state == nil
+
+    assert Enum.any?(resumed.command_history, fn
+             %{
+               signal_type: "resume_run",
+               occurred_at: ^resumed_at,
+               idempotency_key: "resume-1",
+               metadata: %{source: "test"},
+               actor: "ops-1",
+               comment: "resume",
+               payload: %{
+                 attributes: %{actor: "ops-1", comment: "resume"}
+               }
+             } ->
+               true
+
+             _command ->
+               false
+           end)
+
+    assert {:completed, completed} = Test.drain(runtime, run)
+    assert completed.context.manual_path == "after_resume"
+  end
+
+  test "resumes with command options and default attributes" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: PauseControlWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    assert {:blocked, %{status: :paused}} = Test.drain(runtime, run)
+
+    assert {:ok, %{status: :running}} =
+             Test.resume(runtime, run,
+               idempotency_key: "resume-options-only",
+               metadata: %{source: "options"}
+             )
+  end
+
+  test "approves once under the configured queue and partition" do
+    assert {:ok, runtime} =
+             Test.start_runtime(
+               workflow: ApprovalControlWorkflow,
+               queue: "priority",
+               partition: "tenant-controls",
+               now: @now
+             )
+
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    assert {:blocked, %{status: :paused}} = Test.drain(runtime, run)
+
+    attrs = %{
+      actor: "reviewer-1",
+      comment: "approved",
+      metadata: %{reason: "policy"}
+    }
+
+    assert {:ok, approved} =
+             Test.approve(runtime, run, attrs, idempotency_key: "approval-1")
+
+    state_after_approval = runtime_journal_state(runtime, run.run_id)
+
+    assert {:ok, duplicate} =
+             Test.approve(runtime, run, attrs, idempotency_key: "approval-1")
+
+    assert duplicate == approved
+    assert runtime_journal_state(runtime, run.run_id) == state_after_approval
+
+    assert {:completed, completed} = Test.drain(runtime, run)
+    assert completed.queue == "priority"
+    assert completed.partition == "tenant-controls"
+    assert completed.context.manual_path == "approved"
+
+    assert %{
+             data: %{
+               action: "approved",
+               metadata: %{
+                 "actor" => "reviewer-1",
+                 "comment" => "approved",
+                 "metadata" => %{reason: "policy"}
+               }
+             }
+           } =
+             Enum.find(
+               runtime_run_entries(runtime, run.run_id),
+               &(&1.type == :manual_step_resolved)
+             )
+
+    {adapter, opts} = runtime.storage
+
+    assert :not_found =
+             adapter.load_thread(
+               Squidie.Runtime.Journal.thread_id(
+                 {:dispatch, "default"},
+                 "tenant-controls"
+               ),
+               opts
+             )
+
+    assert :not_found =
+             adapter.load_thread(
+               Squidie.Runtime.Journal.thread_id({:dispatch, "priority"}),
+               opts
+             )
+  end
+
+  test "rejects an approval through its rejection path" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: ApprovalControlWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    assert {:blocked, %{status: :paused}} = Test.drain(runtime, run)
+
+    assert {:ok, %{status: :running}} =
+             Test.reject(runtime, run, %{actor: "reviewer-2"}, idempotency_key: "rejection-1")
+
+    assert {:completed, completed} = Test.drain(runtime, run)
+    assert completed.context.manual_path == "rejected"
+  end
+
+  test "cancels the runtime root idempotently" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: CompleteWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{value: 42})
+    assert {:ok, cancelled} = Test.cancel(runtime, run, idempotency_key: "cancel-1")
+    assert cancelled.status == :cancelled
+
+    state_after_cancel = runtime_journal_state(runtime, run.run_id)
+
+    assert {:ok, duplicate} = Test.cancel(runtime, run, idempotency_key: "cancel-1")
+    assert duplicate == cancelled
+    assert runtime_journal_state(runtime, run.run_id) == state_after_cancel
+    assert {:cancelled, _snapshot} = Test.drain(runtime, run)
+  end
+
+  test "rejects invalid control targets, attributes, and options before writes" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: ApprovalControlWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    assert {:blocked, %{status: :paused}} = Test.drain(runtime, run)
+    before_state = runtime_journal_state(runtime, run.run_id)
+
+    assert {:error, :run_outside_runtime} =
+             Test.approve(runtime, Ecto.UUID.generate(), %{actor: "reviewer"})
+
+    assert {:error, {:invalid_attributes, :expected_map}} =
+             Test.approve(runtime, run, :invalid)
+
+    assert {:error, {:invalid_option, {:opts, :invalid}}} =
+             Test.cancel(runtime, run, [:bad])
+
+    assert {:error, {:invalid_option, {:option, :unknown}}} =
+             Test.reject(runtime, run, %{}, unknown: true)
+
+    assert {:error, {:invalid_review, %{actor: :required}}} =
+             Test.approve(runtime, run, %{}, idempotency_key: "approval-invalid")
+
+    assert {:error, {:invalid_option, {:metadata, :invalid}}} =
+             Test.reject(runtime, run, %{actor: "reviewer"}, metadata: :invalid)
+
+    assert {:error, {:invalid_option, {:idempotency_key, :invalid}}} =
+             Test.cancel(runtime, run, idempotency_key: "")
+
+    assert runtime_journal_state(runtime, run.run_id) == before_state
   end
 
   test "keeps bounded execution scoped to the runtime's single root run" do
@@ -684,5 +912,30 @@ defmodule Squidie.TestTest do
 
     assert {:error, {:invalid_option, {:max_steps, :invalid}}} =
              Test.drain(runtime, run, max_steps: 0)
+  end
+
+  defp runtime_journal_state(runtime, run_id) do
+    {adapter, opts} = runtime.storage
+
+    %{
+      run:
+        adapter.load_thread(
+          Squidie.Runtime.Journal.thread_id({:run, run_id}, runtime.partition),
+          opts
+        ),
+      dispatch:
+        adapter.load_thread(
+          Squidie.Runtime.Journal.thread_id({:dispatch, runtime.queue}, runtime.partition),
+          opts
+        )
+    }
+  end
+
+  defp runtime_run_entries(runtime, run_id) do
+    {:ok, storage} =
+      Squidie.Runtime.Journal.Storage.scope(runtime.storage, runtime.partition)
+
+    {:ok, entries} = Squidie.Runtime.Journal.load_entries(storage, {:run, run_id})
+    entries
   end
 end

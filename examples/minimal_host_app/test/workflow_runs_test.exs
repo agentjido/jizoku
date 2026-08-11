@@ -9,6 +9,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.WorkflowRuns
   alias MinimalHostApp.Workflows.DailyDigest
   alias MinimalHostApp.Workflows.DependencyRecovery
+  alias MinimalHostApp.Workflows.ManualApproval
   alias MinimalHostApp.Workflows.PaymentRecovery
   alias MinimalHostApp.Workflows.RetryVerification
   alias Oban.Job
@@ -79,6 +80,38 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              attempt_id: "attempt-test-kit-virtual-time",
              status: "ok"
            }
+  end
+
+  test "public test runtime approves a host workflow without a worker" do
+    now = ~U[2026-08-10 12:00:00Z]
+
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: ManualApproval,
+               now: now
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Squidie.Test.start(runtime, %{account_id: "acct-test-kit"})
+    assert {:blocked, paused} = Squidie.Test.drain(runtime, run)
+    assert paused.status == :paused
+    assert paused.manual_state.step == "wait_for_approval"
+
+    assert {:ok, _now} = Squidie.Test.advance_time(runtime, 30, :second)
+
+    assert {:ok, %{status: :running}} =
+             Squidie.Test.approve(
+               runtime,
+               run,
+               %{actor: "ops-test", comment: "approved in test"},
+               idempotency_key: "approval-test-kit"
+             )
+
+    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert completed.context.approval.status == "approved"
+    assert completed.context.approval.actor == "ops-test"
+    assert completed.context.approval.comment == "approved in test"
   end
 
   defmodule InvalidRecurringIdempotentCronWorkflow do
