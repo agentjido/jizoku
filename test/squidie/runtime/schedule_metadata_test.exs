@@ -30,6 +30,42 @@ defmodule Squidie.Runtime.ScheduleMetadataTest do
     assert schedule.idempotency_key == schedule.signal_id
   end
 
+  test "uses the explicit runtime receive time" do
+    received_at = ~U[2026-08-11 14:30:15.123456Z]
+
+    assert {:ok, %{schedule: schedule}} =
+             ScheduleMetadata.cron_context(
+               ScheduledDigestWorkflow,
+               trigger_definition(),
+               %{"signal_id" => "digest-window"},
+               received_at
+             )
+
+    assert schedule.received_at == "2026-08-11T14:30:15.123456Z"
+  end
+
+  test "rejects a non-cron trigger without raising" do
+    trigger = %{trigger_definition() | type: :manual}
+
+    assert {:error, {:invalid_schedule_trigger_type, :manual}} =
+             ScheduleMetadata.cron_context(
+               ScheduledDigestWorkflow,
+               trigger,
+               %{},
+               ~U[2026-08-11 14:30:15Z]
+             )
+  end
+
+  test "rejects an invalid explicit receive time without misclassifying the trigger" do
+    assert {:error, {:invalid_schedule_received_at, :expected_datetime}} =
+             ScheduleMetadata.cron_context(
+               ScheduledDigestWorkflow,
+               trigger_definition(),
+               %{"signal_id" => "digest-window"},
+               :invalid
+             )
+  end
+
   test "rejects idempotent cron starts without a scheduler identity" do
     trigger = trigger_definition()
 

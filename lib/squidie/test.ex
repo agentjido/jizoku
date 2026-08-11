@@ -19,6 +19,8 @@ defmodule Squidie.Test do
   alias Squidie.ReadModel.Timeline
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Options
+  alias Squidie.Runtime.ScheduleIdentity
+  alias Squidie.Runtime.Signal
   alias Squidie.Test.GoldenHistory
   alias Squidie.Test.Invariants
   alias Squidie.Test.Runtime
@@ -27,6 +29,7 @@ defmodule Squidie.Test do
 
   @default_max_steps 100
   @control_options [:idempotency_key, :metadata]
+  @cron_options [:idempotency_key, :metadata]
   @runtime_options [:max_steps, :now, :partition, :queue, :workflow]
   @execution_options [:max_steps]
   @terminal_statuses [:cancelled, :completed, :continued, :failed]
@@ -230,6 +233,51 @@ defmodule Squidie.Test do
 
   def start(%Runtime{}, _payload) do
     {:error, {:invalid_payload, :expected_map}}
+  end
+
+  @doc """
+  Starts the runtime's workflow through a declared cron trigger.
+
+  Schedule receipt time, partition, queue, and storage come from the isolated
+  runtime. Callers may provide signal `:metadata` or an explicit
+  `:idempotency_key`; scheduler identity may also be carried in `input` through
+  `signal_id` or a complete `intended_window`.
+
+  Each test runtime still owns one root run, regardless of whether it was
+  started manually or through cron.
+  """
+  @spec start_cron(Runtime.t(), atom() | String.t(), map(), keyword()) ::
+          {:ok, Snapshot.t()} | {:error, term()}
+  def start_cron(runtime, trigger, input, opts \\ [])
+
+  def start_cron(%Runtime{}, _trigger, input, _opts) when not is_map(input) do
+    {:error, {:invalid_payload, :expected_map}}
+  end
+
+  def start_cron(%Runtime{}, _trigger, _input, opts) when not is_list(opts) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
+  end
+
+  def start_cron(%Runtime{owner: owner}, _trigger, _input, _opts) when owner != self() do
+    {:error, :runtime_owner_required}
+  end
+
+  def start_cron(%Runtime{} = runtime, trigger, input, opts) do
+    with true <- Keyword.keyword?(opts),
+         :ok <- reject_unknown_options(opts, @cron_options),
+         {:ok, runtime_opts} <- common_runtime_options(runtime),
+         {:ok, signal} <-
+           Signal.start_cron(
+             runtime.workflow,
+             trigger,
+             input,
+             cron_signal_options(runtime, runtime_opts, opts)
+           ) do
+      start_cron_signal(runtime, signal, runtime_opts)
+    else
+      false -> {:error, {:invalid_option, {:opts, :invalid}}}
+      {:error, _reason} = error -> error
+    end
   end
 
   @doc """
@@ -524,6 +572,59 @@ defmodule Squidie.Test do
   catch
     kind, reason ->
       :erlang.raise(kind, reason, __STACKTRACE__)
+  end
+
+  defp start_cron_root(runtime, signal, runtime_opts) do
+    signal
+    |> Squidie.apply_signal(runtime_opts)
+    |> finish_start(runtime)
+  catch
+    kind, reason ->
+      :erlang.raise(kind, reason, __STACKTRACE__)
+  end
+
+  defp start_cron_signal(runtime, signal, runtime_opts) do
+    case Storage.root_run_id(runtime.storage_server) do
+      {:error, :run_not_started} ->
+        with :ok <- Storage.reserve_start(runtime.storage_server) do
+          start_cron_root(runtime, signal, runtime_opts)
+        end
+
+      {:ok, root_run_id} ->
+        if matching_cron_run_id?(signal, root_run_id) do
+          Squidie.apply_signal(signal, runtime_opts)
+        else
+          {:error, :runtime_already_started}
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp matching_cron_run_id?(
+         %Signal{
+           idempotency_key: idempotency_key,
+           payload: %{workflow: workflow, trigger: trigger}
+         },
+         root_run_id
+       )
+       when is_binary(idempotency_key) and is_binary(workflow) and is_binary(trigger) do
+    case ScheduleIdentity.run_id(workflow, trigger, idempotency_key) do
+      {:ok, ^root_run_id} -> true
+      {:ok, _other_run_id} -> false
+      {:error, _reason} -> false
+    end
+  end
+
+  defp matching_cron_run_id?(%Signal{}, _root_run_id) do
+    false
+  end
+
+  defp cron_signal_options(runtime, runtime_opts, opts) do
+    opts
+    |> Keyword.put(:occurred_at, Keyword.fetch!(runtime_opts, :now))
+    |> Keyword.put(:partition, runtime.partition)
   end
 
   defp execute_next(runtime, run_id, remaining, limit, now, predicate) do
