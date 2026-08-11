@@ -15,12 +15,14 @@ defmodule Squidie.Test do
   import Kernel, except: [inspect: 2]
 
   alias Squidie.ReadModel.Explanation.Diagnostic
+  alias Squidie.ReadModel.Inspection
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.ReadModel.Timeline
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.Signal
+  alias Squidie.Test.Assertions
   alias Squidie.Test.GoldenHistory
   alias Squidie.Test.Invariants
   alias Squidie.Test.Runtime
@@ -42,6 +44,7 @@ defmodule Squidie.Test do
     :workflow
   ]
   @execution_options [:max_steps]
+  @assertion_options [:diagnostics, :max_steps]
   @terminal_statuses [:cancelled, :completed, :continued, :failed]
   @time_units [:second, :millisecond, :microsecond]
 
@@ -52,6 +55,7 @@ defmodule Squidie.Test do
   @type execute_until_result :: {:reached, Snapshot.t()} | execution_result()
   @type snapshot_predicate :: (Snapshot.t() -> boolean())
   @type append_target :: :run | :dispatch
+  @type assertion_diagnostics :: :none | :timeline
   @type invariant_violation_code ::
           :duplicate_runnable_key
           | :malformed_runnable_key
@@ -384,6 +388,48 @@ defmodule Squidie.Test do
     with {:ok, timeline} <- timeline(runtime, run) do
       {:ok, GoldenHistory.from_timeline(timeline)}
     end
+  end
+
+  @doc """
+  Drains a run and returns its snapshot when `expected_status` matches.
+
+  A mismatch raises `ExUnit.AssertionError`. Failures are concise by default;
+  pass `diagnostics: :timeline` to include the versioned, redacted golden
+  history in ExUnit output. `:max_steps` has the same meaning as in `drain/3`.
+  """
+  @spec assert_status(
+          Runtime.t(),
+          Ecto.UUID.t() | Snapshot.t(),
+          atom(),
+          keyword()
+        ) :: Snapshot.t() | no_return()
+  def assert_status(runtime, run, expected_status, opts \\ [])
+
+  def assert_status(%Runtime{} = runtime, run, expected_status, opts)
+      when is_atom(expected_status) and is_list(opts) do
+    case assertion_options(runtime, opts) do
+      {:ok, diagnostics, drain_opts} ->
+        result = drain(runtime, run, drain_opts)
+        snapshot = assertion_snapshot(result)
+
+        if match?(%Snapshot{status: ^expected_status}, snapshot) do
+          snapshot
+        else
+          golden = assertion_golden(snapshot, diagnostics)
+          Assertions.raise_status_failure(expected_status, result, snapshot, golden)
+        end
+
+      {:error, reason} ->
+        raise ArgumentError, message: assertion_argument_error(reason)
+    end
+  end
+
+  def assert_status(%Runtime{}, _run, expected_status, _opts) when not is_atom(expected_status) do
+    raise ArgumentError, message: "expected status must be an atom"
+  end
+
+  def assert_status(%Runtime{}, _run, _expected_status, _opts) do
+    raise ArgumentError, message: "assertion options must be a keyword list"
   end
 
   @doc """
@@ -747,6 +793,68 @@ defmodule Squidie.Test do
       :ok -> {:ok, snapshot}
       {:error, {:invariant_violations, _report}} = error -> error
     end
+  end
+
+  defp assertion_options(runtime, opts) do
+    with true <- Keyword.keyword?(opts),
+         :ok <- reject_unknown_options(opts, @assertion_options),
+         {:ok, diagnostics} <- assertion_diagnostics(opts),
+         {:ok, _max_steps} <- max_steps(opts, runtime.max_steps) do
+      {:ok, diagnostics, Keyword.take(opts, @execution_options)}
+    else
+      false -> {:error, {:invalid_option, {:opts, :invalid}}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp assertion_diagnostics(opts) do
+    case Keyword.get(opts, :diagnostics, :none) do
+      diagnostics when diagnostics in [:none, :timeline] -> {:ok, diagnostics}
+      _invalid -> {:error, {:invalid_option, {:diagnostics, :invalid}}}
+    end
+  end
+
+  defp assertion_snapshot({_outcome, %Snapshot{} = snapshot}) do
+    snapshot
+  end
+
+  defp assertion_snapshot(
+         {:error, {:execution_limit_reached, %{snapshot: %Snapshot{} = snapshot}}}
+       ) do
+    snapshot
+  end
+
+  defp assertion_snapshot(_result) do
+    nil
+  end
+
+  defp assertion_golden(_snapshot, :none) do
+    nil
+  end
+
+  defp assertion_golden(%Snapshot{} = snapshot, :timeline) do
+    {:ok, timeline} = Inspection.timeline(snapshot)
+    GoldenHistory.from_timeline(timeline)
+  end
+
+  defp assertion_golden(nil, :timeline) do
+    :unavailable
+  end
+
+  defp assertion_argument_error({:invalid_option, {:diagnostics, :invalid}}) do
+    "diagnostics must be :none or :timeline"
+  end
+
+  defp assertion_argument_error({:invalid_option, {:max_steps, :invalid}}) do
+    "max_steps must be a positive integer"
+  end
+
+  defp assertion_argument_error({:invalid_option, {:option, option}}) do
+    "unsupported assertion option: #{inspect(option)}"
+  end
+
+  defp assertion_argument_error(_reason) do
+    "assertion options must be a keyword list"
   end
 
   defp classify_final_snapshot(snapshot, predicate) do

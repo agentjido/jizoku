@@ -125,6 +125,14 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, timeline} = Squidie.Test.timeline(runtime, run)
     assert Enum.any?(timeline.events, &(&1.type == :attempt_failed))
 
+    assertion =
+      assert_raise ExUnit.AssertionError, fn ->
+        Squidie.Test.assert_status(runtime, run, :completed, diagnostics: :timeline)
+      end
+
+    assert assertion.message =~ "timeline (schema v1)"
+    assert assertion.message =~ "attempt_failed"
+
     assert {:ok, _now} = Squidie.Test.advance_time(runtime, 1, :second)
     assert {:completed, completed} = Squidie.Test.drain(runtime, run)
 
