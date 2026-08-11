@@ -17,6 +17,7 @@ defmodule Squidie.Test do
   alias Squidie.ReadModel.Explanation.Diagnostic
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.ReadModel.Timeline
+  alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Test.Runtime
   alias Squidie.Test.Storage
@@ -35,6 +36,7 @@ defmodule Squidie.Test do
           | {:error, term()}
   @type execute_until_result :: {:reached, Snapshot.t()} | execution_result()
   @type snapshot_predicate :: (Snapshot.t() -> boolean())
+  @type append_target :: :run | :dispatch
   @type time_unit :: :second | :millisecond | :microsecond
 
   @doc """
@@ -134,6 +136,37 @@ defmodule Squidie.Test do
           :ok | {:error, :runtime_busy | :runtime_owner_required | :runtime_stopped}
   def delete_checkpoints(%Runtime{storage_server: storage_server}) do
     Storage.delete_checkpoints(storage_server)
+  end
+
+  @doc """
+  Injects one expected-revision conflict at the next matching journal append.
+
+  The target is the runtime's root run thread or configured dispatch thread.
+  The conflict is consumed only by that exact partitioned thread, and the
+  runtime owner must inject it while no execution or control helper is active.
+  """
+  @spec inject_append_conflict(Runtime.t(), append_target()) ::
+          :ok
+          | {:error,
+             :append_conflict_already_armed
+             | :run_not_started
+             | :runtime_busy
+             | :runtime_owner_required
+             | :runtime_stopped
+             | {:invalid_option, {:target, :invalid}}}
+  def inject_append_conflict(%Runtime{}, target) when target not in [:run, :dispatch] do
+    {:error, {:invalid_option, {:target, :invalid}}}
+  end
+
+  def inject_append_conflict(%Runtime{owner: owner}, _target) when owner != self() do
+    {:error, :runtime_owner_required}
+  end
+
+  def inject_append_conflict(%Runtime{} = runtime, target) do
+    with {:ok, root_run_id} <- Storage.root_run_id(runtime.storage_server) do
+      thread_id = append_target_thread_id(runtime, root_run_id, target)
+      Storage.inject_append_conflict(runtime.storage_server, thread_id)
+    end
   end
 
   @doc """
@@ -477,6 +510,14 @@ defmodule Squidie.Test do
       partition: runtime.partition,
       now: now
     ]
+  end
+
+  defp append_target_thread_id(runtime, root_run_id, :run) do
+    Journal.thread_id({:run, root_run_id}, runtime.partition)
+  end
+
+  defp append_target_thread_id(runtime, _root_run_id, :dispatch) do
+    Journal.thread_id({:dispatch, runtime.queue}, runtime.partition)
   end
 
   defp workflow(opts) do

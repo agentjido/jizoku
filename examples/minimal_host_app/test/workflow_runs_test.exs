@@ -50,6 +50,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, rebuilt} = Squidie.Test.inspect(runtime, run)
     assert rebuilt == intermediate
 
+    assert :ok = Squidie.Test.inject_append_conflict(runtime, :dispatch)
+    assert {:error, :conflict} = Squidie.Test.drain(runtime, run)
     assert {:completed, snapshot} = Squidie.Test.drain(runtime, run)
     assert snapshot.context.account.id == "account-test-kit"
     assert snapshot.context.invoice.id == "invoice-test-kit"

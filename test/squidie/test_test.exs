@@ -29,6 +29,30 @@ defmodule Squidie.TestTest do
     end
   end
 
+  defmodule CountingStep do
+    use Squidie.Step, name: :count_once
+
+    @impl Squidie.Step
+    def run(_input, %Squidie.Step.Context{run_id: run_id}) do
+      test_pid = :persistent_term.get({__MODULE__, run_id})
+      send(test_pid, {:counting_step_ran, run_id})
+      {:ok, %{counted: true}}
+    end
+  end
+
+  defmodule CountingWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+      end
+
+      step :count_once, CountingStep
+      transition :count_once, on: :ok, to: :complete
+    end
+  end
+
   defmodule DeferredStep do
     use Squidie.Step, name: :deferred
 
@@ -698,6 +722,122 @@ defmodule Squidie.TestTest do
     assert :not_found = adapter.load_thread("thread-unsafe", opts)
   end
 
+  test "injects one exact dispatch append conflict before action execution" do
+    assert {:ok, runtime} =
+             Test.start_runtime(
+               workflow: CountingWorkflow,
+               queue: "priority",
+               partition: "tenant-conflict",
+               now: @now
+             )
+
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+    assert {:ok, run} = Test.start(runtime, %{})
+    :persistent_term.put({CountingStep, run.run_id}, self())
+    on_exit(fn -> :persistent_term.erase({CountingStep, run.run_id}) end)
+    before_threads = runtime_persistence_state(runtime).threads
+
+    assert :ok = Test.inject_append_conflict(runtime, :dispatch)
+
+    assert {:error, :append_conflict_already_armed} =
+             Test.inject_append_conflict(runtime, :run)
+
+    assert {:error, :conflict} = Test.drain(runtime, run)
+    assert runtime_persistence_state(runtime).threads == before_threads
+    refute_receive {:counting_step_ran, _run_id}
+
+    dispatch_thread_id =
+      Squidie.Runtime.Journal.thread_id({:dispatch, runtime.queue}, runtime.partition)
+
+    assert runtime_fault_state(runtime).append_conflict_counts == %{dispatch_thread_id => 1}
+
+    assert {:completed, completed} = Test.drain(runtime, run)
+    assert completed.context.counted
+    assert_receive {:counting_step_ran, run_id}
+    assert run_id == run.run_id
+    refute_receive {:counting_step_ran, _run_id}
+
+    {adapter, opts} = runtime.storage
+
+    assert :not_found =
+             adapter.load_thread(
+               Squidie.Runtime.Journal.thread_id({:dispatch, "default"}, runtime.partition),
+               opts
+             )
+
+    assert :not_found =
+             adapter.load_thread(
+               Squidie.Runtime.Journal.thread_id({:dispatch, runtime.queue}),
+               opts
+             )
+  end
+
+  test "retries a run append conflict without rerunning the completed action" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: CountingWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+    assert {:ok, run} = Test.start(runtime, %{})
+    :persistent_term.put({CountingStep, run.run_id}, self())
+    on_exit(fn -> :persistent_term.erase({CountingStep, run.run_id}) end)
+
+    assert :ok = Test.inject_append_conflict(runtime, :run)
+    assert {:completed, completed} = Test.drain(runtime, run)
+    assert_receive {:counting_step_ran, run_id}
+    assert run_id == run.run_id
+    assert completed.context.counted
+    refute_receive {:counting_step_ran, _run_id}
+    assert [_attempt] = completed.attempts
+
+    run_thread_id =
+      Squidie.Runtime.Journal.thread_id({:run, run.run_id}, runtime.partition)
+
+    assert runtime_fault_state(runtime) == %{
+             next_append_conflict: nil,
+             append_conflict_counts: %{run_thread_id => 1}
+           }
+  end
+
+  test "rejects invalid append conflict injection without changing persistence" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: CompleteWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    before_start_fault_state = runtime_fault_state(runtime)
+    assert {:error, :run_not_started} = Test.inject_append_conflict(runtime, :run)
+    assert runtime_fault_state(runtime) == before_start_fault_state
+    assert {:ok, _run} = Test.start(runtime, %{value: 1})
+    before_state = runtime_persistence_state(runtime)
+    before_fault_state = runtime_fault_state(runtime)
+
+    assert {:error, {:invalid_option, {:target, :invalid}}} =
+             Test.inject_append_conflict(runtime, :unknown)
+
+    task = Task.async(fn -> Test.inject_append_conflict(runtime, :dispatch) end)
+    assert {:error, :runtime_owner_required} = Task.await(task)
+    assert runtime_persistence_state(runtime) == before_state
+    assert runtime_fault_state(runtime) == before_fault_state
+
+    assert :ok = Test.stop_runtime(runtime)
+    assert {:error, :runtime_stopped} = Test.inject_append_conflict(runtime, :dispatch)
+  end
+
+  test "does not arm an append conflict while execution is active" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: BarrierWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+    assert {:ok, run} = Test.start(runtime, %{})
+    :persistent_term.put({BarrierStep, run.run_id}, self())
+    on_exit(fn -> :persistent_term.erase({BarrierStep, run.run_id}) end)
+
+    drain_task = Task.async(fn -> Test.drain(runtime, run) end)
+    assert_receive {:barrier_entered, executor_pid}
+    before_state = runtime_persistence_state(runtime)
+    before_fault_state = runtime_fault_state(runtime)
+    assert {:error, :runtime_busy} = Test.inject_append_conflict(runtime, :run)
+    assert runtime_persistence_state(runtime) == before_state
+    assert runtime_fault_state(runtime) == before_fault_state
+
+    send(executor_pid, :release_barrier)
+    assert {:completed, _snapshot} = Task.await(drain_task)
+  end
+
   test "advances the runtime clock explicitly" do
     assert {:ok, runtime} = Test.start_runtime(workflow: CompleteWorkflow, now: @now)
     on_exit(fn -> Test.stop_runtime(runtime) end)
@@ -1104,6 +1244,12 @@ defmodule Squidie.TestTest do
     runtime.storage_server
     |> :sys.get_state()
     |> Map.take([:checkpoints, :threads])
+  end
+
+  defp runtime_fault_state(runtime) do
+    runtime.storage_server
+    |> :sys.get_state()
+    |> Map.take([:append_conflict_counts, :next_append_conflict])
   end
 
   defp runtime_run_entries(runtime, run_id) do

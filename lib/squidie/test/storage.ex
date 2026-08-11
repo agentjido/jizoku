@@ -80,6 +80,19 @@ defmodule Squidie.Test.Storage do
   end
 
   @doc false
+  @spec inject_append_conflict(pid(), String.t()) ::
+          :ok
+          | {:error,
+             :append_conflict_already_armed
+             | :runtime_busy
+             | :runtime_owner_required
+             | :runtime_stopped}
+  def inject_append_conflict(server, thread_id)
+      when is_pid(server) and is_binary(thread_id) do
+    safe_call(server, {:inject_append_conflict, thread_id})
+  end
+
+  @doc false
   @spec put_append_fault(pid(), String.t(), {:error, term()} | {:raise, Exception.t()}) ::
           :ok | {:error, :runtime_stopped}
   def put_append_fault(server, thread_prefix, action)
@@ -140,6 +153,8 @@ defmodule Squidie.Test.Storage do
        threads: %{},
        root_run_id: nil,
        start_reservation: nil,
+       next_append_conflict: nil,
+       append_conflict_counts: %{},
        append_fault: nil
      }}
   end
@@ -174,11 +189,17 @@ defmodule Squidie.Test.Storage do
   end
 
   def handle_call({:append_thread, thread_id, entries, opts}, _from, state) do
-    if append_fault?(state.append_fault, thread_id) do
-      {_prefix, action} = state.append_fault
-      {:reply, action, state}
-    else
-      append_thread(state, thread_id, entries, opts)
+    case consume_append_conflict(state, thread_id) do
+      {:conflict, state} ->
+        {:reply, {:error, :conflict}, state}
+
+      {:continue, state} ->
+        if append_fault?(state.append_fault, thread_id) do
+          {_prefix, action} = state.append_fault
+          {:reply, action, state}
+        else
+          append_thread(state, thread_id, entries, opts)
+        end
     end
   end
 
@@ -310,6 +331,29 @@ defmodule Squidie.Test.Storage do
     {:reply, {:error, :runtime_owner_required}, state}
   end
 
+  def handle_call(
+        {:inject_append_conflict, thread_id},
+        {owner, _tag},
+        %{owner: owner} = state
+      ) do
+    state = drop_dead_execution_leases(state)
+
+    cond do
+      map_size(state.execution_leases) > 0 ->
+        {:reply, {:error, :runtime_busy}, state}
+
+      not is_nil(state.next_append_conflict) ->
+        {:reply, {:error, :append_conflict_already_armed}, state}
+
+      true ->
+        {:reply, :ok, %{state | next_append_conflict: thread_id}}
+    end
+  end
+
+  def handle_call({:inject_append_conflict, _thread_id}, _from, state) do
+    {:reply, {:error, :runtime_owner_required}, state}
+  end
+
   def handle_call({:put_append_fault, thread_prefix, action}, _from, state) do
     {:reply, :ok, %{state | append_fault: {thread_prefix, action}}}
   end
@@ -373,6 +417,20 @@ defmodule Squidie.Test.Storage do
 
   defp append_fault?(nil, _thread_id) do
     false
+  end
+
+  defp consume_append_conflict(%{next_append_conflict: thread_id} = state, thread_id) do
+    state = %{
+      state
+      | next_append_conflict: nil,
+        append_conflict_counts: Map.update(state.append_conflict_counts, thread_id, 1, &(&1 + 1))
+    }
+
+    {:conflict, state}
+  end
+
+  defp consume_append_conflict(state, _thread_id) do
+    {:continue, state}
   end
 
   defp drop_dead_execution_leases(state) do
