@@ -224,7 +224,7 @@ defmodule Squidie.TestTest do
 
     @impl Squidie.Step
     def run(_input, _context) do
-      {:error, %{code: "expected_test_failure"}}
+      {:error, %{code: "expected_test_failure", access_token: "secret-test-token"}}
     end
   end
 
@@ -555,7 +555,7 @@ defmodule Squidie.TestTest do
 
     assert {:ok, run} = Test.start(runtime, %{})
     assert {:blocked, %{status: :paused}} = Test.drain(runtime, run)
-    before_state = runtime_journal_state(runtime, run.run_id)
+    before_state = runtime_persistence_state(runtime)
 
     assert {:error, :run_outside_runtime} =
              Test.approve(runtime, Ecto.UUID.generate(), %{actor: "reviewer"})
@@ -578,7 +578,7 @@ defmodule Squidie.TestTest do
     assert {:error, {:invalid_option, {:idempotency_key, :invalid}}} =
              Test.cancel(runtime, run, idempotency_key: "")
 
-    assert runtime_journal_state(runtime, run.run_id) == before_state
+    assert runtime_persistence_state(runtime) == before_state
   end
 
   test "keeps bounded execution scoped to the runtime's single root run" do
@@ -879,6 +879,82 @@ defmodule Squidie.TestTest do
     assert run_id == run.run_id
   end
 
+  test "projects a failed run timeline without mutating the journal" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: FailingWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    assert {:failed, failed} = Test.drain(runtime, run)
+    before_state = runtime_persistence_state(runtime)
+
+    assert {:ok, timeline} = Test.timeline(runtime, run)
+    assert timeline.run_id == run.run_id
+    assert timeline.status == :failed
+    assert timeline.terminal_status == :failed
+
+    assert Enum.map(timeline.events, & &1.type) == [
+             :command_received,
+             :run_started,
+             :attempt_claimed,
+             :attempt_failed,
+             :attempt_scheduled,
+             :run_terminal
+           ]
+
+    assert Enum.all?(timeline.events, &(&1.occurred_at == @now))
+
+    assert {:ok, explanation} = Test.explain(runtime, failed)
+    assert explanation.reason == :terminal
+    assert explanation.details.terminal_status == :failed
+    assert explanation.details.terminal_error.code == "expected_test_failure"
+    assert explanation.details.terminal_error.message == "step execution failed"
+    refute Map.has_key?(explanation.details.terminal_error, :access_token)
+    refute Kernel.inspect(explanation) =~ "secret-test-token"
+    assert runtime_persistence_state(runtime) == before_state
+  end
+
+  test "explains retry visibility using the runtime clock" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: RetryWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    assert {:blocked, retrying} = Test.drain(runtime, run)
+    before_state = runtime_persistence_state(runtime)
+
+    assert {:ok, explanation} = Test.explain(runtime, run)
+    assert explanation.reason == :attempt_scheduled_for_later
+    assert explanation.step == "retry_once"
+    assert explanation.next_actions == [:wait_until_attempt_visible]
+    assert explanation.details.next_visible_at == retrying.next_visible_at
+
+    assert {:ok, timeline} = Test.timeline(runtime, run)
+    assert Enum.any?(timeline.events, &(&1.type == :attempt_failed))
+    assert runtime_persistence_state(runtime) == before_state
+  end
+
+  test "routes diagnostics through the isolated runtime" do
+    assert {:ok, runtime} =
+             Test.start_runtime(
+               workflow: CompleteWorkflow,
+               queue: "priority",
+               partition: "tenant-diagnostics",
+               now: @now
+             )
+
+    assert {:ok, run} = Test.start(runtime, %{value: 1})
+    assert {:ok, timeline} = Test.timeline(runtime, run)
+    assert timeline.queue == "priority"
+    assert timeline.partition == "tenant-diagnostics"
+
+    assert {:ok, explanation} = Test.explain(runtime, run)
+    assert explanation.queue == "priority"
+    assert explanation.partition == "tenant-diagnostics"
+
+    assert {:error, :not_found} = Test.timeline(runtime, Ecto.UUID.generate())
+    assert :ok = Test.stop_runtime(runtime)
+    assert {:error, :runtime_stopped} = Test.explain(runtime, run)
+  end
+
   test "stops abandoned runtime storage when its owner exits" do
     parent = self()
 
@@ -929,6 +1005,12 @@ defmodule Squidie.TestTest do
           opts
         )
     }
+  end
+
+  defp runtime_persistence_state(runtime) do
+    runtime.storage_server
+    |> :sys.get_state()
+    |> Map.take([:checkpoints, :threads])
   end
 
   defp runtime_run_entries(runtime, run_id) do
