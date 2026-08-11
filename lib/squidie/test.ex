@@ -130,6 +130,29 @@ defmodule Squidie.Test do
   end
 
   @doc """
+  Restarts the isolated runtime while preserving its durable state and clock.
+
+  The returned runtime has a fresh worker identity and storage process. The old
+  runtime handle is stopped. Restart is owner-only and fails while a live
+  execution or start reservation is active. Armed deterministic append faults
+  remain armed across the restart.
+  """
+  @spec restart_runtime(Runtime.t()) ::
+          {:ok, Runtime.t()}
+          | {:error, :runtime_busy | :runtime_owner_required | :runtime_stopped | term()}
+  def restart_runtime(%Runtime{} = runtime) do
+    with {:ok, storage_server} <- Storage.restart(runtime.storage_server) do
+      {:ok,
+       %Runtime{
+         runtime
+         | id: Ecto.UUID.generate(),
+           storage: {Storage, server: storage_server},
+           storage_server: storage_server
+       }}
+    end
+  end
+
+  @doc """
   Returns the runtime's current virtual time.
   """
   @spec now(Runtime.t()) :: {:ok, DateTime.t()} | {:error, :runtime_stopped}
