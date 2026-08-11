@@ -144,6 +144,38 @@ including them in shared CI output. Events with the same timestamp use the
 timeline projection's stable tie ordering; treat that order as a deterministic
 view, not as an additional causal trace.
 
+## Golden histories
+
+Use `golden_history/2` when a workflow test should detect incompatible changes
+to its projected execution history:
+
+```elixir
+assert {:ok, golden} = Squidie.Test.golden_history(runtime, run)
+
+assert golden == %{
+         schema_version: 1,
+         workflow: "Elixir.MyApp.Workflows.Payment",
+         queue: "default",
+         partition: nil,
+         status: :completed,
+         terminal_status: :completed,
+         events: expected_events
+       }
+```
+
+The v1 format replaces generated run and runnable identifiers with local
+encounter-order aliases and expresses timestamps as microsecond offsets from
+run start. It omits timeline summaries and uses a strict event-detail allowlist:
+command type, attempt number, relative visibility time, manual kind, and aliased
+continuation links. Continuation keys, manual reasons, workflow input, context,
+action results, and raw errors are excluded.
+
+Workflow, authored step, queue, and partition names remain as structural
+identifiers so fixture diffs stay actionable. Do not place secrets in those
+identifiers. Treat `schema_version` changes as an explicit fixture migration,
+and review golden updates as compatibility changes rather than regenerating
+them automatically.
+
 ## Invariant checks
 
 Check one durable inspection snapshot for universal runtime invariants:
@@ -218,9 +250,9 @@ active and rejects a second fault until the armed conflict has been consumed.
 The test runtime covers isolated in-memory storage, normal workflow starts,
 bounded and predicate-based execution, blocked-state detection, virtual time,
 named manual controls, inspection, failure diagnostics, and checkpoint-loss
-replay. It also supports deterministic one-shot append conflicts. Generic
-signals, broader deterministic faults, restarts, and golden histories will
-build on this same runtime contract.
+replay. It also supports deterministic one-shot append conflicts, invariant
+checks, and versioned golden histories. Generic signals, broader deterministic
+faults, and restarts will build on this same runtime contract.
 
 Use the configured Ecto adapter for integration tests that need database
 transactions, migrations, or query behavior. The in-memory runtime is intended

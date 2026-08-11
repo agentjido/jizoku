@@ -57,6 +57,38 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert snapshot.context.invoice.id == "invoice-test-kit"
     assert snapshot.context.notification.channel == "email"
     assert {:ok, ^snapshot} = Squidie.Test.check_invariants(runtime, run)
+
+    assert {:ok,
+            %{
+              schema_version: 1,
+              workflow: "Elixir.MinimalHostApp.Workflows.DependencyRecovery",
+              queue: "default",
+              partition: nil,
+              status: :completed,
+              terminal_status: :completed,
+              events: golden_events
+            } = golden} = Squidie.Test.golden_history(runtime, run)
+
+    assert Enum.map(golden_events, &{&1.type, Map.get(&1, :step), Map.get(&1, :runnable)}) == [
+             {:command_received, nil, nil},
+             {:run_started, nil, nil},
+             {:attempt_claimed, "load_account", "runnable-1"},
+             {:attempt_claimed, "load_invoice", "runnable-2"},
+             {:attempt_claimed, "prepare_notification", "runnable-3"},
+             {:attempt_completed, "load_account", "runnable-1"},
+             {:attempt_completed, "load_invoice", "runnable-2"},
+             {:attempt_completed, "prepare_notification", "runnable-3"},
+             {:runnable_applied, "load_account", "runnable-1"},
+             {:runnable_applied, "load_invoice", "runnable-2"},
+             {:runnable_applied, "prepare_notification", "runnable-3"},
+             {:attempt_scheduled, "load_account", "runnable-1"},
+             {:attempt_scheduled, "load_invoice", "runnable-2"},
+             {:attempt_scheduled, "prepare_notification", "runnable-3"},
+             {:run_terminal, nil, nil}
+           ]
+
+    refute Kernel.inspect(golden) =~ "account-test-kit"
+    refute Kernel.inspect(golden) =~ "invoice-test-kit"
   end
 
   test "public test runtime advances a host retry without sleeping" do
