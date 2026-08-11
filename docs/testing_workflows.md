@@ -190,6 +190,28 @@ runtime. Each helper accepts only the runtime's root run.
 
 ## Failure diagnostics
 
+Use `assert_status/4` when a test should drain a run and fail with concise
+ExUnit output if the durable status does not match:
+
+```elixir
+snapshot =
+  Squidie.Test.assert_status(runtime, run, :completed,
+    diagnostics: :timeline,
+    max_steps: 25
+  )
+
+assert snapshot.context.payment_status == "captured"
+```
+
+The default assertion message contains only structural status information.
+`diagnostics: :timeline` additionally renders the versioned, redacted golden
+history. It never renders explanation evidence, workflow input, context,
+action results, or raw errors.
+
+`:max_steps` has the same bounded-execution meaning as in `drain/3`. Set it
+explicitly when a test needs a deterministic failure instead of allowing an
+unexpectedly busy workflow to keep progressing.
+
 `timeline/2` and `explain/2` expose the same diagnostic views as the public host
 read APIs. Use them when an assertion needs stable projected event order or an
 actionable reason for a blocked or failed run:
