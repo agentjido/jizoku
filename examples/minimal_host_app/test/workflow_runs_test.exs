@@ -1398,6 +1398,45 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              RuntimeSignals.apply(invalid_jido_signal)
   end
 
+  test "routes an allowlisted Jido domain signal into a real workflow" do
+    occurred_at = ~U[2026-08-12 12:00:00.000000Z]
+
+    assert {:ok, signal} =
+             Jido.Signal.new(
+               "minimal_host.dependency_recovery.requested",
+               %{
+                 "account_id" => "acct_jido_domain",
+                 "attempt_id" => "attempt_jido_domain",
+                 "invoice_id" => "inv_jido_domain"
+               },
+               id: "minimal-host-domain-signal-123",
+               source: "/minimal_host_app/orders",
+               subject: "accounts/acct_jido_domain",
+               time: DateTime.to_iso8601(occurred_at)
+             )
+
+    assert {:ok, started} = RuntimeSignals.apply_domain(signal)
+    assert started.input.account_id == "acct_jido_domain"
+
+    assert [receipt] = started.command_history
+    assert receipt.signal_id == "minimal-host-domain-signal-123"
+    assert receipt.source == "/minimal_host_app/orders"
+    assert receipt.occurred_at == occurred_at
+
+    assert receipt.metadata == %{
+             "jido" => %{
+               "subject" => "accounts/acct_jido_domain",
+               "type" => "minimal_host.dependency_recovery.requested"
+             }
+           }
+
+    assert {:ok, completed} =
+             MinimalHostApp.RuntimeHarness.await_terminal_run(started.run_id)
+
+    assert completed.status == :completed
+    assert completed.context.notification.account_id == "acct_jido_domain"
+  end
+
   test "applies native Squidie command signals through the host signal boundary" do
     assert {:ok, run} =
              WorkflowRuns.start_cancellable_wait(%{account_id: "acct_native_signal_cancel"})
@@ -1713,8 +1752,18 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     assert start.status == :completed
 
-    assert [%{signal_type: "start_run", metadata: %{source: "minimal_host_app_smoke"}}] =
-             start.command_history
+    assert [
+             %{
+               signal_type: "start_run",
+               source: "/minimal_host_app/dependency_recovery",
+               metadata: %{
+                 "jido" => %{
+                   "subject" => "accounts/acct_journal_signal_demo",
+                   "type" => "minimal_host.dependency_recovery.requested"
+                 }
+               }
+             }
+           ] = start.command_history
 
     assert replay.status == :completed
     assert replay.replayed_from_run_id == start.run_id

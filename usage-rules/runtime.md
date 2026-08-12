@@ -87,9 +87,16 @@
   manual controls.
 - Pass recognized command `Jido.Signal` envelopes from agents, routers, or
   other Jido primitives directly to `Squidie.apply_signal/2`. Use
-  `Squidie.Runtime.Signal.JidoAdapter` for outbound conversion. Do not leak raw
-  `Jido.Signal` into normal workflow authoring or treat arbitrary domain
-  signals as runtime commands.
+  `Squidie.Runtime.Signal.JidoAdapter` for outbound conversion. Route arbitrary
+  domain signals only through a host-owned `Squidie.Jido.SignalResolver` that
+  returns a closed start or run-control command.
+- Preserve runtime routing authority outside resolvers. Resolver output cannot
+  select storage, queues, dispatch adapters, or modules derived from signal
+  strings.
+- Fence each domain signal by partition plus CloudEvents source and ID before
+  applying its resolved command. Exact retries must reuse the persisted
+  resolver decision and queue without invoking current resolver code; changed
+  envelopes with the same identity fail closed.
 - Preserve `:run_signal_received` command history for applied commands.
 - Preserve the signal ID and normalized trace through the Jido adapter and
   durable command receipt. Preserve an external Jido source as audit

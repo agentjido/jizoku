@@ -1060,22 +1060,17 @@ defmodule MinimalHostApp.Smoke do
       with_journal_runtime_config(queue, fn ->
         with {:ok, command_trace} <-
                Trace.new_root(causation_id: "minimal-host-app:journal-signal:jido-start"),
-             {:ok, start_signal} <-
-               Signal.start_run(
-                 MinimalHostApp.Workflows.DependencyRecovery,
-                 :dependency_recovery,
-                 attrs,
+             {:ok, jido_start_signal} <-
+               Jido.Signal.new(
+                 "minimal_host.dependency_recovery.requested",
+                 Map.new(attrs, fn {key, value} -> {Atom.to_string(key), value} end),
                  id: "minimal-host-app:journal-signal:jido-start",
-                 trace: command_trace,
-                 metadata: %{source: "minimal_host_app_smoke"},
-                 idempotency_key: "minimal-host-app:journal-signal:start"
+                 source: "/minimal_host_app/dependency_recovery",
+                 subject: "accounts/#{attrs.account_id}"
                ),
-             {:ok, jido_start_signal} <- RuntimeSignals.to_jido(start_signal),
              jido_start_signal =
-               %{jido_start_signal | source: "/minimal_host_app/dependency_recovery"},
-             {:ok, adapted_start_signal} <- JidoAdapter.from_jido(jido_start_signal),
-             true <- adapted_start_signal.source == "/minimal_host_app/dependency_recovery",
-             {:ok, started_run} <- RuntimeSignals.apply(jido_start_signal),
+               %{jido_start_signal | extensions: %{"correlation" => command_trace}},
+             {:ok, started_run} <- RuntimeSignals.apply_domain(jido_start_signal),
              {:ok, _first_worker_run} <-
                Squidie.execute_next(owner_id: "minimal-host-app-signal-worker-a"),
              {:ok, lifecycle_metadata} <-
@@ -1115,7 +1110,12 @@ defmodule MinimalHostApp.Smoke do
               %{
                 signal_type: "start_run",
                 source: "/minimal_host_app/dependency_recovery",
-                metadata: %{source: "minimal_host_app_smoke"}
+                metadata: %{
+                  "jido" => %{
+                    "subject" => "accounts/acct_journal_signal_demo",
+                    "type" => "minimal_host.dependency_recovery.requested"
+                  }
+                }
               }
             ] ->
               :ok

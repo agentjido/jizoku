@@ -9,6 +9,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Entry do
   @type thread ::
           {:run, String.t()}
           | {:dispatch, String.t()}
+          | {:jido_signal, String.t()}
           | {:run_index, String.t()}
           | {:run_catalog, String.t()}
 

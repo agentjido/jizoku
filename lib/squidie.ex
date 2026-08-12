@@ -35,6 +35,8 @@ defmodule Squidie do
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.Signal
   alias Squidie.Runtime.Signal.JidoAdapter
+  alias Squidie.Runtime.Signal.JidoIngress
+  alias Squidie.Runtime.Signal.JidoResolver
   alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Workflow.ActionRegistry
@@ -775,8 +777,13 @@ defmodule Squidie do
   and idempotency keys in the journal command history. Raw Jido signals must use
   a supported Squidie command type. The signal source is audit provenance, not
   authorization; authenticate and authorize inbound signals before applying
-  them. Arbitrary domain signals remain rejected; a later interoperability
-  slice adds an explicit host-owned resolver.
+  them. Domain signals require a host-owned `Squidie.Jido.SignalResolver`
+  passed as `jido_signal_resolver:`. The resolver can return only bounded
+  lifecycle commands and cannot choose runtime storage, queues, or executable
+  modules from signal strings. Domain decisions are durably fenced by
+  partition plus CloudEvents source and ID before target mutation, so exact
+  retries reuse the original resolved command and queue across resolver
+  deployments.
   """
   @spec apply_signal(Signal.t() | Jido.Signal.t(), keyword()) ::
           {:ok, Squidie.ReadModel.Inspection.Snapshot.t()}
@@ -791,8 +798,8 @@ defmodule Squidie do
 
   def apply_signal(%Jido.Signal{} = signal, overrides) when is_list(overrides) do
     with {:ok, :journal} <- Routing.runtime(overrides),
-         {:ok, runtime_signal} <- JidoAdapter.from_jido(signal) do
-      SignalInterpreter.apply(runtime_signal, Routing.journal_control_options(overrides))
+         {:ok, resolver} <- JidoResolver.option(overrides) do
+      apply_jido_signal(signal, resolver, Routing.journal_control_options(overrides))
     end
   end
 
@@ -944,6 +951,25 @@ defmodule Squidie do
       {:error, reason} ->
         {:error, {:dispatch_failed, reason}}
     end
+  end
+
+  defp apply_jido_signal(signal, resolver, opts) do
+    case JidoAdapter.from_jido(signal) do
+      {:ok, runtime_signal} ->
+        SignalInterpreter.apply(runtime_signal, opts)
+
+      {:error, {:invalid_signal_adapter, {:type, :unsupported}}} = error ->
+        apply_unsupported_jido_signal(signal, resolver, opts, error)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp apply_unsupported_jido_signal(_signal, nil, _opts, error), do: error
+
+  defp apply_unsupported_jido_signal(signal, resolver, opts, _error) do
+    JidoIngress.apply(resolver, signal, opts)
   end
 
   defp replay_run_with_runtime(:journal, run_id, replay_opts, config_overrides) do
