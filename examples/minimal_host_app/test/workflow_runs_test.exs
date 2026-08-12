@@ -1365,6 +1365,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              )
 
     assert {:ok, jido_signal} = RuntimeSignals.to_jido(signal)
+    jido_signal = %{jido_signal | source: "/minimal_host_app/orders"}
 
     assert {:ok, cancelled_run} = RuntimeSignals.apply(jido_signal)
 
@@ -1381,6 +1382,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              %{signal_type: "start_run"},
              %{
                signal_type: "cancel_run",
+               source: "/minimal_host_app/orders",
                metadata: %{source: "jido_router_test"},
                idempotency_key: "minimal-host-app:jido-cancel:" <> _
              }

@@ -16,11 +16,7 @@ defmodule MinimalHostApp.RuntimeSignals do
   @spec apply(Signal.t() | Jido.Signal.t()) :: apply_result()
   def apply(%Signal{} = signal), do: Squidie.apply_signal(signal)
 
-  def apply(%Jido.Signal{} = signal) do
-    with {:ok, runtime_signal} <- JidoAdapter.from_jido(signal) do
-      Squidie.apply_signal(runtime_signal)
-    end
-  end
+  def apply(%Jido.Signal{} = signal), do: Squidie.apply_signal(signal)
 
   @spec to_jido(Signal.t()) :: {:ok, Jido.Signal.t()} | {:error, term()}
   def to_jido(%Signal{} = signal), do: JidoAdapter.to_jido(signal)

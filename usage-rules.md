@@ -27,6 +27,11 @@ itself.
 - Return `{:ok, output}` or `{:ok, output, []}` from raw `Jido.Action`
   modules. Squidie rejects non-empty or malformed action extras as an explicit
   action failure; it never silently discards Jido directives.
+- Pass recognized Squidie command `Jido.Signal` envelopes directly to
+  `Squidie.apply_signal/2`. Do not manually call the adapter first. Arbitrary
+  domain signals remain unsupported until a host-owned resolver is configured.
+- Treat the Jido envelope source as durable provenance, not authorization.
+  Authenticate and authorize inbound signals before applying them.
 - Keep workflow definitions backend-neutral.
 - Keep delivery and job boundaries thin; call host-owned modules that wrap
   Squidie public APIs.

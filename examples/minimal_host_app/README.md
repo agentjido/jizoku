@@ -209,9 +209,9 @@ example of using native Squidie context fields such as `idempotency_key` and
 
 `MinimalHostApp.RuntimeSignals` is the concrete signal boundary for this sample.
 It accepts native `Squidie.Runtime.Signal` commands and inbound `Jido.Signal`
-envelopes, converts Jido envelopes with `Squidie.Runtime.Signal.JidoAdapter`,
-and applies the resulting command with `Squidie.apply_signal/2`. The smoke path
-also verifies that the envelope ID and correlation survive the round trip and
+envelopes and passes both directly to `Squidie.apply_signal/2`. The adapter
+remains available for outbound conversion. The smoke path also verifies that
+the host-owned envelope source, ID, and correlation survive the boundary and
 that the resulting run/runnable trace remains durable across a worker handoff.
 
 The saga checkout workflow demonstrates reversible side effects:

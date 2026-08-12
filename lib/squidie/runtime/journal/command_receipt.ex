@@ -16,6 +16,7 @@ defmodule Squidie.Runtime.Journal.CommandReceipt do
         metadata: Map.get(attrs, :metadata, %{}),
         occurred_at: now
       }
+      |> maybe_put(:source, Map.get(attrs, :source))
       |> maybe_put(:signal_id, Map.get(attrs, :signal_id))
       |> maybe_put(:trace, Map.get(attrs, :trace))
       |> maybe_put(:idempotency_key, Map.get(attrs, :idempotency_key))

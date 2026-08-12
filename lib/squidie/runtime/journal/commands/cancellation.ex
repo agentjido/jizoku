@@ -232,6 +232,7 @@ defmodule Squidie.Runtime.Journal.Commands.Cancellation do
         run_id: run_id,
         payload: signal.payload,
         metadata: signal.metadata,
+        source: signal.source,
         signal_id: signal.id,
         trace: signal.trace,
         idempotency_key: signal.idempotency_key

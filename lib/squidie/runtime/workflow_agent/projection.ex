@@ -53,6 +53,10 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent.Projection.GraphState
 
+  @checkpoint_version 1
+  @checkpoint_version_key "squidie.workflow_projection.checkpoint_version"
+  @command_history_count_key "squidie.workflow_projection.command_history_count"
+
   @type anomaly :: %{
           required(:reason) => atom(),
           required(:entry_type) => atom(),
@@ -144,6 +148,8 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   @spec new() :: t()
   def new do
     %__MODULE__{applied_runnable_keys: MapSet.new()}
+    |> Map.put(@checkpoint_version_key, @checkpoint_version)
+    |> Map.put(@command_history_count_key, 0)
   end
 
   @doc false
@@ -408,18 +414,19 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   @doc false
   @spec checkpoint_compatible?(term()) :: boolean()
   def checkpoint_compatible?(%__MODULE__{} = projection) do
-    Enum.all?(
-      [
-        :terminal_status,
-        :continued_from_run_id,
-        :continued_from_key,
-        :continued_to_run_id,
-        :continued_to_key,
-        :continuation_request,
-        :continuation_origin
-      ],
-      &Map.has_key?(projection, &1)
-    ) and
+    checkpoint_schema_compatible?(projection) and
+      Enum.all?(
+        [
+          :terminal_status,
+          :continued_from_run_id,
+          :continued_from_key,
+          :continued_to_run_id,
+          :continued_to_key,
+          :continuation_request,
+          :continuation_origin
+        ],
+        &Map.has_key?(projection, &1)
+      ) and
       not stale_failed_checkpoint_missing_terminal_error?(projection)
   end
 
@@ -651,13 +658,40 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
         metadata: Map.get(data, :metadata, %{}),
         occurred_at: Map.get(data, :occurred_at)
       }
+      |> maybe_put(:source, Map.get(data, :source))
       |> maybe_put(:signal_id, Map.get(data, :signal_id))
       |> maybe_put(:trace, Map.get(data, :trace))
       |> maybe_put(:idempotency_key, Map.get(data, :idempotency_key))
       |> maybe_put(:actor, Map.get(data, :actor))
       |> maybe_put(:comment, Map.get(data, :comment))
 
-    Map.update(projection, :command_history, [command], &[command | &1])
+    projection
+    |> Map.update(:command_history, [command], &[command | &1])
+    |> Map.put(@checkpoint_version_key, @checkpoint_version)
+    |> Map.update(@command_history_count_key, 1, &(&1 + 1))
+  end
+
+  defp checkpoint_schema_compatible?(projection) do
+    current_checkpoint_schema?(projection) or
+      legacy_checkpoint_without_command_history?(projection)
+  end
+
+  defp current_checkpoint_schema?(projection) do
+    Map.get(projection, @checkpoint_version_key) == @checkpoint_version and
+      valid_command_history_count?(projection)
+  end
+
+  defp legacy_checkpoint_without_command_history?(projection) do
+    not Map.has_key?(projection, @checkpoint_version_key) and
+      not Map.has_key?(projection, @command_history_count_key) and
+      Map.get(projection, :command_history) == []
+  end
+
+  defp valid_command_history_count?(projection) do
+    count = Map.get(projection, @command_history_count_key)
+    history = Map.get(projection, :command_history)
+
+    is_integer(count) and count >= 0 and is_list(history) and count == length(history)
   end
 
   defp terminal_error_from_data(data) when is_map(data) do

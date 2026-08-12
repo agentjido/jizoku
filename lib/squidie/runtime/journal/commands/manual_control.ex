@@ -645,6 +645,7 @@ defmodule Squidie.Runtime.Journal.Commands.ManualControl do
         run_id: run_id,
         payload: %{run_id: run_id, attributes: command_attributes(attrs)},
         metadata: command_metadata(signal, attrs),
+        source: signal.source,
         signal_id: signal.id,
         trace: signal.trace,
         idempotency_key: signal.idempotency_key,

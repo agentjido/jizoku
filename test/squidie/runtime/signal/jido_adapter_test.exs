@@ -50,9 +50,9 @@ defmodule Squidie.Runtime.Signal.JidoAdapterTest do
       Signal.start_cron(@workflow, :nightly, %{"signal_id" => "scheduler-1"},
         occurred_at: @occurred_at
       ),
-      Signal.approve_run(@run_id, %{"actor" => "ops"}, occurred_at: @occurred_at),
-      Signal.reject_run(@run_id, %{"reason" => "nope"}, occurred_at: @occurred_at),
-      Signal.resume_run(@run_id, %{"actor" => "ops"}, occurred_at: @occurred_at),
+      Signal.approve_run(@run_id, %{actor: "ops"}, occurred_at: @occurred_at),
+      Signal.reject_run(@run_id, %{comment: "nope"}, occurred_at: @occurred_at),
+      Signal.resume_run(@run_id, %{actor: "ops"}, occurred_at: @occurred_at),
       Signal.cancel_run(@run_id, occurred_at: @occurred_at),
       Signal.replay_run(@run_id, allow_irreversible: true, occurred_at: @occurred_at)
     ]
@@ -93,6 +93,30 @@ defmodule Squidie.Runtime.Signal.JidoAdapterTest do
             } = jido_signal} = JidoAdapter.to_jido(signal)
 
     assert {:ok, ^signal} = JidoAdapter.from_jido(jido_signal)
+  end
+
+  test "preserves an external command source as audit provenance" do
+    data = %{
+      "payload" => %{"run_id" => @run_id}
+    }
+
+    assert {:ok, jido_signal} =
+             Jido.Signal.new("squidie.runtime.command.cancel_run", data,
+               id: "host-command-123",
+               source: "/my_app/orders",
+               time: DateTime.to_iso8601(@occurred_at)
+             )
+
+    assert {:ok,
+            %Signal{
+              source: "/my_app/orders",
+              metadata: %{},
+              occurred_at: @occurred_at
+            } = runtime_signal} =
+             JidoAdapter.from_jido(jido_signal)
+
+    assert {:ok, %Jido.Signal{source: "/my_app/orders"}} =
+             JidoAdapter.to_jido(runtime_signal)
   end
 
   test "accepts legacy Jido signals without correlation and rejects malformed extensions safely" do
@@ -281,11 +305,11 @@ defmodule Squidie.Runtime.Signal.JidoAdapterTest do
     end
   end
 
-  test "rejects non Squidie Jido signals" do
+  test "rejects Jido signals outside the Squidie command taxonomy" do
     assert {:ok, jido_signal} =
              Jido.Signal.new("other.command", %{}, source: "/other", subject: "other")
 
-    assert {:error, {:invalid_signal_adapter, {:source, :unsupported}}} =
+    assert {:error, {:invalid_signal_adapter, {:type, :unsupported}}} =
              JidoAdapter.from_jido(jido_signal)
   end
 
@@ -353,7 +377,6 @@ defmodule Squidie.Runtime.Signal.JidoAdapterTest do
 
   test "rejects mismatched and malformed Squidie Jido signal data" do
     invalid_cases = [
-      {"squidie.runtime.command.cancel_run", %{"payload" => %{}}, {:type, :missing}},
       {
         "squidie.runtime.command.cancel_run",
         %{

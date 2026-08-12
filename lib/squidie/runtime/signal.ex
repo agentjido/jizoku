@@ -17,8 +17,9 @@ defmodule Squidie.Runtime.Signal do
   | `:replay_run` | `%{run_id: Ecto.UUID.t(), allow_irreversible: boolean()}` |
 
   Every signal carries caller metadata, an occurrence timestamp, and an optional
-  idempotency key. Cron signals derive the key from scheduler identity when the
-  caller does not provide one.
+  idempotency key. Signals adapted from an external envelope may also carry its
+  source as audit provenance. Cron signals derive the key from scheduler
+  identity when the caller does not provide one.
   """
 
   alias Squidie.Runtime.Partition
@@ -50,6 +51,7 @@ defmodule Squidie.Runtime.Signal do
 
   @type t :: %__MODULE__{
           id: String.t() | nil,
+          source: String.t() | nil,
           type: command_type(),
           payload: payload(),
           trace: Trace.t() | nil,
@@ -64,6 +66,7 @@ defmodule Squidie.Runtime.Signal do
   @enforce_keys [:type, :payload, :metadata, :occurred_at]
   defstruct [
     :id,
+    :source,
     :type,
     :payload,
     :occurred_at,
