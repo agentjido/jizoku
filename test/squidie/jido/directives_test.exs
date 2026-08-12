@@ -80,7 +80,7 @@ defmodule Squidie.Jido.DirectivesTest do
         end
       end
 
-      step :jido_extras, ExtrasAction
+      step :jido_extras, ExtrasAction, retry: [max_attempts: 2]
       transition :jido_extras, on: :ok, to: :complete
     end
   end
@@ -125,7 +125,21 @@ defmodule Squidie.Jido.DirectivesTest do
       assert {:ok, []} = Directives.normalize([])
     end
 
-    test "classifies supported future directive types without exposing their contents" do
+    test "normalizes an error directive without exposing its contents" do
+      directive = %Directive.Error{error: %{secret: "error-secret"}, context: :action}
+
+      assert {:error,
+              %{
+                code: "jido_directive_error",
+                directive_types: [:error],
+                message: "Jido action returned an error directive",
+                retryable?: false
+              }} = Directives.normalize([directive])
+
+      refute inspect(Directives.normalize([directive])) =~ "secret"
+    end
+
+    test "classifies unsupported and mixed directive types without exposing their contents" do
       extras = [
         %Directive.Emit{signal: %{secret: "emit-secret"}},
         %Directive.RunInstruction{
@@ -170,13 +184,13 @@ defmodule Squidie.Jido.DirectivesTest do
     assert completed.context.accepted == true
   end
 
-  test "ordinary error transitions may recover an unsupported directive failure" do
+  test "ordinary error transitions may recover a native error directive" do
     assert {:ok, runtime} =
              Test.start_runtime(workflow: ErrorTransitionWorkflow, now: @now)
 
     on_exit(fn -> Test.stop_runtime(runtime) end)
 
-    assert {:ok, run} = Test.start(runtime, %{kind: "emit"})
+    assert {:ok, run} = Test.start(runtime, %{kind: "error"})
     assert {:completed, completed} = Test.drain(runtime, run)
     assert completed.context.recovered == true
     refute Map.has_key?(completed.context, :accepted)
@@ -191,14 +205,18 @@ defmodule Squidie.Jido.DirectivesTest do
     assert Enum.count(timeline.events, &(&1.type == :attempt_completed)) == 1
   end
 
-  for {kind, directive_type} <- [
-        {"emit", :emit},
-        {"run_instruction", :run_instruction},
-        {"error", :error},
-        {"custom", :unsupported}
+  for {kind, directive_type, code, message} <- [
+        {"emit", :emit, "unsupported_jido_directive", "Jido action directives are not supported"},
+        {"run_instruction", :run_instruction, "unsupported_jido_directive",
+         "Jido action directives are not supported"},
+        {"error", :error, "jido_directive_error", "Jido action returned an error directive"},
+        {"custom", :unsupported, "unsupported_jido_directive",
+         "Jido action directives are not supported"}
       ] do
     @kind kind
     @directive_type directive_type
+    @code code
+    @message message
 
     test "#{kind} extras fail durably before applying the runnable" do
       assert {:ok, runtime} = Test.start_runtime(workflow: ExtrasWorkflow, now: @now)
@@ -214,12 +232,14 @@ defmodule Squidie.Jido.DirectivesTest do
       assert {:failed, failed} = Test.drain(runtime, run)
       assert_receive {:extras_action_ran, run_id}
       assert run_id == run.run_id
+      refute_receive {:extras_action_ran, _run_id}
 
       assert failed.applied_runnable_keys == []
+      assert Enum.count(failed.attempts, &(&1.step == "jido_extras")) == 1
 
       assert failed.terminal_error == %{
-               code: "unsupported_jido_directive",
-               message: "Jido action directives are not supported",
+               code: @code,
+               message: @message,
                retryable?: false
              }
 
@@ -231,6 +251,7 @@ defmodule Squidie.Jido.DirectivesTest do
 
       before_loss = persistence_state(runtime)
       assert map_size(before_loss.checkpoints) > 0
+      refute inspect(before_loss) =~ "directive-secret"
       assert :ok = Test.delete_checkpoints(runtime)
       after_loss = persistence_state(runtime)
       assert after_loss.checkpoints == %{}
@@ -251,8 +272,12 @@ defmodule Squidie.Jido.DirectivesTest do
       assert persistence_state(restarted) == after_loss
       refute_receive {:extras_action_ran, _run_id}
 
-      assert {:error, %{directive_types: [@directive_type]}} =
-               Directives.normalize(extras_for(@kind))
+      assert {:error, normalization_error} = Directives.normalize(extras_for(@kind))
+      assert normalization_error.code == @code
+
+      if @code == "unsupported_jido_directive" do
+        assert normalization_error.directive_types == [@directive_type]
+      end
     end
   end
 

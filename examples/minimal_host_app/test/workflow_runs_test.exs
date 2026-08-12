@@ -10,6 +10,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.Workflows.DailyDigest
   alias MinimalHostApp.Workflows.DependencyRecovery
   alias MinimalHostApp.Workflows.JidoDirectiveBoundary
+  alias MinimalHostApp.Workflows.JidoErrorRecovery
   alias MinimalHostApp.Workflows.JidoInstructionWorkflow
   alias MinimalHostApp.Workflows.ManualApproval
   alias MinimalHostApp.Workflows.PaymentRecovery
@@ -118,6 +119,31 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            }
 
     refute inspect(failed) =~ "sample-secret"
+  end
+
+  test "raw Jido error directives use durable workflow error transitions" do
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: JidoErrorRecovery,
+               now: ~U[2026-08-10 12:00:00Z]
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Squidie.Test.start(runtime, %{})
+    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert completed.context.jido_error_recovered == true
+    refute Map.has_key?(completed.context, :must_not_be_applied)
+
+    assert completed.attempts
+           |> Enum.map(&{&1.step, &1.status})
+           |> MapSet.new() ==
+             MapSet.new([
+               {"reject", :failed},
+               {"recover", :completed}
+             ])
+
+    refute inspect(completed) =~ "sample-secret"
   end
 
   test "raw Jido instructions schedule allowlisted durable work" do
