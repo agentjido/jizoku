@@ -15,6 +15,7 @@ This example shows how an application can:
   inspection
 - exercise raw Jido actions through Squidie's explicit directive compatibility
   boundary
+- schedule allowlisted raw `Jido.Instruction` values as durable dynamic work
 
 ## Setup
 
@@ -127,8 +128,14 @@ The test suite also runs
 `MinimalHostApp.Workflows.JidoDirectiveBoundary`, whose raw `Jido.Action`
 returns an `Emit` directive. The current interoperability boundary rejects the
 directive as a redaction-safe, non-retryable failure and proves the action
-output is not applied. Later Jido slices will evolve this sample as durable
-signal and instruction effects become supported.
+output is not applied.
+
+`MinimalHostApp.Workflows.JidoInstructionWorkflow` demonstrates the supported
+instruction boundary. Host code supplies an already applied runnable as the
+causal origin, and Squidie resolves the instruction action module through the
+host-owned action registry. The instruction ID becomes the idempotent dynamic
+work identity; execution, retries, result application, and inspection use the
+normal journal runtime.
 
 ## Restart Resilience
 

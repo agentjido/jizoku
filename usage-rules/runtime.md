@@ -33,6 +33,10 @@
   the host-owned `:action_registry`.
 - Require the dynamic-work origin runnable to be applied before scheduling
   executable dynamic nodes.
+- Normalize raw `Jido.Instruction` values only through executable dynamic work.
+  Require an explicit applied origin, resolve the action module through exactly
+  one enabled registry key, persist the instruction ID as dynamic identity, and
+  let trusted Squidie attempt context override instruction context.
 - Treat dynamic edges as inspection metadata until dependency-ordered dynamic
   scheduling is explicitly implemented.
 - Treat scheduled dynamic nodes as replay-unsafe by default unless a future

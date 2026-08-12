@@ -24,6 +24,9 @@ itself.
 
 - Prefer `use Squidie.Step` for custom workflow steps.
 - Use raw `Jido.Action` modules only for explicit interop.
+- Schedule raw `Jido.Instruction` values only through
+  `Squidie.schedule_dynamic_work/3`, with an explicit applied runnable origin
+  and a host-owned action registry.
 - Return `{:ok, output}` or `{:ok, output, []}` from raw `Jido.Action`
   modules. Squidie rejects non-empty or malformed action extras as an explicit
   action failure; it never silently discards Jido directives.

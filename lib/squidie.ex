@@ -625,9 +625,11 @@ defmodule Squidie do
   one optimistic write, then missing dispatch attempts are scheduled from that
   durable plan. Pass `:action_registry`; every dynamic node must include an
   approved `:action` key and may include an `:input` map for the scheduled
-  attempt.
+  attempt. A `Jido.Instruction` is accepted directly when `:origin` identifies
+  an already applied runnable; Squidie uses the instruction ID as the durable
+  dynamic-work identity and resolves its action module through the registry.
   """
-  @spec schedule_dynamic_work(String.t(), map() | keyword(), keyword()) ::
+  @spec schedule_dynamic_work(String.t(), map() | keyword() | Jido.Instruction.t(), keyword()) ::
           {:ok, Squidie.ReadModel.Inspection.Snapshot.t()}
           | {:error,
              :not_found
@@ -638,7 +640,9 @@ defmodule Squidie do
   def schedule_dynamic_work(run_id, attrs, overrides \\ [])
 
   def schedule_dynamic_work(run_id, attrs, overrides) when is_list(overrides) do
-    with :ok <- Routing.public_dynamic_work_options(overrides),
+    with {:ok, attrs, overrides, instruction_origin} <-
+           normalize_dynamic_work_request(attrs, overrides),
+         :ok <- Routing.public_dynamic_work_options(overrides),
          {:ok, :journal} <- Routing.runtime(overrides),
          {:ok, :read_model} <- Routing.read_model(overrides),
          {:ok, storage} <- Routing.journal_storage(overrides),
@@ -648,6 +652,7 @@ defmodule Squidie do
          {:ok, now} <- dynamic_work_time(overrides),
          {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides),
          {:ok, context} <- dynamic_work_context(snapshot, overrides),
+         {:ok, attrs} <- executable_dynamic_work_attrs(attrs, instruction_origin, registry),
          {:ok, intent} <-
            DynamicWork.new_entry(
              run_id,
@@ -1184,6 +1189,30 @@ defmodule Squidie do
 
   defp put_new_dynamic_work_status(attrs, _status), do: attrs
 
+  defp normalize_dynamic_work_request(%Jido.Instruction{} = instruction, overrides) do
+    if Keyword.keyword?(overrides) do
+      case Keyword.get_values(overrides, :origin) do
+        [origin] -> {:ok, instruction, Keyword.delete(overrides, :origin), origin}
+        [] -> {:error, {:invalid_jido_instruction, {:origin, :required}}}
+        _duplicates -> {:error, {:invalid_jido_instruction, {:origin, :invalid}}}
+      end
+    else
+      {:error, {:invalid_option, {:opts, :invalid}}}
+    end
+  end
+
+  defp normalize_dynamic_work_request(attrs, overrides), do: {:ok, attrs, overrides, nil}
+
+  defp executable_dynamic_work_attrs(
+         %Jido.Instruction{} = instruction,
+         origin,
+         registry
+       ) do
+    Squidie.Runtime.Jido.Instruction.dynamic_work(instruction, origin, registry)
+  end
+
+  defp executable_dynamic_work_attrs(attrs, _origin, _registry), do: {:ok, attrs}
+
   defp record_dynamic_work_intent(
          _storage,
          _run_id,
@@ -1370,14 +1399,7 @@ defmodule Squidie do
          trace: dynamic_node_trace(dynamic_work, node_id),
          recovery: dynamic_work_recovery(Map.get(node, :action)),
          dynamic?: true,
-         dynamic_work: %{
-           dynamic_key: dynamic_work.dynamic_key,
-           action: Map.get(node, :action),
-           module: module,
-           action_opts: persisted_action_opts(module, action_opts),
-           retry: Map.get(node, :retry),
-           origin: dynamic_work.origin
-         }
+         dynamic_work: dynamic_runnable_work(dynamic_work, node, module, action_opts)
        }}
     else
       {:error, reason} ->
@@ -1467,6 +1489,32 @@ defmodule Squidie do
   end
 
   defp dynamic_node_trace(_dynamic_work, _node_id), do: nil
+
+  defp jido_instruction_metadata(node) do
+    node
+    |> Map.get(:metadata, %{})
+    |> Squidie.MapField.get(:jido_instruction)
+  end
+
+  defp dynamic_runnable_work(dynamic_work, node, module, action_opts) do
+    dynamic_work = %{
+      dynamic_key: dynamic_work.dynamic_key,
+      action: Map.get(node, :action),
+      module: module,
+      action_opts: persisted_action_opts(module, action_opts),
+      retry: Map.get(node, :retry),
+      origin: dynamic_work.origin
+    }
+
+    put_jido_instruction(dynamic_work, node)
+  end
+
+  defp put_jido_instruction(dynamic_work, node) do
+    case jido_instruction_metadata(node) do
+      nil -> dynamic_work
+      instruction -> Map.put(dynamic_work, "jido_instruction", instruction)
+    end
+  end
 
   defp dynamic_work_context(%Inspection.Snapshot{terminal?: true} = snapshot, overrides) do
     maybe_put_dynamic_work_action_registry(

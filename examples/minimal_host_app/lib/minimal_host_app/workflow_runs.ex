@@ -198,7 +198,7 @@ defmodule MinimalHostApp.WorkflowRuns do
     Squidie.inspect_continuation_chain(run_id, opts)
   end
 
-  @spec schedule_dynamic_work(Ecto.UUID.t(), map(), keyword()) ::
+  @spec schedule_dynamic_work(Ecto.UUID.t(), map() | Jido.Instruction.t(), keyword()) ::
           {:ok, run_result()} | {:error, term()}
   def schedule_dynamic_work(run_id, attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
     Squidie.schedule_dynamic_work(run_id, attrs, opts)

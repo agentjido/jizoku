@@ -183,13 +183,11 @@ defmodule Squidie.Runtime.Journal.DynamicWork do
   end
 
   defp projected_dynamic_node(node) do
-    compact(%{
-      id: Map.fetch!(node, :id),
-      action: Map.get(node, :action),
-      input: Map.get(node, :input),
-      status: Map.get(node, :status, :recorded),
-      metadata: Map.get(node, :metadata, %{})
-    })
+    node
+    |> Map.take([:id, :action, :input, :retry, :status, :metadata])
+    |> Map.put_new(:status, :recorded)
+    |> Map.put_new(:metadata, %{})
+    |> compact()
   end
 
   defp projected_dynamic_edges(data, nodes) do
