@@ -159,6 +159,7 @@ defmodule Squidie.Runtime.Journal do
   @spec thread_id(Entry.thread()) :: String.t()
   def thread_id({:run, run_id}), do: encode_thread_id("run", run_id)
   def thread_id({:dispatch, queue}), do: encode_thread_id("dispatch", queue)
+  def thread_id({:jido_signal, event_key}), do: encode_thread_id("jido_signal", event_key)
   def thread_id({:run_index, workflow}), do: encode_thread_id("run_index", workflow)
   def thread_id({:run_catalog, catalog}), do: encode_thread_id("run_catalog", catalog)
 

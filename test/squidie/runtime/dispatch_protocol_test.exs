@@ -1,5 +1,5 @@
 defmodule Squidie.Runtime.DispatchProtocolTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
@@ -50,7 +50,7 @@ defmodule Squidie.Runtime.DispatchProtocolTest do
     refute_receive {:telemetry_event, _, _, _}
   end
 
-  test "classifies run, dispatch, run index, and run catalog thread entries" do
+  test "classifies run, dispatch, Jido ingress, run index, and run catalog entries" do
     assert {:ok, run_entry} =
              DispatchProtocol.new_entry(:run_started, %{
                run_id: @run_id,
@@ -69,6 +69,17 @@ defmodule Squidie.Runtime.DispatchProtocolTest do
                occurred_at: @started_at
              })
 
+    assert {:ok, jido_entry} =
+             DispatchProtocol.new_entry(:jido_signal_resolved, %{
+               event_key: "event_key",
+               signal_id: "signal_id",
+               source: "/producer",
+               envelope_fingerprint: "fingerprint",
+               resolved_signal: %{},
+               queue: "default",
+               occurred_at: @started_at
+             })
+
     assert {:ok, catalog_entry} =
              DispatchProtocol.new_entry(:run_cataloged, %{
                run_id: @run_id,
@@ -79,6 +90,7 @@ defmodule Squidie.Runtime.DispatchProtocolTest do
 
     assert run_entry.thread == {:run, @run_id}
     assert dispatch_entry.thread == {:dispatch, "default"}
+    assert jido_entry.thread == {:jido_signal, "event_key"}
     assert index_entry.thread == {:run_index, @workflow}
     assert catalog_entry.thread == {:run_catalog, "all"}
   end

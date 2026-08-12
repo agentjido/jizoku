@@ -18,6 +18,14 @@ defmodule MinimalHostApp.RuntimeSignals do
 
   def apply(%Jido.Signal{} = signal), do: Squidie.apply_signal(signal)
 
+  @doc """
+  Routes an allowlisted domain Jido signal into a bounded Squidie command.
+  """
+  @spec apply_domain(Jido.Signal.t()) :: apply_result()
+  def apply_domain(%Jido.Signal{} = signal) do
+    Squidie.apply_signal(signal, jido_signal_resolver: MinimalHostApp.JidoSignalRoutes)
+  end
+
   @spec to_jido(Signal.t()) :: {:ok, Jido.Signal.t()} | {:error, term()}
   def to_jido(%Signal{} = signal), do: JidoAdapter.to_jido(signal)
 end

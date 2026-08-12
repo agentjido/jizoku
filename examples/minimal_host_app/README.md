@@ -214,6 +214,15 @@ remains available for outbound conversion. The smoke path also verifies that
 the host-owned envelope source, ID, and correlation survive the boundary and
 that the resulting run/runnable trace remains durable across a worker handoff.
 
+`MinimalHostApp.JidoSignalRoutes` shows the bounded domain-signal path. It
+allowlists `minimal_host.dependency_recovery.requested`, maps its data into the
+compiled `DependencyRecovery` workflow, and returns a lifecycle command without
+accepting module names, storage, queues, or dispatch configuration from the
+signal. `RuntimeSignals.apply_domain/1` supplies that resolver to
+`Squidie.apply_signal/2`. Squidie durably fences the resulting lifecycle
+command by the signal source and ID before applying it, so redelivery after a
+resolver deploy still repairs the original route.
+
 The saga checkout workflow demonstrates reversible side effects:
 
 ```elixir

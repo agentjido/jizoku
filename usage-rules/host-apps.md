@@ -53,8 +53,14 @@
   rejection, replay, and scheduler-driven starts.
 - Convert outbound commands to raw `Jido.Signal` only through
   `Squidie.Runtime.Signal.JidoAdapter`. Pass recognized inbound Jido command
-  envelopes directly to `Squidie.apply_signal/2`; arbitrary domain signals
-  remain unsupported until a host-owned resolver is configured.
+  envelopes directly to `Squidie.apply_signal/2`. Route domain signals through
+  an allowlisted `Squidie.Jido.SignalResolver`; keep workflow modules and
+  lifecycle command selection in trusted host code.
+- Do not let resolvers accept storage, queue, runtime, dispatch, or module names
+  from signal payloads. Squidie keeps those choices at the host call boundary.
+- Treat CloudEvents source and ID as one identity. Reusing that pair is an exact
+  delivery retry and reuses the first durable resolver decision; send a new ID
+  for a new domain event.
 - Authorize inbound Jido commands before calling Squidie. Their CloudEvents
   source is persisted as audit provenance and is not an authorization grant.
 

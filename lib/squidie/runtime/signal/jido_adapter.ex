@@ -9,6 +9,7 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   apply runtime commands itself.
   """
 
+  alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.Partition
   alias Squidie.Runtime.Signal
   alias Squidie.Runtime.Trace
@@ -20,6 +21,17 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   @manual_attribute_fields [:actor, :comment, :metadata]
 
   @type error :: {:invalid_signal_adapter, term()}
+  @type domain_envelope :: %{
+          id: String.t(),
+          source: String.t(),
+          subject: String.t() | nil,
+          type: String.t(),
+          occurred_at: DateTime.t(),
+          trace: Trace.t() | nil,
+          event_key: String.t(),
+          identity_key: String.t(),
+          envelope_fingerprint: String.t()
+        }
 
   @start_commands [:start_run, :start_cron]
   @run_commands [:approve_run, :reject_run, :resume_run, :cancel_run, :replay_run]
@@ -132,6 +144,64 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
 
   def from_jido(_signal), do: invalid(:signal, :expected_jido_signal)
 
+  @doc false
+  @spec domain_envelope(Jido.Signal.t()) :: {:ok, domain_envelope()} | {:error, error()}
+  def domain_envelope(%Jido.Signal{
+        id: id,
+        source: source,
+        specversion: specversion,
+        subject: subject,
+        time: time,
+        type: type,
+        datacontenttype: datacontenttype,
+        dataschema: dataschema,
+        data: data,
+        extensions: extensions
+      }) do
+    with :ok <- validate_specversion(specversion),
+         {:ok, id} <- adapter_id(id),
+         {:ok, source} <- validate_source(source),
+         {:ok, type} <- domain_type(type),
+         {:ok, subject} <- domain_subject(subject),
+         {:ok, occurred_at} <- parse_outer_time(time),
+         {:ok, trace} <- fetch_trace(extensions),
+         :ok <- validate_domain_value(data, :data),
+         :ok <- validate_domain_value(extensions, :extensions),
+         :ok <- validate_optional_domain_string(datacontenttype, :datacontenttype),
+         :ok <- validate_optional_domain_string(dataschema, :dataschema) do
+      event_key = identity_hash({source, id})
+
+      envelope_fingerprint =
+        identity_hash(%{
+          id: id,
+          source: source,
+          subject: subject,
+          type: type,
+          specversion: specversion,
+          occurred_at: DateTime.to_iso8601(occurred_at),
+          datacontenttype: datacontenttype,
+          dataschema: dataschema,
+          data: data,
+          extensions: extensions
+        })
+
+      {:ok,
+       %{
+         id: id,
+         source: source,
+         subject: subject,
+         type: type,
+         occurred_at: occurred_at,
+         trace: trace,
+         event_key: event_key,
+         identity_key: "jido:" <> event_key,
+         envelope_fingerprint: envelope_fingerprint
+       }}
+    end
+  end
+
+  def domain_envelope(_signal), do: invalid(:signal, :expected_jido_signal)
+
   defp validate_specversion("1.0.2"), do: :ok
   defp validate_specversion(_specversion), do: invalid(:specversion, :unsupported)
 
@@ -150,6 +220,42 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   end
 
   defp validate_source(_source), do: invalid(:source, :invalid)
+
+  defp domain_type(type)
+       when is_binary(type) and type != "" and byte_size(type) <= 255 do
+    if String.valid?(type), do: {:ok, type}, else: invalid(:type, :invalid)
+  end
+
+  defp domain_type(_type), do: invalid(:type, :invalid)
+
+  defp domain_subject(nil), do: {:ok, nil}
+
+  defp domain_subject(subject)
+       when is_binary(subject) and subject != "" and byte_size(subject) <= 1_024 do
+    if String.valid?(subject), do: {:ok, subject}, else: invalid(:subject, :invalid)
+  end
+
+  defp domain_subject(_subject), do: invalid(:subject, :invalid)
+
+  defp validate_domain_value(value, field) do
+    if Options.storage_safe_value?(value), do: :ok, else: invalid(field, :unsupported_term)
+  end
+
+  defp validate_optional_domain_string(nil, _field), do: :ok
+
+  defp validate_optional_domain_string(value, field)
+       when is_binary(value) and value != "" and byte_size(value) <= 1_024 do
+    if String.valid?(value), do: :ok, else: invalid(field, :invalid)
+  end
+
+  defp validate_optional_domain_string(_value, field), do: invalid(field, :invalid)
+
+  defp identity_hash(value) do
+    value
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.url_encode64(padding: false)
+  end
 
   defp jido_type(type) do
     case Map.fetch(@type_string_by_command, type) do

@@ -28,8 +28,12 @@ itself.
   modules. Squidie rejects non-empty or malformed action extras as an explicit
   action failure; it never silently discards Jido directives.
 - Pass recognized Squidie command `Jido.Signal` envelopes directly to
-  `Squidie.apply_signal/2`. Do not manually call the adapter first. Arbitrary
-  domain signals remain unsupported until a host-owned resolver is configured.
+  `Squidie.apply_signal/2`. Do not manually call the adapter first. Route
+  arbitrary domain signals only through a host-owned
+  `Squidie.Jido.SignalResolver` that returns closed lifecycle commands.
+- Resolver start commands must name compiled workflow modules in host code.
+  Never derive modules, runtime options, queues, storage, or dispatch adapters
+  from signal strings.
 - Treat the Jido envelope source as durable provenance, not authorization.
   Authenticate and authorize inbound signals before applying them.
 - Keep workflow definitions backend-neutral.

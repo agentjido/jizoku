@@ -185,9 +185,44 @@ decisions. That keeps public callers on Squidie concepts while host apps that
 already normalize commands at their own boundary can pass a
 `Squidie.Runtime.Signal` directly, and Jido integrations can pass a recognized
 command `Jido.Signal` without calling the adapter first. Arbitrary domain
-signals remain rejected at this boundary. The named helpers remain the
-ergonomic API for ordinary application code; `apply_signal/2` is the envelope
-API for agents, routers, schedulers, webhooks, and Jido interop boundaries.
+signals require an explicit host-owned `Squidie.Jido.SignalResolver`. The
+resolver receives a validated envelope and may return only a closed start or
+run-control command. It cannot choose runtime storage, queues, dispatch
+adapters, or executable modules from signal strings. The named helpers remain
+the ergonomic API for ordinary application code; `apply_signal/2` is the
+envelope API for agents, routers, schedulers, webhooks, and Jido interop
+boundaries.
+
+```elixir
+defmodule MyApp.SquidieSignalRoutes do
+  @behaviour Squidie.Jido.SignalResolver
+
+  @impl true
+  def resolve(%Jido.Signal{type: "orders.created", data: %{"id" => order_id}}) do
+    {:ok, {:start_run, MyApp.OrderWorkflow, :created, %{order_id: order_id}}}
+  end
+
+  def resolve(%Jido.Signal{}), do: {:error, :unsupported_domain_signal}
+end
+
+Squidie.apply_signal(order_created_signal,
+  jido_signal_resolver: MyApp.SquidieSignalRoutes
+)
+```
+
+Squidie derives partition-scoped command identity and idempotency from the
+CloudEvents source and ID together. Before applying the resolved lifecycle
+command, Squidie CAS-persists the envelope fingerprint, resolved command, and
+queue on a dedicated ingress thread. Exact retries therefore repair the first
+durable decision without invoking newer resolver code; changed envelopes with
+the same source and ID fail closed. The resolved command can contain workflow
+input or manual attributes, so ingress journal access requires the same
+authorization as run history. Source, occurrence time, correlation, and
+causation remain first-class receipt fields. The original domain type and
+subject are retained under the receipt's structural `metadata["jido"]` entry.
+Subjects may contain application data, so authorize diagnostic access
+accordingly. Runtime queue and partition still come from the trusted Squidie
+call boundary, not signal data.
 
 Workflow definitions are authored with the Squidie DSL. Runtime signals
 start, replay, cancel, or resolve runs of those definitions.

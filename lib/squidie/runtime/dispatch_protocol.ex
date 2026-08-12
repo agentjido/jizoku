@@ -48,6 +48,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
           | :run_continuation_fenced
           | :run_continuation_repaired
           | :run_continuation_aborted
+          | :jido_signal_resolved
           | :attempt_scheduled
           | :attempt_claimed
           | :attempt_heartbeat
@@ -87,6 +88,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
 
   @run_index_entry_types [:run_indexed]
   @run_catalog_entry_types [:run_cataloged]
+  @jido_signal_entry_types [:jido_signal_resolved]
 
   @required_fields %{
     run_signal_received: [:run_id, :signal_type, :payload, :metadata, :occurred_at],
@@ -174,6 +176,15 @@ defmodule Squidie.Runtime.DispatchProtocol do
       :abort_reason,
       :occurred_at
     ],
+    jido_signal_resolved: [
+      :event_key,
+      :signal_id,
+      :source,
+      :envelope_fingerprint,
+      :resolved_signal,
+      :queue,
+      :occurred_at
+    ],
     attempt_scheduled: [
       :run_id,
       :runnable_key,
@@ -227,6 +238,7 @@ defmodule Squidie.Runtime.DispatchProtocol do
 
   @entry_types @run_entry_types ++
                  @dispatch_entry_types ++
+                 @jido_signal_entry_types ++
                  @run_index_entry_types ++
                  @run_catalog_entry_types
 
@@ -371,6 +383,9 @@ defmodule Squidie.Runtime.DispatchProtocol do
 
   defp thread_for(type, _attrs) when type in @run_catalog_entry_types,
     do: {:run_catalog, "all"}
+
+  defp thread_for(type, attrs) when type in @jido_signal_entry_types,
+    do: {:jido_signal, attrs.event_key}
 
   defp thread_for(type, attrs) when type in @dispatch_entry_types do
     {:dispatch, attrs.queue}
