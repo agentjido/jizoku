@@ -19,22 +19,36 @@ defmodule Squidie.Runtime.Jido.Directives do
     {:ok, []}
   end
 
+  def normalize([%Directive.Error{}]) do
+    compatibility_error(
+      "jido_directive_error",
+      "Jido action returned an error directive",
+      [:error]
+    )
+  end
+
   def normalize(extras) when is_list(extras) do
-    {:error,
-     %{
-       code: "unsupported_jido_directive",
-       directive_types: Enum.map(extras, &directive_type/1),
-       message: "Jido action directives are not supported",
-       retryable?: false
-     }}
+    compatibility_error(
+      "unsupported_jido_directive",
+      "Jido action directives are not supported",
+      Enum.map(extras, &directive_type/1)
+    )
   end
 
   def normalize(_extras) do
+    compatibility_error(
+      "invalid_jido_action_extras",
+      "Jido action extras must be a list",
+      []
+    )
+  end
+
+  defp compatibility_error(code, message, directive_types) do
     {:error,
      %{
-       code: "invalid_jido_action_extras",
-       directive_types: [],
-       message: "Jido action extras must be a list",
+       code: code,
+       directive_types: directive_types,
+       message: message,
        retryable?: false
      }}
   end

@@ -3519,6 +3519,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp safe_error_message(message)
        when message in [
               "gateway timeout",
+              "Jido action returned an error directive",
               "Jido action directives are not supported",
               "Jido action extras must be a list",
               "journal attempt is incompatible with the current workflow definition",
