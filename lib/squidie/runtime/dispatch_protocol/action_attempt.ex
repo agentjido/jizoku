@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Squidie.Runtime.DispatchProtocol.ActionAttempt do
   @moduledoc """
   Rebuildable projection of one dispatch attempt.
@@ -9,6 +10,8 @@ defmodule Squidie.Runtime.DispatchProtocol.ActionAttempt do
   @type status :: :available | :retry_scheduled | :claimed | :completed | :failed
 
   alias Squidie.Runtime.Trace
+
+  @completion_encoding_key "completion_encoding"
 
   @type t :: %__MODULE__{
           run_id: String.t(),
@@ -79,7 +82,25 @@ defmodule Squidie.Runtime.DispatchProtocol.ActionAttempt do
   @doc false
   @spec upgrade(t()) :: t()
   def upgrade(%__MODULE__{} = attempt) do
+    completion_encoding = Map.get(attempt, @completion_encoding_key)
     attributes = Map.delete(attempt, :__struct__)
-    struct(__MODULE__, attributes)
+
+    __MODULE__
+    |> struct(attributes)
+    |> put_completion_encoding(completion_encoding)
+  end
+
+  @doc false
+  @spec completion_encoding(t()) :: term()
+  def completion_encoding(%__MODULE__{} = attempt) do
+    Map.get(attempt, @completion_encoding_key)
+  end
+
+  @doc false
+  @spec put_completion_encoding(t(), term()) :: t()
+  def put_completion_encoding(%__MODULE__{} = attempt, nil), do: attempt
+
+  def put_completion_encoding(%__MODULE__{} = attempt, encoding) do
+    Map.put(attempt, @completion_encoding_key, encoding)
   end
 end

@@ -23,6 +23,7 @@ defmodule Squidie.ReadModel.Inspection do
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
+  alias Squidie.Runtime.Jido.ResultEnvelope
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Options
   alias Squidie.Runtime.Journal.Storage
@@ -578,7 +579,11 @@ defmodule Squidie.ReadModel.Inspection do
       owner_id: attempt.owner_id,
       lease_until: attempt.lease_until,
       claimed_at: attempt.claimed_at,
-      result: attempt.result,
+      result:
+        ResultEnvelope.public_result(
+          attempt.result,
+          ActionAttempt.completion_encoding(attempt)
+        ),
       completed_at: attempt.completed_at,
       transition: attempt.transition,
       error: attempt.error,

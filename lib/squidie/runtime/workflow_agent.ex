@@ -16,6 +16,7 @@ defmodule Squidie.Runtime.WorkflowAgent do
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
+  alias Squidie.Runtime.Jido.ResultEnvelope
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Checkpoint
   alias Squidie.Runtime.Journal.Storage
@@ -253,7 +254,8 @@ defmodule Squidie.Runtime.WorkflowAgent do
          %ActionAttempt{} = attempt,
          {:ok, current_agent, applied_attempts}
        ) do
-    if deferred_completion?(attempt) do
+    if deferred_completion?(attempt) or
+         ResultEnvelope.native_effect?(ActionAttempt.completion_encoding(attempt)) do
       {:cont, {:ok, current_agent, applied_attempts}}
     else
       apply_pending_result_attempt(storage, opts, attempt, current_agent, applied_attempts)
@@ -423,6 +425,9 @@ defmodule Squidie.Runtime.WorkflowAgent do
 
       not is_map(attempt.result) ->
         {:error, :missing_result}
+
+      ResultEnvelope.native_effect?(ActionAttempt.completion_encoding(attempt)) ->
+        {:error, :native_jido_effect_requires_executor_recovery}
 
       attempt.run_id != run_id ->
         {:error, :wrong_run}

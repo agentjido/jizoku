@@ -658,8 +658,10 @@ defmodule Squidie.Runtime.DispatchAgent do
              is_binary(claim_token) and is_map(result) and is_integer(thread_rev) and
              thread_rev >= 0 and is_list(opts) do
     with {:ok, now} <- lifecycle_now(opts),
+         {:ok, completion_encoding} <- completion_encoding(opts),
          {:ok, completion_target} <-
-           completion_target(projection, runnable_key, claim_id, claim_token, result, now) do
+           completion_target(projection, runnable_key, claim_id, claim_token, result, now),
+         :ok <- validate_completion_encoding(completion_target, completion_encoding) do
       complete_target(completion_target, %{
         storage: storage,
         agent: agent,
@@ -670,6 +672,7 @@ defmodule Squidie.Runtime.DispatchAgent do
         claim_token: claim_token,
         result: result,
         execution_opts: Keyword.get(opts, :execution_opts, []),
+        completion_encoding: completion_encoding,
         guardrails: Keyword.get(opts, :guardrails, []),
         now: now
       })
@@ -1260,6 +1263,7 @@ defmodule Squidie.Runtime.DispatchAgent do
            claim_token: claim_token,
            result: result,
            execution_opts: execution_opts,
+           completion_encoding: completion_encoding,
            guardrails: guardrails,
            now: now
          }
@@ -1267,18 +1271,24 @@ defmodule Squidie.Runtime.DispatchAgent do
     with :ok <- ensure_run_not_continuation_fenced(projection, attempt.run_id),
          :ok <- active_run(storage, attempt.run_id),
          {:ok, completed_entry} <-
-           DispatchProtocol.new_entry(:attempt_completed, %{
-             run_id: attempt.run_id,
-             runnable_key: attempt.runnable_key,
-             claim_id: claim_id,
-             claim_token_hash: claim_token_hash(claim_token),
-             queue: queue,
-             trace: attempt.trace,
-             result: result,
-             guardrails: guardrails,
-             execution_opts: execution_opts,
-             occurred_at: now
-           }),
+           DispatchProtocol.new_entry(
+             :attempt_completed,
+             maybe_put_completion_encoding(
+               %{
+                 run_id: attempt.run_id,
+                 runnable_key: attempt.runnable_key,
+                 claim_id: claim_id,
+                 claim_token_hash: claim_token_hash(claim_token),
+                 queue: queue,
+                 trace: attempt.trace,
+                 result: result,
+                 guardrails: guardrails,
+                 execution_opts: execution_opts,
+                 occurred_at: now
+               },
+               completion_encoding
+             )
+           ),
          {:ok, completed_agent} <-
            persist_dispatch_entry(storage, agent, projection, thread_rev, completed_entry) do
       {:ok,
@@ -1888,6 +1898,37 @@ defmodule Squidie.Runtime.DispatchAgent do
       :error ->
         {:error, :unknown_runnable_intent}
     end
+  end
+
+  defp completion_encoding(opts) do
+    case Keyword.get(opts, :completion_encoding) do
+      nil ->
+        {:ok, nil}
+
+      %{"effect" => effect, "version" => version} = encoding
+      when map_size(encoding) == 2 and is_binary(effect) and effect != "" and
+             byte_size(effect) <= 128 and is_integer(version) and version > 0 ->
+        {:ok, encoding}
+
+      _invalid ->
+        {:error, {:invalid_option, {:completion_encoding, :invalid}}}
+    end
+  end
+
+  defp validate_completion_encoding({:claimed, %ActionAttempt{}}, _encoding), do: :ok
+
+  defp validate_completion_encoding({:completed, %ActionAttempt{} = attempt}, encoding) do
+    if ActionAttempt.completion_encoding(attempt) == encoding do
+      :ok
+    else
+      {:error, :conflicting_completion}
+    end
+  end
+
+  defp maybe_put_completion_encoding(attrs, nil), do: attrs
+
+  defp maybe_put_completion_encoding(attrs, encoding) do
+    Map.put(attrs, "completion_encoding", encoding)
   end
 
   defp validate_current_claim(%ActionAttempt{} = attempt, claim_id, claim_token, now) do

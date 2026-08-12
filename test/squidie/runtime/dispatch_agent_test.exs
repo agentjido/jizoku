@@ -338,7 +338,7 @@ defmodule Squidie.Runtime.DispatchAgentTest do
 
     assert {:ok, thread} = Journal.append_entries(@storage, [scheduled_entry])
 
-    checkpoint_projection = %Projection{}
+    checkpoint_projection = Projection.new()
 
     assert :ok =
              Journal.put_checkpoint(
@@ -765,6 +765,21 @@ defmodule Squidie.Runtime.DispatchAgentTest do
 
     result = %{"status" => "captured"}
 
+    assert {:error, {:invalid_option, {:completion_encoding, :invalid}}} =
+             DispatchAgent.complete(
+               @storage,
+               claimed_agent,
+               @runnable_key,
+               claim_id,
+               claim_token,
+               result,
+               now: @claimed_at,
+               completion_encoding: %{effect: :unsafe}
+             )
+
+    assert {:ok, [_scheduled_entry, _claim_entry]} =
+             Journal.load_entries(@storage, {:dispatch, "default"})
+
     assert {:ok,
             %{
               agent: completed_agent,
@@ -808,6 +823,7 @@ defmodule Squidie.Runtime.DispatchAgentTest do
              )
 
     result = %{"status" => "captured"}
+    completion_encoding = %{"effect" => "contract-test", "version" => 1}
 
     assert {:ok, %{agent: completed_agent, attempt: completed_attempt}} =
              DispatchAgent.complete(
@@ -817,8 +833,11 @@ defmodule Squidie.Runtime.DispatchAgentTest do
                claim_id,
                claim_token,
                result,
-               now: @claimed_at
+               now: @claimed_at,
+               completion_encoding: completion_encoding
              )
+
+    assert ActionAttempt.completion_encoding(completed_attempt) == completion_encoding
 
     assert {:ok, %{agent: ^completed_agent, attempt: ^completed_attempt}} =
              DispatchAgent.complete(
@@ -828,8 +847,43 @@ defmodule Squidie.Runtime.DispatchAgentTest do
                claim_id,
                claim_token,
                result,
+               now: @claimed_at,
+               completion_encoding: completion_encoding
+             )
+
+    assert {:error, :conflicting_completion} =
+             DispatchAgent.complete(
+               @storage,
+               completed_agent,
+               @runnable_key,
+               claim_id,
+               claim_token,
+               result,
                now: @claimed_at
              )
+
+    legacy_attempts =
+      Map.new(completed_agent.state.projection.attempts, fn {key, attempt} ->
+        {key, Map.delete(attempt, "completion_encoding")}
+      end)
+
+    legacy_projection =
+      completed_agent.state.projection
+      |> Map.put(:attempts, legacy_attempts)
+      |> Map.delete("squidie_dispatch_checkpoint_version")
+
+    assert :ok =
+             Journal.put_checkpoint(
+               @storage,
+               {:dispatch, "default"},
+               legacy_projection,
+               completed_agent.state.thread_rev,
+               updated_at: @claimed_at
+             )
+
+    assert {:ok, rebuilt} = DispatchAgent.rebuild(@storage, "default")
+    assert %ActionAttempt{} = rebuilt_attempt = rebuilt.state.projection.attempts[@runnable_key]
+    assert ActionAttempt.completion_encoding(rebuilt_attempt) == completion_encoding
 
     assert {:ok, entries} = Journal.load_entries(@storage, {:dispatch, "default"})
     assert Enum.count(entries, &(&1.type == :attempt_completed)) == 1

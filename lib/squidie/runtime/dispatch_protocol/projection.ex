@@ -12,6 +12,9 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.Trace
 
+  @checkpoint_version 2
+  @checkpoint_version_key "squidie_dispatch_checkpoint_version"
+
   @continuation_abort_reasons [:predecessor_changed, :predecessor_terminal]
 
   @continuation_blocked_entry_types [
@@ -84,13 +87,17 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @doc false
   @spec new() :: t()
   def new do
-    %__MODULE__{
-      continuation_fences: %{},
-      continuation_repairs: %{},
-      continuation_aborts: %{},
-      queued_run_ids: MapSet.new(),
-      terminal_runs: MapSet.new()
-    }
+    Map.put(
+      %__MODULE__{
+        continuation_fences: %{},
+        continuation_repairs: %{},
+        continuation_aborts: %{},
+        queued_run_ids: MapSet.new(),
+        terminal_runs: MapSet.new()
+      },
+      @checkpoint_version_key,
+      @checkpoint_version
+    )
   end
 
   @doc false
@@ -108,7 +115,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   @doc false
   @spec normalize(t()) :: t()
   def normalize(%__MODULE__{} = projection) do
-    %__MODULE__{
+    normalized = %__MODULE__{
       attempts: normalize_attempts(Map.get(projection, :attempts, %{})),
       anomalies: Map.get(projection, :anomalies, []),
       continuation_fences: normalize_map(Map.get(projection, :continuation_fences, %{})),
@@ -117,12 +124,15 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
       queued_run_ids: Map.get(projection, :queued_run_ids, MapSet.new()),
       terminal_runs: Map.get(projection, :terminal_runs, MapSet.new())
     }
+
+    Map.put(normalized, @checkpoint_version_key, @checkpoint_version)
   end
 
   @doc false
   @spec checkpoint_compatible?(term()) :: boolean()
   def checkpoint_compatible?(%__MODULE__{} = projection) do
-    with true <- Map.has_key?(projection, :continuation_fences),
+    with @checkpoint_version <- Map.get(projection, @checkpoint_version_key),
+         true <- Map.has_key?(projection, :continuation_fences),
          true <- Map.has_key?(projection, :continuation_repairs),
          true <- Map.has_key?(projection, :continuation_aborts),
          true <- is_map(projection.continuation_fences),
@@ -933,11 +943,14 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
   end
 
   defp complete_attempt(projection, entry, %ActionAttempt{} = attempt) do
+    entry_encoding = Map.get(entry.data, "completion_encoding")
+
     cond do
       terminal_attempt?(projection, attempt) ->
         add_anomaly(projection, entry, :terminal_run)
 
-      attempt.status == :completed and attempt.result == entry.data.result ->
+      attempt.status == :completed and attempt.result == entry.data.result and
+          ActionAttempt.completion_encoding(attempt) == entry_encoding ->
         if matching_claim?(attempt, entry.data) do
           projection
         else
@@ -958,7 +971,7 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
 
   defp complete_matching_claim(projection, entry, %ActionAttempt{} = attempt) do
     update_matching_claim(projection, entry, fn %ActionAttempt{} ->
-      %ActionAttempt{
+      completed = %ActionAttempt{
         attempt
         | status: :completed,
           result: entry.data.result,
@@ -967,6 +980,11 @@ defmodule Squidie.Runtime.DispatchProtocol.Projection do
           completed_at: entry.occurred_at,
           error: nil
       }
+
+      ActionAttempt.put_completion_encoding(
+        completed,
+        Map.get(entry.data, "completion_encoding")
+      )
     end)
   end
 
