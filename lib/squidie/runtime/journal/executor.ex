@@ -2809,7 +2809,7 @@ defmodule Squidie.Runtime.Journal.Executor do
          claim_id,
          opts
        ) do
-    %{
+    trusted_context = %{
       run_id: attempt.run_id,
       partition: execution_partition(opts),
       workflow: workflow,
@@ -2826,6 +2826,23 @@ defmodule Squidie.Runtime.Journal.Executor do
         |> Map.merge(attempt.input)
         |> Map.merge(run_context(workflow_agent))
     }
+
+    workflow_agent
+    |> dynamic_instruction_context(attempt)
+    |> Map.merge(trusted_context)
+  end
+
+  defp dynamic_instruction_context(workflow_agent, %ActionAttempt{} = attempt) do
+    with {:ok, runnable} <- dynamic_planned_runnable(workflow_agent, attempt),
+         instruction when is_map(instruction) <-
+           runnable
+           |> map_value(:dynamic_work, %{})
+           |> map_value(:jido_instruction),
+         context when is_map(context) <- map_value(instruction, :context) do
+      context
+    else
+      _not_an_instruction -> %{}
+    end
   end
 
   defp execution_step_opts(step, opts) when is_map(step) and is_list(opts) do

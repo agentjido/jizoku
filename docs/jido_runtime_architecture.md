@@ -126,6 +126,7 @@ which Jido primitives sit behind that boundary:
 | `Jido.Thread` / `Jido.Thread.Entry` | Durable journal facts for run, dispatch, index, and catalog threads |
 | `Jido.Exec` | Action execution inside the journal executor |
 | `Jido.Signal` | Interop envelope for Squidie runtime command signals |
+| `Jido.Instruction` | Allowlisted executable dynamic work with an explicit applied Squidie origin |
 
 Support code also uses lower-level primitives such as
 `Jido.Thread.EntryNormalizer` and validates built-in storage adapters like
@@ -140,6 +141,18 @@ command envelopes may be passed directly to `Squidie.apply_signal/2`; the
 public boundary invokes the same adapter before the journal command
 interpreter. Command receipt and inspection details are covered in the next
 section.
+
+Host code may schedule a raw `Jido.Instruction` through
+`Squidie.schedule_dynamic_work/3`. The instruction action module must resolve
+to exactly one enabled host action key, its params and context must be bounded
+storage-safe values, and its ID becomes the durable dynamic-work identity. The
+call must provide `origin: %{runnable_key: ..., step: ..., attempt: ...}` for an
+already applied runnable. That explicit origin keeps the instruction inside the
+workflow's existing causal graph and prevents out-of-band work from replacing
+declared progression. Squidie-owned execution context wins over instruction
+context keys; reserved runtime keys are rejected. Squidie translates only the
+Jido `:retry` option into the persisted dynamic-node retry policy; other
+instruction-owned execution options fail closed.
 
 ## Runtime Command Signals
 

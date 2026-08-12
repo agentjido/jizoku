@@ -21,6 +21,8 @@ defmodule Squidie.Workflow.ActionRegistry do
           | :invalid_action_key
           | :unknown_action_key
           | :disabled_action_key
+          | :unknown_action_module
+          | :ambiguous_action_module
           | :incompatible_action_module
   @type registry_entry ::
           module()
@@ -147,6 +149,18 @@ defmodule Squidie.Workflow.ActionRegistry do
       end
     end
   end
+
+  @doc false
+  @spec action_key_for_module(module() | term(), registry()) ::
+          {:ok, action_key()} | {:error, action_validation_error()}
+  def action_key_for_module(module, registry) when is_atom(module) and not is_boolean(module) do
+    case RegistryHelpers.registry_pairs(registry, fn _key -> %{} end) do
+      {:ok, pairs} -> classify_module_action_keys(pairs, module, registry)
+      {:error, _reason} -> {:error, :unknown_action_module}
+    end
+  end
+
+  def action_key_for_module(_module, _registry), do: {:error, :unknown_action_module}
 
   @doc false
   @spec resolve_dry_run(action_key() | term(), registry()) ::
@@ -579,6 +593,22 @@ defmodule Squidie.Workflow.ActionRegistry do
   defp valid_action_key?(action) when is_atom(action), do: true
   defp valid_action_key?(action) when is_binary(action), do: action != ""
   defp valid_action_key?(_action), do: false
+
+  defp classify_module_action_keys(pairs, module, registry) do
+    matches =
+      Enum.reduce(pairs, [], fn {key, _entry}, action_keys ->
+        case resolve_action(key, registry) do
+          {:ok, ^module} -> [key | action_keys]
+          _not_a_match -> action_keys
+        end
+      end)
+
+    case matches do
+      [key] -> {:ok, key}
+      [] -> {:error, :unknown_action_module}
+      [_first, _second | _rest] -> {:error, :ambiguous_action_module}
+    end
+  end
 
   defp module?(module) when is_atom(module) do
     module

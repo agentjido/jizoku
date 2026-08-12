@@ -10,6 +10,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.Workflows.DailyDigest
   alias MinimalHostApp.Workflows.DependencyRecovery
   alias MinimalHostApp.Workflows.JidoDirectiveBoundary
+  alias MinimalHostApp.Workflows.JidoInstructionWorkflow
   alias MinimalHostApp.Workflows.ManualApproval
   alias MinimalHostApp.Workflows.PaymentRecovery
   alias MinimalHostApp.Workflows.RetryVerification
@@ -117,6 +118,66 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            }
 
     refute inspect(failed) =~ "sample-secret"
+  end
+
+  test "raw Jido instructions schedule allowlisted durable work" do
+    now = ~U[2026-08-10 12:00:00Z]
+
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: JidoInstructionWorkflow,
+               action_registry: %{"sample.enrich" => JidoInstructionWorkflow.Enrich},
+               now: now
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    assert {:ok, run} = Squidie.Test.start(runtime, %{})
+
+    assert {:reached, prepared} =
+             Squidie.Test.execute_until(
+               runtime,
+               run,
+               &(&1.applied_runnable_keys != []),
+               max_steps: 1
+             )
+
+    assert %{runnable_key: runnable_key, attempt_number: attempt} =
+             Enum.find(prepared.planned_runnables, &(&1.step == "prepare"))
+
+    origin = %{runnable_key: runnable_key, step: "prepare", attempt: attempt}
+
+    instruction =
+      Jido.Instruction.new!(
+        id: "sample-instruction-1",
+        action: JidoInstructionWorkflow.Enrich,
+        params: %{order_id: "order-123"},
+        context: %{request_id: "request-456"}
+      )
+
+    opts = [
+      runtime: :journal,
+      read_model: :read_model,
+      journal_storage: runtime.storage,
+      queue: runtime.queue,
+      partition: runtime.partition,
+      now: now,
+      origin: origin,
+      action_registry: %{"sample.enrich" => JidoInstructionWorkflow.Enrich}
+    ]
+
+    assert {:ok, scheduled} = WorkflowRuns.schedule_dynamic_work(run.run_id, instruction, opts)
+    assert {:ok, ^scheduled} = WorkflowRuns.schedule_dynamic_work(run.run_id, instruction, opts)
+
+    assert {:blocked, enriched} = Squidie.Test.drain(runtime, run)
+
+    assert enriched.context.instruction_order == %{
+             id: "order-123",
+             request_id: "request-456"
+           }
+
+    assert {:ok, _advanced} = Squidie.Test.advance_time(runtime, 60, :second)
+    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert completed.context.instruction_workflow_finished
   end
 
   test "public test runtime advances a host retry without sleeping" do
