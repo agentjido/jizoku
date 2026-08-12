@@ -2,9 +2,13 @@
 defmodule Squidie.Runtime.Jido.Outbox do
   @moduledoc false
 
+  alias Jido.Agent.Directive
   alias Squidie.Runtime.DispatchProtocol
+  alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.Journal.Options
+  alias Squidie.Runtime.WorkflowAgent
+  alias Squidie.Runtime.WorkflowAgent.Projection
 
   @items_key "items"
   @anomalies_key "anomalies"
@@ -43,6 +47,7 @@ defmodule Squidie.Runtime.Jido.Outbox do
   def prepare(%Jido.Signal{} = signal, run_id, source_runnable_key, route) do
     with :ok <- non_empty_string(run_id, :run_id),
          :ok <- non_empty_string(source_runnable_key, :source_runnable_key),
+         :ok <- non_empty_string(signal.id, :signal_id),
          :ok <- route(route),
          {:ok, encoded_signal} <- encode_signal(signal) do
       outbox_id = fingerprint({run_id, source_runnable_key, signal.id})
@@ -63,6 +68,105 @@ defmodule Squidie.Runtime.Jido.Outbox do
 
   def prepare(_signal, _run_id, _source_runnable_key, _route) do
     invalid(:signal)
+  end
+
+  @doc false
+  @spec prepare_directive(Directive.Emit.t(), ActionAttempt.t()) ::
+          {:ok, intent()} | {:error, {:invalid_jido_emit, atom()}}
+  def prepare_directive(
+        %Directive.Emit{signal: %Jido.Signal{} = signal, dispatch: nil},
+        %ActionAttempt{} = attempt
+      ) do
+    prepare(signal, attempt.run_id, attempt.runnable_key)
+  end
+
+  def prepare_directive(%Directive.Emit{dispatch: dispatch}, %ActionAttempt{})
+      when not is_nil(dispatch) do
+    invalid(:dispatch)
+  end
+
+  def prepare_directive(%Directive.Emit{}, %ActionAttempt{}) do
+    invalid(:signal)
+  end
+
+  @doc false
+  @spec encode_intent(intent()) :: map()
+  def encode_intent(intent) when is_map(intent) do
+    %{
+      @outbox_id_key => Map.get(intent, :outbox_id),
+      "run_id" => Map.get(intent, :run_id),
+      @source_runnable_key => Map.get(intent, :source_runnable_key),
+      "signal_id" => Map.get(intent, :signal_id),
+      "signal" => Map.get(intent, :signal),
+      @route_key => Map.get(intent, :route),
+      @fingerprint_key => Map.get(intent, :signal_fingerprint)
+    }
+  end
+
+  @doc false
+  @spec decode_intent(map()) :: {:ok, intent()} | {:error, {:invalid_jido_emit, atom()}}
+  def decode_intent(encoded) when is_map(encoded) and map_size(encoded) == 7 do
+    with {:ok, outbox_id} <- non_empty_value(encoded, @outbox_id_key),
+         {:ok, run_id} <- non_empty_value(encoded, "run_id"),
+         {:ok, source_runnable_key} <- non_empty_value(encoded, @source_runnable_key),
+         {:ok, signal_id} <- non_empty_value(encoded, "signal_id"),
+         signal when is_map(signal) <- Map.get(encoded, "signal"),
+         {:ok, %Jido.Signal{id: ^signal_id}} <- decode_signal(signal),
+         {:ok, route} <- non_empty_value(encoded, @route_key),
+         :ok <- route(route),
+         {:ok, signal_fingerprint} <- non_empty_value(encoded, @fingerprint_key),
+         true <- fingerprint({run_id, source_runnable_key, signal_id}) == outbox_id,
+         true <- fingerprint({signal, route}) == signal_fingerprint do
+      {:ok,
+       %{
+         outbox_id: outbox_id,
+         run_id: run_id,
+         source_runnable_key: source_runnable_key,
+         signal_id: signal_id,
+         signal: signal,
+         route: route,
+         signal_fingerprint: signal_fingerprint
+       }}
+    else
+      _invalid -> invalid(:intent)
+    end
+  end
+
+  def decode_intent(_encoded) do
+    invalid(:intent)
+  end
+
+  @doc false
+  @spec durable_entries(map(), ActionAttempt.t(), WorkflowAgent.t(), DateTime.t()) ::
+          {:ok, [Entry.t()]} | {:error, {:invalid_jido_emit, atom()}}
+  def durable_entries(
+        encoded_intent,
+        %ActionAttempt{} = attempt,
+        workflow_agent,
+        %DateTime{} = now
+      ) do
+    with {:ok, intent} <- decode_intent(encoded_intent),
+         true <- intent.run_id == attempt.run_id,
+         true <- intent.source_runnable_key == attempt.runnable_key,
+         {:ok, entry} <- enqueue_entry(intent, now) do
+      classify_durable_entry(intent, entry, workflow_agent)
+    else
+      {:error, {:invalid_jido_emit, _reason}} = error -> error
+      _invalid -> invalid(:intent)
+    end
+  end
+
+  @doc false
+  @spec recorded?(map(), ActionAttempt.t(), WorkflowAgent.t()) :: boolean()
+  def recorded?(encoded_intent, %ActionAttempt{} = attempt, workflow_agent) do
+    with {:ok, intent} <- decode_intent(encoded_intent),
+         %{"enqueued_at" => %DateTime{} = enqueued_at} <-
+           find_item(workflow_agent, intent.outbox_id),
+         {:ok, []} <- durable_entries(encoded_intent, attempt, workflow_agent, enqueued_at) do
+      true
+    else
+      _not_recorded -> false
+    end
   end
 
   @doc false
@@ -305,6 +409,35 @@ defmodule Squidie.Runtime.Jido.Outbox do
     end
   end
 
+  defp classify_durable_entry(intent, entry, workflow_agent) do
+    workflow_projection = workflow_agent.state.projection
+    projection = Projection.jido_outbox(workflow_projection)
+    {updated, anomaly} = apply_entry_observed(projection, entry)
+
+    cond do
+      not is_nil(anomaly) -> invalid(:conflict)
+      updated == projection -> exact_existing_intent(intent, projection)
+      Projection.terminal?(workflow_projection) -> invalid(:terminal_run)
+      true -> {:ok, [entry]}
+    end
+  end
+
+  defp exact_existing_intent(intent, projection) do
+    case fetch_item(projection, intent.outbox_id) do
+      {:ok, _existing} -> {:ok, []}
+      :error -> invalid(:intent)
+    end
+  end
+
+  defp find_item(workflow_agent, outbox_id) do
+    projection = Projection.jido_outbox(workflow_agent.state.projection)
+
+    case fetch_item(projection, outbox_id) do
+      {:ok, item} -> item
+      :error -> nil
+    end
+  end
+
   defp classify_duplicate_enqueue(projection, _entry, existing, item)
        when existing == item do
     projection
@@ -443,9 +576,6 @@ defmodule Squidie.Runtime.Jido.Outbox do
   defp raw_anomalies(_projection) do
     []
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp fingerprint(value) do
     value

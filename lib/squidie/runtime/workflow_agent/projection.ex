@@ -1537,7 +1537,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
       |> jido_outbox()
       |> Outbox.apply_entry_observed(entry)
 
-    projection = Map.put(projection, @jido_outbox_key, outbox)
+    %__MODULE__{} = projection = Map.put(projection, @jido_outbox_key, outbox)
 
     case anomaly do
       nil -> projection
