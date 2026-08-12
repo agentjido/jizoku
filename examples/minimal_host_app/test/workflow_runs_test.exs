@@ -12,6 +12,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.Workflows.JidoDirectiveBoundary
   alias MinimalHostApp.Workflows.JidoErrorRecovery
   alias MinimalHostApp.Workflows.JidoInstructionWorkflow
+  alias MinimalHostApp.Workflows.JidoRunInstructionWorkflow
   alias MinimalHostApp.Workflows.ManualApproval
   alias MinimalHostApp.Workflows.PaymentRecovery
   alias MinimalHostApp.Workflows.RetryVerification
@@ -204,6 +205,70 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, _advanced} = Squidie.Test.advance_time(runtime, 60, :second)
     assert {:completed, completed} = Squidie.Test.drain(runtime, run)
     assert completed.context.instruction_workflow_finished
+  end
+
+  test "raw Jido RunInstruction directives durably execute follow-up work" do
+    now = ~U[2026-08-10 12:00:00Z]
+
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: JidoRunInstructionWorkflow,
+               action_registry: %{"sample.enrich" => JidoInstructionWorkflow.Enrich},
+               now: now
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    assert {:ok, run} = Squidie.Test.start(runtime, %{})
+    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert completed.context.prepared == true
+    assert completed.context.instruction_order.id == "order-from-directive"
+
+    assert completed.context.instruction_order.request_id ==
+             "sample-directive-request"
+
+    assert [dynamic] = completed.dynamic_work
+    assert dynamic.dynamic_key == "jido-instruction:sample-followup"
+    assert [node] = dynamic.nodes
+
+    assert node.metadata["jido_instruction"] == %{
+             "context" => %{request_id: "sample-directive-request"},
+             "id" => "sample-followup"
+           }
+  end
+
+  test "raw Jido RunInstruction directives survive the Ecto journal boundary" do
+    queue = "jido-run-instruction-#{System.unique_integer([:positive])}"
+    registry = %{"sample.enrich" => JidoInstructionWorkflow.Enrich}
+
+    assert {:ok, started} =
+             Squidie.start(JidoRunInstructionWorkflow, :manual, %{}, queue: queue)
+
+    assert {:ok, after_source} =
+             Squidie.execute_next(
+               queue: queue,
+               owner_id: "minimal-host-jido-directive-source",
+               action_registry: registry
+             )
+
+    assert after_source.run_id == started.run_id
+    refute after_source.terminal?
+    assert after_source.context.prepared == true
+    refute Map.has_key?(after_source.context, :instruction_order)
+
+    assert {:ok, completed} =
+             Squidie.execute_next(
+               queue: queue,
+               owner_id: "minimal-host-jido-directive-followup",
+               action_registry: registry
+             )
+
+    assert completed.run_id == started.run_id
+    assert completed.status == :completed
+
+    assert completed.context.instruction_order == %{
+             id: "order-from-directive",
+             request_id: "sample-directive-request"
+           }
   end
 
   test "public test runtime advances a host retry without sleeping" do

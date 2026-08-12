@@ -240,6 +240,29 @@ call boundary, not signal data.
 Workflow definitions are authored with the Squidie DSL. Runtime signals
 start, replay, cancel, or resolve runs of those definitions.
 
+Raw Jido actions can also request one durable follow-up instruction with
+`Jido.Agent.Directive.run_instruction/1`. Squidie validates the instruction
+against the host action registry before completion, stores its plan inside the
+same dispatch completion as the source result, and recovers it through one
+run-thread batch:
+
+```text
+attempt_completed(source + instruction plan)
+  -> runnable_applied(source)
+  -> dynamic_work_recorded(instruction)
+  -> runnables_planned(instruction)
+  -> normal dispatch/retry/application
+```
+
+The run-thread entries are one optimistic append. A dispatch completion with a
+missing run batch remains pending for executor recovery; generic agent recovery
+does not apply the internal result envelope as ordinary action output. A
+dedicated dispatch-completion encoding distinguishes the envelope from
+application output and execution options; older dispatch checkpoints are
+rebuilt from journal facts before recovery. New emission is guarded by the
+default-off `:jido_effects` fleet activation setting, while recovery of already
+durable envelopes remains ungated.
+
 When a command reaches the journal runtime, Squidie records a
 `:run_signal_received` fact in the run thread before the command's lifecycle
 facts. Starts, cron starts, manual approvals, rejections, resumes,

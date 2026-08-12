@@ -117,12 +117,12 @@ The smoke task:
 - activates the same digest workflow through the host app's cron plugin
 - verifies both digest triggers complete through the same workflow graph
 
-The sample enables `config :squidie, continuation_fences: :enabled` only in
-development and test because those smoke paths run one coherent application
-version. Its production configuration remains default-off. Production hosts
-must first upgrade and drain every worker that can read the affected queues;
-the flag is a host readiness assertion, not automatic cluster-version
-discovery.
+The sample enables `config :squidie, continuation_fences: :enabled` and
+`config :squidie, jido_effects: :enabled` only in development and test because
+those smoke paths run one coherent application version. Its production
+configuration remains default-off. Production hosts must first upgrade and
+drain every worker that can read the affected queues; each flag is a host
+readiness assertion, not automatic cluster-version discovery.
 
 The test suite also runs
 `MinimalHostApp.Workflows.JidoDirectiveBoundary`, whose raw `Jido.Action`
@@ -136,6 +136,12 @@ causal origin, and Squidie resolves the instruction action module through the
 host-owned action registry. The instruction ID becomes the idempotent dynamic
 work identity; execution, retries, result application, and inspection use the
 normal journal runtime.
+
+`MinimalHostApp.Workflows.JidoRunInstructionWorkflow` exercises the native raw
+action directive path. Its source action returns
+`Jido.Agent.Directive.run_instruction/1`; the test runtime proves source output,
+instruction planning, follow-up execution, and terminal completion through both
+the in-memory test adapter and the Ecto journal.
 
 ## Restart Resilience
 
