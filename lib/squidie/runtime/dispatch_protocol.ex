@@ -48,6 +48,8 @@ defmodule Squidie.Runtime.DispatchProtocol do
           | :run_continuation_fenced
           | :run_continuation_repaired
           | :run_continuation_aborted
+          | :jido_signal_enqueued
+          | :jido_signal_delivery_acknowledged
           | :jido_signal_resolved
           | :attempt_scheduled
           | :attempt_claimed
@@ -68,6 +70,8 @@ defmodule Squidie.Runtime.DispatchProtocol do
     :run_continued_from,
     :dynamic_work_recorded,
     :dynamic_graph_mutated,
+    :jido_signal_enqueued,
+    :jido_signal_delivery_acknowledged,
     :manual_step_paused,
     :manual_step_resolved,
     :run_terminal
@@ -130,6 +134,8 @@ defmodule Squidie.Runtime.DispatchProtocol do
       :origin,
       :occurred_at
     ],
+    jido_signal_enqueued: [:run_id, :signal_id, :resolved_signal, :occurred_at],
+    jido_signal_delivery_acknowledged: [:run_id, :signal_id, :occurred_at],
     manual_step_paused: [:run_id, :step, :kind, :occurred_at],
     manual_step_resolved: [:run_id, :step, :action, :occurred_at],
     run_terminal: [:run_id, :status, :occurred_at],
