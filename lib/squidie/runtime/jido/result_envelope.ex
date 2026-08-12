@@ -35,6 +35,11 @@ defmodule Squidie.Runtime.Jido.ResultEnvelope do
   def native_effect?(_encoding), do: true
 
   @doc false
+  @spec supported_native_effect?(term()) :: boolean()
+  def supported_native_effect?(@completion_encoding), do: true
+  def supported_native_effect?(_encoding), do: false
+
+  @doc false
   @spec decode(map(), term()) :: {:ok, decoded()} | {:error, :malformed_jido_result_envelope}
   def decode(result, completion_encoding) when is_map(result) do
     case completion_encoding do
