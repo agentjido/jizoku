@@ -85,12 +85,15 @@
 - Public control APIs and `Squidie.apply_signal/2` must apply signals through
   the journal runtime, including starts, cron starts, replays, cancellation, and
   manual controls.
-- Use `Squidie.Runtime.Signal.JidoAdapter` only at the Jido interop boundary
-  for agents, routers, or other Jido primitives. Do not leak raw `Jido.Signal`
-  into normal workflow authoring.
+- Pass recognized command `Jido.Signal` envelopes from agents, routers, or
+  other Jido primitives directly to `Squidie.apply_signal/2`. Use
+  `Squidie.Runtime.Signal.JidoAdapter` for outbound conversion. Do not leak raw
+  `Jido.Signal` into normal workflow authoring or treat arbitrary domain
+  signals as runtime commands.
 - Preserve `:run_signal_received` command history for applied commands.
 - Preserve the signal ID and normalized trace through the Jido adapter and
-  durable command receipt. Create a command root trace only when one is absent.
+  durable command receipt. Preserve an external Jido source as audit
+  provenance. Create a command root trace only when one is absent.
 - Keep one durable span per runnable across schedule, claim, heartbeat,
   completion/failure, and application. Persist child spans for new work and
   give replay a fresh command lineage.

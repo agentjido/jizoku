@@ -51,8 +51,12 @@
   signal whose explicit partition conflicts with runtime options is rejected.
 - Assert `command_history` in integration tests for cancel, resume, approval,
   rejection, replay, and scheduler-driven starts.
-- Convert to raw `Jido.Signal` only through `Squidie.Runtime.Signal.JidoAdapter`
-  when integrating with Jido agents, signal routers, or other Jido primitives.
+- Convert outbound commands to raw `Jido.Signal` only through
+  `Squidie.Runtime.Signal.JidoAdapter`. Pass recognized inbound Jido command
+  envelopes directly to `Squidie.apply_signal/2`; arbitrary domain signals
+  remain unsupported until a host-owned resolver is configured.
+- Authorize inbound Jido commands before calling Squidie. Their CloudEvents
+  source is persisted as audit provenance and is not an authorization grant.
 
 ## Read-Model Visibility
 

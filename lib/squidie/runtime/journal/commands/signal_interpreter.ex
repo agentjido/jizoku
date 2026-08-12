@@ -22,13 +22,15 @@ defmodule Squidie.Runtime.Journal.Commands.SignalInterpreter do
 
   @manual_signal_types [:approve_run, :reject_run, :resume_run]
   @start_signal_types [:start_run, :start_cron]
+  @max_source_bytes 1_024
 
   @doc """
   Applies a normalized runtime command signal to the journal runtime.
   """
   @spec apply(Signal.t(), keyword()) :: {:ok, term()} | {:error, term()}
   def apply(%Signal{} = signal, opts) when is_list(opts) do
-    with {:ok, signal} <- ensure_trace(signal) do
+    with :ok <- validate_source(signal.source),
+         {:ok, signal} <- ensure_trace(signal) do
       apply_with_span(signal, opts)
     end
   end
@@ -62,6 +64,15 @@ defmodule Squidie.Runtime.Journal.Commands.SignalInterpreter do
       {:error, {:invalid_trace, reason}} -> {:error, {:invalid_signal, {:trace, reason}}}
     end
   end
+
+  defp validate_source(nil), do: :ok
+
+  defp validate_source(source)
+       when is_binary(source) and source != "" and byte_size(source) <= @max_source_bytes do
+    if String.valid?(source), do: :ok, else: {:error, {:invalid_signal, {:source, :invalid}}}
+  end
+
+  defp validate_source(_source), do: {:error, {:invalid_signal, {:source, :invalid}}}
 
   defp command_span_metadata(%Signal{} = signal) do
     %{
@@ -137,6 +148,7 @@ defmodule Squidie.Runtime.Journal.Commands.SignalInterpreter do
          input when is_map(input) <- input,
          {:ok, workflow, definition} <- Definition.load_serialized(workflow_name),
          {:ok, trigger} <- signal_trigger(definition, trigger_name, type),
+         {:ok, input} <- normalize_start_input(definition, input),
          {:ok, start_input, start_opts} <-
            start_arguments(signal, workflow, definition, trigger, input, opts) do
       start_result(Starter.start_run(workflow, trigger, start_input, start_opts))
@@ -147,6 +159,25 @@ defmodule Squidie.Runtime.Journal.Commands.SignalInterpreter do
   end
 
   defp start_from_signal(%Signal{type: type}, _opts), do: {:error, {:invalid_signal, type}}
+
+  defp normalize_start_input(%{payload: fields}, input)
+       when is_list(fields) and is_map(input) do
+    names_by_string = Map.new(fields, &{Atom.to_string(&1.name), &1.name})
+
+    Enum.reduce_while(input, {:ok, %{}}, fn {key, value}, {:ok, normalized} ->
+      normalized_key = Map.get(names_by_string, key, key)
+
+      if Map.has_key?(normalized, normalized_key) do
+        {:halt, {:error, {:invalid_signal, {:input, :conflicting_keys}}}}
+      else
+        {:cont, {:ok, Map.put(normalized, normalized_key, value)}}
+      end
+    end)
+  end
+
+  defp normalize_start_input(_definition, _input) do
+    {:error, {:invalid_signal, {:input, :invalid}}}
+  end
 
   defp replay_from_signal(
          %Signal{

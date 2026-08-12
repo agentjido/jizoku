@@ -432,6 +432,7 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
                run_id: run_id,
                payload: start_signal_payload(opts, workflow, trigger, input),
                metadata: start_signal_metadata(opts),
+               source: start_signal_source(opts),
                signal_id: start_signal_id(opts),
                trace: start_run_trace(opts),
                idempotency_key: start_signal_idempotency_key(opts)
@@ -533,6 +534,13 @@ defmodule Squidie.Runtime.Journal.Commands.Starter do
     case start_command_signal(opts) do
       %Signal{metadata: metadata} -> metadata
       nil -> %{}
+    end
+  end
+
+  defp start_signal_source(opts) do
+    case start_command_signal(opts) do
+      %Signal{source: source} -> source
+      nil -> nil
     end
   end
 

@@ -3,16 +3,21 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   Converts Squidie runtime command signals to and from `Jido.Signal`.
 
   The adapter keeps `Squidie.Runtime.Signal` as the product-level contract and
-  treats `Jido.Signal` as a boundary envelope. It does not dispatch, persist, or
-  apply runtime commands.
+  treats `Jido.Signal` as a boundary envelope. Public callers may pass
+  recognized command envelopes directly to `Squidie.apply_signal/2`; this
+  module remains the conversion boundary and does not dispatch, persist, or
+  apply runtime commands itself.
   """
 
   alias Squidie.Runtime.Partition
   alias Squidie.Runtime.Signal
   alias Squidie.Runtime.Trace
 
-  @source "/squidie/runtime/commands"
+  @default_source "/squidie/runtime/commands"
   @datacontenttype "application/vnd.squidie.runtime-signal+json"
+  @max_source_bytes 1_024
+  @signal_data_fields [:type, :payload, :metadata, :occurred_at, :idempotency_key, :partition]
+  @manual_attribute_fields [:actor, :comment, :metadata]
 
   @type error :: {:invalid_signal_adapter, term()}
 
@@ -42,6 +47,7 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   @spec to_jido(Signal.t()) :: {:ok, Jido.Signal.t()} | {:error, error()}
   def to_jido(%Signal{
         id: id,
+        source: source,
         type: type,
         payload: payload,
         partition: partition,
@@ -55,6 +61,7 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
          {:ok, data} <-
            transport_data(type, payload, metadata, occurred_at, idempotency_key, partition),
          {:ok, id} <- adapter_id(id),
+         {:ok, source} <- outbound_source(source),
          {:ok, trace} <- adapter_trace(trace),
          {:ok, jido_signal} <-
            normalize_jido_result(
@@ -62,7 +69,7 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
                jido_type,
                data,
                id: id,
-               source: @source,
+               source: source,
                subject: subject,
                time: DateTime.to_iso8601(occurred_at),
                datacontenttype: @datacontenttype
@@ -75,24 +82,35 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   def to_jido(_signal), do: invalid(:signal, :expected_squidie_signal)
 
   @doc """
-  Converts a `Jido.Signal` produced by this adapter back to a Squidie signal.
+  Converts a recognized Jido command signal to a Squidie signal.
+
+  The CloudEvents source is retained as audit provenance. It is not an
+  authorization decision; hosts must authenticate and authorize inbound
+  signals before applying them.
   """
   @spec from_jido(Jido.Signal.t()) :: {:ok, Signal.t()} | {:error, error()}
   def from_jido(%Jido.Signal{
         id: id,
-        source: @source,
+        source: source,
+        specversion: specversion,
         type: jido_type,
         data: data,
+        datacontenttype: datacontenttype,
         subject: subject,
+        time: time,
         extensions: extensions
       }) do
     with {:ok, command_type} <- command_type(jido_type),
+         :ok <- validate_specversion(specversion),
+         {:ok, source} <- inbound_source(source),
          {:ok, signal_data} <- signal_data(data),
+         :ok <- reject_alias_collisions(signal_data, @signal_data_fields),
          :ok <- matching_command_type(command_type, signal_data),
          {:ok, payload} <- fetch_payload(command_type, signal_data),
          :ok <- validate_subject(command_type, subject, payload),
-         {:ok, metadata} <- fetch_map(signal_data, :metadata),
-         {:ok, occurred_at} <- fetch_occurred_at(signal_data),
+         {:ok, metadata} <- fetch_optional_map(signal_data, :metadata, %{}),
+         {:ok, occurred_at, occurred_at_source} <- fetch_occurred_at(signal_data, time),
+         :ok <- validate_time(datacontenttype, time, occurred_at, occurred_at_source),
          {:ok, idempotency_key} <- fetch_idempotency_key(signal_data),
          {:ok, partition} <- fetch_partition(signal_data),
          {:ok, id} <- adapter_id(id),
@@ -100,6 +118,7 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
       {:ok,
        %Signal{
          id: id,
+         source: source,
          type: command_type,
          payload: payload,
          partition: partition,
@@ -111,8 +130,26 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
     end
   end
 
-  def from_jido(%Jido.Signal{}), do: invalid(:source, :unsupported)
   def from_jido(_signal), do: invalid(:signal, :expected_jido_signal)
+
+  defp validate_specversion("1.0.2"), do: :ok
+  defp validate_specversion(_specversion), do: invalid(:specversion, :unsupported)
+
+  defp inbound_source(source) do
+    with {:ok, source} <- validate_source(source) do
+      if source == @default_source, do: {:ok, nil}, else: {:ok, source}
+    end
+  end
+
+  defp outbound_source(nil), do: {:ok, @default_source}
+  defp outbound_source(source), do: validate_source(source)
+
+  defp validate_source(source)
+       when is_binary(source) and source != "" and byte_size(source) <= @max_source_bytes do
+    if String.valid?(source), do: {:ok, source}, else: invalid(:source, :invalid)
+  end
+
+  defp validate_source(_source), do: invalid(:source, :invalid)
 
   defp jido_type(type) do
     case Map.fetch(@type_string_by_command, type) do
@@ -192,7 +229,7 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   defp matching_command_type(command_type, data) do
     case fetch_value(data, :type) do
       {:ok, value} -> matching_command_value(command_type, value)
-      :error -> invalid(:type, :missing)
+      :error -> :ok
     end
   end
 
@@ -215,7 +252,8 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   end
 
   defp normalize_payload(:start_run, payload) do
-    with {:ok, workflow} <- fetch_string(payload, :workflow),
+    with :ok <- reject_alias_collisions(payload, [:workflow, :trigger, :input]),
+         {:ok, workflow} <- fetch_string(payload, :workflow),
          {:ok, trigger} <- fetch_string_or_nil(payload, :trigger),
          {:ok, input} <- fetch_map(payload, :input) do
       {:ok, Signal.start_payload(workflow, trigger, input)}
@@ -223,7 +261,8 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   end
 
   defp normalize_payload(:start_cron, payload) do
-    with {:ok, workflow} <- fetch_string(payload, :workflow),
+    with :ok <- reject_alias_collisions(payload, [:workflow, :trigger, :input]),
+         {:ok, workflow} <- fetch_string(payload, :workflow),
          {:ok, trigger} <- fetch_string(payload, :trigger),
          {:ok, input} <- fetch_map(payload, :input) do
       {:ok, Signal.start_payload(workflow, trigger, input)}
@@ -231,24 +270,63 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
   end
 
   defp normalize_payload(type, payload) when type in [:approve_run, :reject_run, :resume_run] do
-    with {:ok, run_id} <- fetch_uuid(payload, :run_id),
-         {:ok, attributes} <- fetch_map(payload, :attributes) do
+    with :ok <- reject_alias_collisions(payload, [:run_id, :attributes]),
+         {:ok, run_id} <- fetch_uuid(payload, :run_id),
+         {:ok, attributes} <- fetch_map(payload, :attributes),
+         {:ok, attributes} <- normalize_manual_attributes(attributes) do
       {:ok, %{run_id: run_id, attributes: attributes}}
     end
   end
 
   defp normalize_payload(:cancel_run, payload) do
-    with {:ok, run_id} <- fetch_uuid(payload, :run_id) do
+    with :ok <- reject_alias_collisions(payload, [:run_id]),
+         {:ok, run_id} <- fetch_uuid(payload, :run_id) do
       {:ok, %{run_id: run_id}}
     end
   end
 
   defp normalize_payload(:replay_run, payload) do
-    with {:ok, run_id} <- fetch_uuid(payload, :run_id),
+    with :ok <- reject_alias_collisions(payload, [:run_id, :allow_irreversible]),
+         {:ok, run_id} <- fetch_uuid(payload, :run_id),
          {:ok, allow_irreversible} <- fetch_boolean(payload, :allow_irreversible) do
       {:ok, %{run_id: run_id, allow_irreversible: allow_irreversible}}
     end
   end
+
+  defp normalize_manual_attributes(attributes) do
+    with :ok <- reject_alias_collisions(attributes, @manual_attribute_fields) do
+      {:ok, normalize_known_keys(attributes, @manual_attribute_fields)}
+    end
+  end
+
+  defp normalize_known_keys(map, fields) do
+    Enum.reduce(fields, map, fn field, normalized ->
+      string_field = Atom.to_string(field)
+
+      case Map.fetch(normalized, string_field) do
+        :error ->
+          normalized
+
+        {:ok, value} ->
+          normalized
+          |> Map.delete(string_field)
+          |> Map.put(field, value)
+      end
+    end)
+  end
+
+  defp reject_alias_collisions(map, fields) do
+    case Enum.find(fields, &alias_collision?(map, &1)) do
+      nil -> :ok
+      field -> invalid(field, :ambiguous)
+    end
+  end
+
+  defp alias_collision?(map, field) do
+    Map.has_key?(map, field) and Map.has_key?(map, Atom.to_string(field))
+  end
+
+  defp validate_subject(_type, nil, _payload), do: :ok
 
   defp validate_subject(type, subject, %{workflow: workflow}) when type in @start_commands do
     if subject == workflow, do: :ok, else: invalid(:subject, :mismatch)
@@ -266,6 +344,14 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
     end
   end
 
+  defp fetch_optional_map(data, field, default) do
+    case fetch_value(data, field) do
+      {:ok, value} when is_map(value) -> {:ok, value}
+      {:ok, _value} -> invalid(field, :expected_map)
+      :error -> {:ok, default}
+    end
+  end
+
   defp fetch_string(data, field) do
     case fetch_value(data, field) do
       {:ok, value} when is_binary(value) and value != "" -> {:ok, value}
@@ -280,6 +366,36 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
         {:ok, uuid} -> {:ok, uuid}
         :error -> invalid(field, :invalid)
       end
+    end
+  end
+
+  defp validate_time(_datacontenttype, _time, _occurred_at, :outer) do
+    :ok
+  end
+
+  defp validate_time(@datacontenttype, nil, _occurred_at, :embedded) do
+    :ok
+  end
+
+  defp validate_time(@datacontenttype, time, %DateTime{} = occurred_at, :embedded)
+       when is_binary(time) do
+    case DateTime.from_iso8601(time) do
+      {:ok, outer_time, _offset} -> validate_parsed_time(outer_time, occurred_at)
+      _invalid -> invalid(:time, :invalid)
+    end
+  end
+
+  defp validate_time(@datacontenttype, _time, _occurred_at, :embedded) do
+    invalid(:time, :invalid)
+  end
+
+  defp validate_time(_legacy_datacontenttype, _time, _occurred_at, :embedded), do: :ok
+
+  defp validate_parsed_time(outer_time, occurred_at) do
+    if DateTime.compare(outer_time, occurred_at) == :eq do
+      :ok
+    else
+      invalid(:time, :mismatch)
     end
   end
 
@@ -354,21 +470,28 @@ defmodule Squidie.Runtime.Signal.JidoAdapter do
     end
   end
 
-  defp fetch_occurred_at(data) do
+  defp fetch_occurred_at(data, outer_time) do
     case fetch_value(data, :occurred_at) do
       {:ok, %DateTime{} = occurred_at} ->
-        {:ok, occurred_at}
+        {:ok, occurred_at, :embedded}
 
       {:ok, occurred_at} when is_binary(occurred_at) ->
-        parse_occurred_at(occurred_at)
+        with {:ok, occurred_at} <- parse_occurred_at(occurred_at) do
+          {:ok, occurred_at, :embedded}
+        end
 
       {:ok, _occurred_at} ->
         invalid(:occurred_at, :expected_datetime)
 
       :error ->
-        invalid(:occurred_at, :missing)
+        with {:ok, occurred_at} <- parse_outer_time(outer_time) do
+          {:ok, occurred_at, :outer}
+        end
     end
   end
+
+  defp parse_outer_time(time) when is_binary(time), do: parse_occurred_at(time)
+  defp parse_outer_time(_time), do: invalid(:time, :missing)
 
   defp parse_occurred_at(occurred_at) do
     case DateTime.from_iso8601(occurred_at) do

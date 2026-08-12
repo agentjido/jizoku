@@ -34,6 +34,7 @@ defmodule Squidie do
   alias Squidie.Runtime.Routing
   alias Squidie.Runtime.ScheduleIdentity
   alias Squidie.Runtime.Signal
+  alias Squidie.Runtime.Signal.JidoAdapter
   alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Workflow.ActionRegistry
@@ -760,19 +761,24 @@ defmodule Squidie do
   end
 
   @doc """
-  Applies a Squidie-native runtime command signal.
+  Applies a Squidie-native or recognized Jido runtime command signal.
 
   Use the named helpers such as `start/3`, `cancel/2`, `resume/3`,
   `approve/3`, `reject/3`, and `replay/2` for ordinary application calls. Use
   `apply_signal/2` when an agent, router, webhook, scheduler, or Jido interop
-  boundary has already normalized a request into a
-  `Squidie.Runtime.Signal` envelope.
+  boundary already has a `Squidie.Runtime.Signal` or recognized `Jido.Signal`
+  command envelope.
 
   The envelope API applies the same runtime commands for starts, cron starts,
   replays, cancellation, and manual decisions while preserving signal metadata,
-  occurrence time, and idempotency keys in the journal command history.
+  occurrence time, identity, source provenance, trace correlation, partition,
+  and idempotency keys in the journal command history. Raw Jido signals must use
+  a supported Squidie command type. The signal source is audit provenance, not
+  authorization; authenticate and authorize inbound signals before applying
+  them. Arbitrary domain signals remain rejected; a later interoperability
+  slice adds an explicit host-owned resolver.
   """
-  @spec apply_signal(Signal.t(), keyword()) ::
+  @spec apply_signal(Signal.t() | Jido.Signal.t(), keyword()) ::
           {:ok, Squidie.ReadModel.Inspection.Snapshot.t()}
           | {:error, Config.config_error() | term()}
   def apply_signal(signal, overrides \\ [])
@@ -783,7 +789,15 @@ defmodule Squidie do
     end
   end
 
+  def apply_signal(%Jido.Signal{} = signal, overrides) when is_list(overrides) do
+    with {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, runtime_signal} <- JidoAdapter.from_jido(signal) do
+      SignalInterpreter.apply(runtime_signal, Routing.journal_control_options(overrides))
+    end
+  end
+
   def apply_signal(%Signal{}, _overrides), do: {:error, {:invalid_option, {:opts, :invalid}}}
+  def apply_signal(%Jido.Signal{}, _overrides), do: {:error, {:invalid_option, {:opts, :invalid}}}
   def apply_signal(_signal, _overrides), do: {:error, :invalid_signal}
 
   @doc """

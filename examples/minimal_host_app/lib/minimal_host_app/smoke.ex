@@ -1071,7 +1071,10 @@ defmodule MinimalHostApp.Smoke do
                  idempotency_key: "minimal-host-app:journal-signal:start"
                ),
              {:ok, jido_start_signal} <- RuntimeSignals.to_jido(start_signal),
-             {:ok, ^start_signal} <- JidoAdapter.from_jido(jido_start_signal),
+             jido_start_signal =
+               %{jido_start_signal | source: "/minimal_host_app/dependency_recovery"},
+             {:ok, adapted_start_signal} <- JidoAdapter.from_jido(jido_start_signal),
+             true <- adapted_start_signal.source == "/minimal_host_app/dependency_recovery",
              {:ok, started_run} <- RuntimeSignals.apply(jido_start_signal),
              {:ok, _first_worker_run} <-
                Squidie.execute_next(owner_id: "minimal-host-app-signal-worker-a"),
@@ -1108,7 +1111,13 @@ defmodule MinimalHostApp.Smoke do
           end
 
           case completed_start.command_history do
-            [%{signal_type: "start_run", metadata: %{source: "minimal_host_app_smoke"}}] ->
+            [
+              %{
+                signal_type: "start_run",
+                source: "/minimal_host_app/dependency_recovery",
+                metadata: %{source: "minimal_host_app_smoke"}
+              }
+            ] ->
               :ok
 
             _other ->

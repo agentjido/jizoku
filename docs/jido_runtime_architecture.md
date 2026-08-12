@@ -135,8 +135,11 @@ apps adapt to Jido only at explicit runtime integration boundaries.
 
 Runtime command signals use `Squidie.Runtime.Signal` as the stable contract.
 `Squidie.Runtime.Signal.JidoAdapter` converts between Squidie signal structs
-and `Jido.Signal` envelopes for advanced integration. Command receipt and
-inspection details are covered in the next section.
+and `Jido.Signal` envelopes for advanced integration. Recognized inbound Jido
+command envelopes may be passed directly to `Squidie.apply_signal/2`; the
+public boundary invokes the same adapter before the journal command
+interpreter. Command receipt and inspection details are covered in the next
+section.
 
 ## Runtime Command Signals
 
@@ -159,6 +162,9 @@ should not need to construct raw Jido signals for normal workflow control.
 
 All command signals carry a generated or caller-supplied `id`, plus `metadata`,
 `occurred_at`, an optional `idempotency_key`, and an optional durable `trace`.
+Signals adapted from Jido also retain the CloudEvents `source` as audit
+provenance. Source is not authorization; the host must authenticate and
+authorize inbound delivery before calling Squidie.
 The journal command boundary creates a W3C-compatible root trace when one is
 missing. Runtime code should adapt these product-level signals at the Jido
 boundary instead of leaking backend signal shapes into public APIs. The signal
@@ -177,9 +183,11 @@ then hand them to the journal signal interpreter. `Squidie.apply_signal/2`
 uses the same path for starts, cron starts, replays, cancellation, and manual
 decisions. That keeps public callers on Squidie concepts while host apps that
 already normalize commands at their own boundary can pass a
-`Squidie.Runtime.Signal` directly. The named helpers remain the ergonomic API
-for ordinary application code; `apply_signal/2` is the envelope API for agents,
-routers, schedulers, webhooks, and Jido interop boundaries.
+`Squidie.Runtime.Signal` directly, and Jido integrations can pass a recognized
+command `Jido.Signal` without calling the adapter first. Arbitrary domain
+signals remain rejected at this boundary. The named helpers remain the
+ergonomic API for ordinary application code; `apply_signal/2` is the envelope
+API for agents, routers, schedulers, webhooks, and Jido interop boundaries.
 
 Workflow definitions are authored with the Squidie DSL. Runtime signals
 start, replay, cancel, or resolve runs of those definitions.
@@ -188,9 +196,9 @@ When a command reaches the journal runtime, Squidie records a
 `:run_signal_received` fact in the run thread before the command's lifecycle
 facts. Starts, cron starts, manual approvals, rejections, resumes,
 cancellations, and replays all use that audit shape. The fact stores the signal
-type, run id when available, payload, actor, comment, metadata, idempotency key,
-and occurrence time. Metadata is redacted for common sensitive keys before it is
-persisted.
+type, run id when available, payload, actor, comment, metadata, external source
+when present, idempotency key, and occurrence time. Metadata is redacted for
+common sensitive keys before it is persisted.
 
 The command receipt and command application facts are appended together with one
 thread revision fence. That keeps the journal as the source of truth and avoids a
@@ -203,14 +211,20 @@ Inspection exposes the projected command receipts through
 operator-facing command audit surface; `include_history: true` still controls
 the detailed step and manual audit events.
 
-The Jido adapter uses CloudEvents-compatible envelopes with source
+The Jido adapter emits CloudEvents-compatible envelopes with default source
 `/squidie/runtime/commands`, type names such as
 `squidie.runtime.command.start_run`, and content type
-`application/vnd.squidie.runtime-signal+json`. The envelope `data` holds the
-Squidie command type, payload, metadata, occurrence timestamp, and
-idempotency key. `from_jido/1` accepts only the known Squidie source and
-command types, and maps serialized string command names through an explicit
-whitelist rather than creating atoms from input.
+`application/vnd.squidie.runtime-signal+json`. An inbound recognized command
+may use a host-owned source such as `/my_app/orders`; the adapter validates and
+persists it as provenance. The envelope `data` holds the Squidie command type,
+payload, metadata, occurrence timestamp, and idempotency key. `from_jido/1`
+accepts only known Squidie command types and maps serialized string command
+names through an explicit whitelist rather than creating atoms from input. The
+outer CloudEvents type and time are authoritative when the redundant inner type
+or occurrence time is omitted; metadata defaults to an empty map, and subject
+is optional. Adapter-content envelopes reject a supplied time mismatch before a
+journal write. Legacy JSON envelopes that already carry an inner occurrence
+time retain that value for compatibility.
 
 ## Trace And Telemetry Flow
 
