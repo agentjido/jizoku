@@ -136,6 +136,7 @@ signals:
 | Scheduled attempt depth and next wakeup | `scheduled_attempts`, `next_visible_at` | Shows delayed retries, waits, and future-visible work. |
 | Claimed or expired attempts | `attempts`, `expired_claims` | Identifies workers that are busy, stalled, or recoverable. |
 | Pending dispatch/results | `pending_dispatches`, `pending_results` | Detects journal facts that need runtime reconciliation. |
+| Jido signal delivery | `jido_signals.pending_count`, `delivered_count`, and structural items | Detects committed Emit effects waiting for external acknowledgement without exposing payloads. |
 | Manual intervention count | `manual_state` and status `:paused` | Drives approval queues and operator SLAs. |
 | Deadline health | `deadline`, attempt `deadline`, node `deadline` | Shows on-time, due-soon, overdue, and escalated workflow work without exposing payloads. |
 | Terminal outcomes | `terminal?`, `terminal_status` | Tracks completed, failed, cancelled, and replayed work. |
@@ -172,6 +173,15 @@ latest runtime command that led to the current state. `evidence.command_history`
 keeps the redacted command audit trail, `evidence.command_counts` summarizes
 command types, and `evidence.duplicate_commands` makes at-least-once command
 delivery visible without exposing raw Jido internals.
+
+When a run contains durable Jido Emit effects,
+`details.jido_signal_delivery` reports pending and delivered counts plus
+structural signal identifiers, types, route names, and timestamps. Pending
+items add `:deliver_jido_signals` to `next_actions`. Signal payloads, sources,
+adapter options, and adapter errors are excluded. The timeline adds
+`:jido_signal_enqueued` and `:jido_signal_delivered`; when a frozen clock gives
+an acknowledgement the same timestamp as terminalization, the stable tie order
+keeps the post-terminal acknowledgement after `:run_terminal`.
 
 Use this for incident pages, CLI output, and support views where raw journal
 facts would be too noisy.
@@ -211,7 +221,7 @@ payloads, or raw provider responses.
 
 ## Runtime Telemetry
 
-`Squidie.Telemetry.events/0` returns every public event. There are three span
+`Squidie.Telemetry.events/0` returns every public event. There are four span
 boundaries:
 
 | Operation | Event prefix |
@@ -219,6 +229,7 @@ boundaries:
 | Runtime command application | `[:squidie, :runtime, :command, :apply]` |
 | Worker execution poll | `[:squidie, :runtime, :executor, :execute_next]` |
 | Actual step invocation | `[:squidie, :runtime, :step, :execute]` |
+| External Jido signal delivery | `[:squidie, :runtime, :jido_signal, :deliver]` |
 
 Each prefix emits `:start` followed by either `:stop` or `:exception`:
 
@@ -242,6 +253,7 @@ The runtime also emits these committed lifecycle point events:
 | Runnables | `:runnable, :planned`; `:runnable, :applied` |
 | Attempts | `:attempt, :scheduled`; `:retry_scheduled`; `:claimed`; `:heartbeat`; `:completed`; `:failed` |
 | Control and branching | `:manual, :paused`; `:manual, :resolved`; `:child, :started`; `:dynamic_work, :recorded` |
+| Jido signal outbox | `:jido_signal, :enqueued`; `:jido_signal, :delivered` |
 
 All point names start with `[:squidie, :runtime]`. Point measurements are
 `%{count: 1, system_time: integer}`. One `:runnable, :planned` event is emitted
@@ -260,6 +272,7 @@ available. The complete allowlist is:
 - correlation fields: `run_id`, `signal_id`, `runnable_key`, `trace_id`,
   `span_id`, `parent_span_id`, `causation_id`, `child_run_id`, and
   `dynamic_key`
+- Jido delivery fields: `outbox_id` and `route`
 
 Metadata values are atoms, integers, or valid non-empty strings of at most 255
 bytes. Squidie drops every non-allowlisted or invalid value. In particular,

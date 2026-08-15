@@ -11,7 +11,8 @@ defmodule Squidie.Telemetry do
   @span_prefixes [
     [:squidie, :runtime, :command, :apply],
     [:squidie, :runtime, :executor, :execute_next],
-    [:squidie, :runtime, :step, :execute]
+    [:squidie, :runtime, :step, :execute],
+    [:squidie, :runtime, :jido_signal, :deliver]
   ]
 
   @point_events [
@@ -29,7 +30,9 @@ defmodule Squidie.Telemetry do
     [:squidie, :runtime, :manual, :paused],
     [:squidie, :runtime, :manual, :resolved],
     [:squidie, :runtime, :child, :started],
-    [:squidie, :runtime, :dynamic_work, :recorded]
+    [:squidie, :runtime, :dynamic_work, :recorded],
+    [:squidie, :runtime, :jido_signal, :enqueued],
+    [:squidie, :runtime, :jido_signal, :delivered]
   ]
 
   @span_events for prefix <- @span_prefixes,
@@ -88,6 +91,16 @@ defmodule Squidie.Telemetry do
         [:squidie, :runtime, :step, :execute, :exception],
         tags([:workflow, :step], include_partition?)
       ),
+      exception_metric(
+        "squidie.runtime.jido_signal.deliver.exception.count",
+        [:squidie, :runtime, :jido_signal, :deliver, :exception],
+        tags([:route], include_partition?)
+      ),
+      duration_metric(
+        "squidie.runtime.jido_signal.deliver.duration",
+        [:squidie, :runtime, :jido_signal, :deliver, :stop],
+        tags([:route, :outcome], include_partition?)
+      ),
       point_metric(
         "squidie.runtime.command.received.count",
         [:squidie, :runtime, :command, :received],
@@ -132,6 +145,16 @@ defmodule Squidie.Telemetry do
         "squidie.runtime.attempt.failed.count",
         [:squidie, :runtime, :attempt, :failed],
         tags([:queue, :workflow, :step], include_partition?)
+      ),
+      point_metric(
+        "squidie.runtime.jido_signal.enqueued.count",
+        [:squidie, :runtime, :jido_signal, :enqueued],
+        tags([:route], include_partition?)
+      ),
+      point_metric(
+        "squidie.runtime.jido_signal.delivered.count",
+        [:squidie, :runtime, :jido_signal, :delivered],
+        tags([:route], include_partition?)
       )
     ]
   end

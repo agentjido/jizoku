@@ -717,6 +717,46 @@ defmodule Squidie do
   def execute_next(overrides), do: Executor.execute_next(overrides)
 
   @doc """
+  Delivers and durably acknowledges pending Jido signals for one workflow run.
+
+  Dispatch routes are host-owned runtime configuration and are never persisted.
+  Configure `:jido_dispatch_routes` as a map from the durable route name to a
+  `Jido.Signal.Dispatch` configuration. Delivery is at-least-once: consumers
+  must deduplicate the stable Jido signal id when a process stops after sending
+  but before recording the acknowledgement.
+  """
+  @spec deliver_jido_signals(String.t(), keyword()) ::
+          {:ok, Squidie.ReadModel.Inspection.Snapshot.t()} | {:error, term()}
+  def deliver_jido_signals(run_id, overrides \\ [])
+
+  def deliver_jido_signals(run_id, overrides)
+      when is_binary(run_id) and is_list(overrides) do
+    with :ok <- Routing.public_execute_options(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides),
+         {:ok, routes} <-
+           Squidie.Runtime.Jido.OutboxDelivery.routes(
+             Keyword.get(
+               overrides,
+               :jido_dispatch_routes,
+               Application.get_env(:squidie, :jido_dispatch_routes)
+             )
+           ),
+         routes when is_map(routes) <- routes do
+      opts = Routing.journal_execute_options(overrides)
+      now = Keyword.get(opts, :now, DateTime.utc_now())
+
+      Squidie.Runtime.Jido.OutboxDelivery.deliver_run(storage, run_id, routes, now)
+    else
+      nil -> {:error, {:invalid_option, {:jido_dispatch_routes, :required}}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def deliver_jido_signals(_run_id, _overrides) do
+    {:error, {:invalid_option, {:run_id, :invalid}}}
+  end
+
+  @doc """
   Lists workflow runs with optional filters.
 
   Journal-backed runtime calls return redacted listing summaries. Use

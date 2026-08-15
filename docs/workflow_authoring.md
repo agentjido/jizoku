@@ -716,12 +716,38 @@ Jido action envelope.
 
 Squidie does not own a Jido AgentServer or its `cmd/2` state, so custom
 `RunInstruction.result_action` callbacks and non-empty directive metadata are
-rejected. Other non-empty directive lists remain explicit, non-retryable
-compatibility failures instead of successful attempt completions. Malformed
-extras fail at the same boundary. This fail-closed contract prevents `Emit`,
-custom directives, mixed directive lists, and other action effects from being
-silently discarded while their durable translations are added in focused
-interoperability slices.
+rejected.
+
+A lone `Jido.Agent.Directive.Emit` is supported when
+`config :squidie, jido_emit_effects: :enabled`. Squidie records the action
+completion before atomically applying its output, enqueueing the signal, and
+recording the normal successor or terminal transition. `dispatch: nil` selects
+the durable route named `"default"`; directive-owned dispatch configuration is
+rejected because routes and credentials belong to the host. The signal is
+delivered only after the outbox fact commits.
+
+Configure delivery routes separately with `:jido_dispatch_routes`:
+
+```elixir
+config :squidie,
+  jido_dispatch_routes: %{
+    "default" => {MyApp.JidoSignalAdapter, endpoint: "https://events.example.test"}
+  }
+```
+
+`Squidie.execute_next/1` delivers pending signals after workflow recovery and
+also reconciles terminal runs when no runnable is available. A host can retry a
+specific run with `Squidie.deliver_jido_signals/2`. Delivery is at-least-once:
+if a process stops after the adapter accepts a signal but before Squidie records
+the acknowledgement, the stable Jido signal ID is delivered again and the
+consumer must deduplicate it. Adapter errors and payloads are not copied into
+the journal or public diagnostics; the durable item remains pending.
+
+Other non-empty directive lists remain explicit, non-retryable compatibility
+failures instead of successful attempt completions. Malformed extras fail at
+the same boundary. This fail-closed contract prevents custom directives, mixed
+directive lists, and other action effects from being silently discarded while
+their durable translations are added in focused interoperability slices.
 
 `jido_effects` is default-off. Enable it only after every executor and recovery
 reader for the affected queues runs a release that understands durable Jido
@@ -730,6 +756,13 @@ service for as long as emission remains enabled. Before restoring an older
 reader, disable new emission and drain or repair every encoded completion on the
 affected queues. Disabling the flag blocks new effects but does not block
 recovery of already persisted effects.
+
+`jido_emit_effects` has its own default-off fleet barrier. Keep it disabled
+while deploying a release that introduces or changes the Emit completion
+encoding. Enable it only after every executor and recovery reader for affected
+queues is compatible. Disable new emission and drain or repair every encoded
+completion before restoring an older reader. Delivery and acknowledgement of
+already-enqueued signals remain available after the admission flag is disabled.
 
 ### Deferred Continuation
 

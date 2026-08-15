@@ -18,6 +18,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   alias Squidie.Runtime.Jido.Directives
   alias Squidie.Runtime.Jido.EffectsActivation
   alias Squidie.Runtime.Jido.Outbox
+  alias Squidie.Runtime.Jido.OutboxDelivery
   alias Squidie.Runtime.Jido.ResultEnvelope
   alias Squidie.Runtime.Jido.RunInstruction
   alias Squidie.Runtime.Journal
@@ -97,19 +98,56 @@ defmodule Squidie.Runtime.Journal.Executor do
          {:ok, storage} <- journal_storage(opts),
          {:ok, queue} <- queue(opts),
          {:ok, now} <- now(opts),
-         {:ok, owner_id} <- owner_id(opts) do
-      execute_with_span(storage, queue, now, owner_id, opts)
+         {:ok, owner_id} <- owner_id(opts),
+         {:ok, routes} <- jido_dispatch_routes(opts) do
+      execute_with_span(storage, queue, now, owner_id, opts, routes)
     end
   end
 
   def execute_next(_opts), do: {:error, {:invalid_option, {:opts, :invalid}}}
 
-  defp execute_with_span(storage, queue, %DateTime{} = now, owner_id, opts) do
+  defp execute_with_span(storage, queue, %DateTime{} = now, owner_id, opts, routes) do
     Emitter.span(
       [:squidie, :runtime, :executor, :execute_next],
       %{queue: queue, partition: Storage.partition(storage)},
-      fn -> execute_recovered(storage, queue, now, owner_id, opts) end
+      fn ->
+        storage
+        |> execute_recovered(queue, now, owner_id, opts)
+        |> deliver_jido_signals(storage, queue, now, routes)
+      end
     )
+  end
+
+  defp deliver_jido_signals(result, _storage, _queue, _now, nil) do
+    result
+  end
+
+  defp deliver_jido_signals(
+         {:ok, %Inspection.Snapshot{jido_signals: %{pending_count: 0}}} = result,
+         _storage,
+         _queue,
+         _now,
+         _routes
+       ) do
+    result
+  end
+
+  defp deliver_jido_signals(
+         {:ok, %Inspection.Snapshot{run_id: run_id}},
+         storage,
+         _queue,
+         now,
+         routes
+       ) do
+    OutboxDelivery.deliver_run(storage, run_id, routes, now)
+  end
+
+  defp deliver_jido_signals({:ok, :none}, storage, queue, now, routes) do
+    OutboxDelivery.reconcile_next(storage, queue, routes, now)
+  end
+
+  defp deliver_jido_signals(result, _storage, _queue, _now, _routes) do
+    result
   end
 
   defp execute_recovered(storage, queue, %DateTime{} = now, owner_id, opts) do
@@ -4191,6 +4229,15 @@ defmodule Squidie.Runtime.Journal.Executor do
     if Keyword.get(opts, :runtime) == :journal, do: :ok, else: invalid_option(:runtime)
   end
 
+  defp jido_dispatch_routes(opts) do
+    configured =
+      Keyword.get_lazy(opts, :jido_dispatch_routes, fn ->
+        Application.get_env(:squidie, :jido_dispatch_routes)
+      end)
+
+    OutboxDelivery.routes(configured)
+  end
+
   defp supported_options do
     [
       :runtime,
@@ -4204,6 +4251,7 @@ defmodule Squidie.Runtime.Journal.Executor do
       :heartbeat_interval_ms,
       :action_registry,
       :guardrail_registry,
+      :jido_dispatch_routes,
       :now,
       :finished_at,
       :test_after_claim,

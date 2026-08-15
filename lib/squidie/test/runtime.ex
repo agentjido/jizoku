@@ -2,7 +2,12 @@ defmodule Squidie.Test.Runtime do
   @moduledoc false
 
   @derive {Inspect,
-           except: [:action_registry, :guardrail_registry, :test_action_stub_after_consume]}
+           except: [
+             :action_registry,
+             :guardrail_registry,
+             :jido_dispatch_routes,
+             :test_action_stub_after_consume
+           ]}
   @enforce_keys [:id, :owner, :workflow, :storage, :storage_server, :queue, :max_steps]
   defstruct [
     :id,
@@ -16,6 +21,7 @@ defmodule Squidie.Test.Runtime do
     action_registry: %{},
     action_stub_keys: [],
     guardrail_registry: nil,
+    jido_dispatch_routes: nil,
     test_action_stub_after_consume: nil
   ]
 
@@ -31,6 +37,7 @@ defmodule Squidie.Test.Runtime do
           action_registry: map(),
           action_stub_keys: [Squidie.Workflow.ActionRegistry.action_key()],
           guardrail_registry: term() | nil,
+          jido_dispatch_routes: map() | nil,
           test_action_stub_after_consume: (map() -> :ok) | nil
         }
 end

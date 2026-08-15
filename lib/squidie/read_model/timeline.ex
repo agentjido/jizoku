@@ -14,6 +14,8 @@ defmodule Squidie.ReadModel.Timeline do
     attempt_completed: 3,
     attempt_failed: 3,
     runnable_applied: 4,
+    jido_signal_enqueued: 5,
+    jido_signal_delivered: 8,
     attempt_scheduled: 5,
     manual_step_paused: 6,
     run_continued_to: 7,
@@ -70,8 +72,51 @@ defmodule Squidie.ReadModel.Timeline do
     |> Kernel.++(continuation_events(snapshot))
     |> Kernel.++(attempt_events(snapshot))
     |> Kernel.++(applied_events(snapshot))
+    |> Kernel.++(jido_signal_events(snapshot))
     |> Kernel.++(manual_events(snapshot))
     |> Kernel.++(terminal_events(snapshot))
+  end
+
+  defp jido_signal_events(%Snapshot{run_id: run_id, jido_signals: %{items: items}}) do
+    Enum.flat_map(items, fn item ->
+      enqueued =
+        case Map.get(item, :enqueued_at) do
+          %DateTime{} = at ->
+            [
+              event(:jido_signal_enqueued, at, run_id,
+                summary: "Jido signal enqueued for delivery",
+                details: jido_signal_details(item)
+              )
+            ]
+
+          _missing ->
+            []
+        end
+
+      delivered =
+        case Map.get(item, :delivered_at) do
+          %DateTime{} = at ->
+            [
+              event(:jido_signal_delivered, at, run_id,
+                summary: "Jido signal delivery acknowledged",
+                details: jido_signal_details(item)
+              )
+            ]
+
+          _missing ->
+            []
+        end
+
+      enqueued ++ delivered
+    end)
+  end
+
+  defp jido_signal_events(%Snapshot{}) do
+    []
+  end
+
+  defp jido_signal_details(item) do
+    Map.take(item, [:outbox_id, :signal_id, :signal_type, :route, :status])
   end
 
   defp command_events(%Snapshot{run_id: run_id, command_history: commands}) do

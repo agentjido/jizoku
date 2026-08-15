@@ -56,6 +56,7 @@ defmodule Squidie.ReadModel.Explanation do
     guardrail_details = guardrail_details(snapshot.guardrails)
     deadline_details = deadline_details(snapshot.deadline)
     continuation_details = continuation_details(snapshot.continuation)
+    jido_signal_details = jido_signal_details(snapshot.jido_signals)
 
     %Diagnostic{
       run_id: snapshot.run_id,
@@ -73,10 +74,40 @@ defmodule Squidie.ReadModel.Explanation do
         |> Map.merge(dynamic_work_details)
         |> Map.merge(guardrail_details)
         |> Map.merge(deadline_details)
-        |> Map.merge(continuation_details),
-      next_actions: Enum.uniq(next_actions ++ deadline_next_actions(snapshot.deadline)),
+        |> Map.merge(continuation_details)
+        |> Map.merge(jido_signal_details),
+      next_actions:
+        Enum.uniq(
+          next_actions ++
+            deadline_next_actions(snapshot.deadline) ++
+            jido_signal_next_actions(snapshot.jido_signals)
+        ),
       evidence: evidence(snapshot)
     }
+  end
+
+  defp jido_signal_details(%{pending_count: pending, delivered_count: delivered, items: items})
+       when is_integer(pending) and is_integer(delivered) and is_list(items) and items != [] do
+    %{
+      jido_signal_delivery: %{
+        pending_count: pending,
+        delivered_count: delivered,
+        items: items
+      }
+    }
+  end
+
+  defp jido_signal_details(_jido_signals) do
+    %{}
+  end
+
+  defp jido_signal_next_actions(%{pending_count: pending})
+       when is_integer(pending) and pending > 0 do
+    [:deliver_jido_signals]
+  end
+
+  defp jido_signal_next_actions(_jido_signals) do
+    []
   end
 
   defp explanation_parts(%Snapshot{reason: :planned_dispatch_pending_schedule} = snapshot) do
