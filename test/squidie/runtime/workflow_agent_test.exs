@@ -4,6 +4,7 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.Entry
+  alias Squidie.Runtime.Jido.ResultEnvelope
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.CommandReceipt
   alias Squidie.Runtime.Journal.DispatchScheduler
@@ -753,6 +754,79 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
     assert recovered_agent.state.thread_rev == 2
     assert WorkflowAgent.applied_runnable_keys(recovered_agent) == MapSet.new()
     assert [^completed_attempt] = WorkflowAgent.pending_results(recovered_agent, dispatch_agent)
+  end
+
+  for encoding <- [
+        %{"effect" => "run_instruction", "version" => 1},
+        %{"effect" => "run_instruction", "version" => 2}
+      ] do
+    @completion_encoding encoding
+
+    test "does not flatten #{inspect(encoding)} through generic result recovery" do
+      assert {:ok, run_started} =
+               DispatchProtocol.new_entry(:run_started, %{
+                 run_id: @run_id,
+                 workflow: @workflow,
+                 occurred_at: @started_at
+               })
+
+      assert {:ok, runnables_planned} =
+               DispatchProtocol.new_entry(:runnables_planned, %{
+                 run_id: @run_id,
+                 runnables: [%{runnable_key: @runnable_key, step: "charge_card"}],
+                 occurred_at: @visible_at
+               })
+
+      assert {:ok, dispatch_scheduled} =
+               DispatchProtocol.new_entry(:attempt_scheduled, scheduled_attrs())
+
+      assert {:ok, dispatch_claimed} =
+               DispatchProtocol.new_entry(:attempt_claimed, claimed_attrs())
+
+      result =
+        ResultEnvelope.wrap_run_instruction(
+          %{status: "captured"},
+          %{"dynamic_work" => %{dynamic_key: "one"}, "runnables" => [%{step: "one"}]}
+        )
+
+      completed_attrs =
+        Map.put(
+          completed_attrs(result: result),
+          "completion_encoding",
+          @completion_encoding
+        )
+
+      assert {:ok, dispatch_completed} =
+               DispatchProtocol.new_entry(:attempt_completed, completed_attrs)
+
+      assert {:ok, _run_thread} =
+               Journal.append_entries(@storage, [run_started, runnables_planned])
+
+      assert {:ok, _dispatch_thread} =
+               Journal.append_entries(@storage, [
+                 dispatch_scheduled,
+                 dispatch_claimed,
+                 dispatch_completed
+               ])
+
+      assert {:ok, workflow_agent} = WorkflowAgent.rebuild(@storage, @run_id)
+      assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, "default")
+      assert [completed_attempt] = WorkflowAgent.pending_results(workflow_agent, dispatch_agent)
+      assert {:ok, before_entries} = Journal.load_entries(@storage, {:run, @run_id})
+
+      assert {:ok, %{agent: recovered_agent, attempts: []}} =
+               WorkflowAgent.apply_pending_results(@storage, workflow_agent, dispatch_agent,
+                 now: @completed_at
+               )
+
+      assert {:ok, ^before_entries} = Journal.load_entries(@storage, {:run, @run_id})
+      assert recovered_agent.state.thread_rev == workflow_agent.state.thread_rev
+
+      assert {:error, :native_jido_effect_requires_executor_recovery} =
+               WorkflowAgent.apply_result(@storage, workflow_agent, completed_attempt,
+                 now: @completed_at
+               )
+    end
   end
 
   test "recovers completed dispatch results after a restart loses the live wakeup" do

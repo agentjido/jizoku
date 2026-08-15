@@ -4,6 +4,7 @@ defmodule Squidie.ReadModel.InspectionTest do
   alias Squidie.ReadModel.Inspection
   alias Squidie.ReadModel.Inspection.Snapshot
   alias Squidie.Runtime.DispatchProtocol
+  alias Squidie.Runtime.Jido.ResultEnvelope
   alias Squidie.Runtime.Journal
 
   @storage {Jido.Storage.ETS, table: :squidie_read_model_inspection_test}
@@ -61,6 +62,72 @@ defmodule Squidie.ReadModel.InspectionTest do
     assert snapshot.pending_results == []
     assert snapshot.expired_claims == []
     assert snapshot.terminal? == false
+  end
+
+  test "exposes only public completion results for encoded and ordinary attempts" do
+    envelope =
+      ResultEnvelope.wrap_run_instruction(
+        %{accepted: true},
+        %{"dynamic_work" => %{dynamic_key: "one"}, "runnables" => [%{step: "one"}]}
+      )
+
+    append_run_entries([run_started(), runnables_planned()])
+
+    append_dispatch_entries([
+      attempt_scheduled(),
+      attempt_claimed(),
+      attempt_completed(
+        result: envelope,
+        completion_encoding: ResultEnvelope.completion_encoding()
+      )
+    ])
+
+    assert {:ok, snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert [%{result: %{accepted: true}}] = snapshot.attempts
+    refute inspect(snapshot) =~ "__squidie_jido_result__"
+
+    cleanup_storage()
+    append_run_entries([run_started(), runnables_planned()])
+
+    malformed =
+      put_in(
+        envelope,
+        ["__squidie_jido_result__", "fingerprint"],
+        "malformed"
+      )
+
+    append_dispatch_entries([
+      attempt_scheduled(),
+      attempt_claimed(),
+      attempt_completed(
+        result: malformed,
+        completion_encoding: ResultEnvelope.completion_encoding()
+      )
+    ])
+
+    assert {:ok, snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert [malformed_attempt] = snapshot.attempts
+    refute Map.has_key?(malformed_attempt, :result)
+    refute inspect(snapshot) =~ "__squidie_jido_result__"
+
+    cleanup_storage()
+    append_run_entries([run_started(), runnables_planned()])
+    ordinary = %{"__squidie_jido_result__" => %{application: "ordinary"}}
+
+    append_dispatch_entries([
+      attempt_scheduled(),
+      attempt_claimed(),
+      attempt_completed(result: ordinary)
+    ])
+
+    assert {:ok, snapshot} =
+             Inspection.snapshot(@storage, @run_id, queue: @queue, now: @completed_at)
+
+    assert [%{result: ^ordinary}] = snapshot.attempts
   end
 
   test "builds chronological timeline events from snapshot facts" do
@@ -839,8 +906,8 @@ defmodule Squidie.ReadModel.InspectionTest do
     })
   end
 
-  defp attempt_completed do
-    entry!(:attempt_completed, %{
+  defp attempt_completed(overrides \\ []) do
+    base_attrs = %{
       run_id: @run_id,
       runnable_key: @runnable_key,
       claim_id: "claim_1",
@@ -848,7 +915,17 @@ defmodule Squidie.ReadModel.InspectionTest do
       queue: @queue,
       result: %{"status" => "captured"},
       occurred_at: @completed_at
-    })
+    }
+
+    merged_attrs = Map.merge(base_attrs, Map.new(overrides))
+
+    attrs =
+      case Keyword.get(overrides, :completion_encoding) do
+        nil -> merged_attrs
+        encoding -> Map.put(merged_attrs, "completion_encoding", encoding)
+      end
+
+    entry!(:attempt_completed, Map.delete(attrs, :completion_encoding))
   end
 
   defp attempt_failed do
