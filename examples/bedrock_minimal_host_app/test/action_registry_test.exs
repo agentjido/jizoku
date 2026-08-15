@@ -4,6 +4,7 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
   alias BedrockMinimalHostApp.Steps
   alias BedrockMinimalHostApp.WorkflowRuns
   alias BedrockMinimalHostApp.Workflows.PaymentRecovery
+  alias BedrockMinimalHostApp.Workflows.RawJidoWorkflow
 
   test "validates runtime-authored specs through host-owned action keys" do
     spec = %Squidie.Workflow.Spec{
@@ -71,6 +72,24 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
 
     assert {:ok, completed_run} = Squidie.execute_next(journal_storage: storage)
     assert completed_run.status == :completed
+  end
+
+  test "executes a raw Jido action through the normal journal runtime" do
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: RawJidoWorkflow,
+               now: ~U[2026-08-10 12:00:00Z]
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Squidie.Test.start(runtime, %{value: "bedrock"})
+    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+
+    assert completed.context.jido_result == %{
+             value: "BEDROCK",
+             run_id: run.run_id
+           }
   end
 
   test "compiled payment recovery workflow exposes numeric gateway routing condition" do

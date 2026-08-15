@@ -37,6 +37,7 @@ defmodule Squidie.Test do
     :action_registry,
     :action_stubs,
     :guardrail_registry,
+    :jido_dispatch_routes,
     :max_steps,
     :now,
     :partition,
@@ -115,6 +116,8 @@ defmodule Squidie.Test do
          :ok <- validate_action_stub_workflow(workflow, action_stubs),
          :ok <- validate_action_stub_keys(action_registry, action_stubs),
          {:ok, guardrail_registry} <- guardrail_registry(opts),
+         {:ok, jido_dispatch_routes} <-
+           Squidie.Runtime.Jido.OutboxDelivery.routes(Keyword.get(opts, :jido_dispatch_routes)),
          :ok <-
            validate_test_workflow(
              workflow,
@@ -140,7 +143,8 @@ defmodule Squidie.Test do
          max_steps: max_steps,
          action_registry: action_registry,
          action_stub_keys: Map.keys(action_stubs),
-         guardrail_registry: guardrail_registry
+         guardrail_registry: guardrail_registry,
+         jido_dispatch_routes: jido_dispatch_routes
        }}
     else
       false -> {:error, {:invalid_option, {:opts, :invalid}}}
@@ -875,6 +879,15 @@ defmodule Squidie.Test do
     ]
     |> maybe_put_action_registry(runtime)
     |> maybe_put_guardrail_registry(runtime)
+    |> maybe_put_jido_dispatch_routes(runtime)
+  end
+
+  defp maybe_put_jido_dispatch_routes(opts, %Runtime{jido_dispatch_routes: nil}) do
+    opts
+  end
+
+  defp maybe_put_jido_dispatch_routes(opts, %Runtime{jido_dispatch_routes: routes}) do
+    Keyword.put(opts, :jido_dispatch_routes, routes)
   end
 
   defp append_target_thread_id(runtime, root_run_id, :run) do

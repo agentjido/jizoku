@@ -734,6 +734,96 @@ rejected by duplicate-node validation.
 visual editors can show producer nodes, added node ids, and added edge ids
 without reconstructing them from raw dynamic-work records.
 
+## Raw Jido Workflows
+
+Compiled workflows can use a raw `Jido.Action` as a step. Ordinary success
+results follow the same durable claim, retry, application, and transition path
+as native Squidie steps:
+
+```elixir
+defmodule MyApp.Workflows.PublishOrder do
+  use Squidie.Workflow
+
+  defmodule Publish do
+    use Jido.Action,
+      name: "publish_order",
+      description: "Publishes a durable order signal",
+      schema: [order_id: [type: :string, required: true]]
+
+    @impl Jido.Action
+    def run(%{order_id: order_id}, context) do
+      {:ok, signal} =
+        Jido.Signal.new("orders.prepared", %{"order_id" => order_id},
+          id: "#{context.run_id}:prepared",
+          source: "/my_app/orders",
+          subject: order_id
+        )
+
+      {:ok, %{prepared: true}, [Jido.Agent.Directive.emit(signal)]}
+    end
+  end
+
+  workflow do
+    trigger :manual do
+      manual()
+
+      payload do
+        field :order_id, :string
+      end
+    end
+
+    step :publish, Publish
+    transition :publish, on: :ok, to: :complete
+  end
+end
+```
+
+Emit delivery is host-owned and at-least-once. Squidie persists the signal and
+route before dispatch, then records an acknowledgement after the adapter
+accepts it. Keep the signal ID stable and deduplicate it at the consumer:
+
+Signal IDs and route names appear in operator diagnostics and metrics. Keep
+them opaque and free of secrets or personal data.
+
+```elixir
+config :squidie,
+  jido_emit_effects: :enabled,
+  jido_dispatch_routes: %{
+    "default" => {MyApp.JidoSignalAdapter, endpoint: "https://events.example.test"}
+  }
+
+{:ok, run} =
+  Squidie.start(MyApp.Workflows.PublishOrder, :manual, %{order_id: "order_123"})
+
+{:ok, completed} = Squidie.execute_next(owner_id: "orders-worker")
+
+completed.jido_signals
+#=> %{pending_count: 0, delivered_count: 1, items: [%{status: :delivered, ...}]}
+```
+
+The public interop boundary is deliberately closed:
+
+| Raw Jido result | Squidie behavior |
+| --- | --- |
+| `{:ok, output}` or `{:ok, output, []}` | Applies ordinary output and follows workflow transitions. |
+| One `Directive.Error` | Records a redacted, non-retryable failure and follows the normal `:error` transition. |
+| One `Directive.RunInstruction` | Plans one allowlisted `Jido.Instruction` as durable dynamic work when `jido_effects` is enabled. |
+| One `Directive.Emit` | Enqueues one `Jido.Signal` durably and dispatches it through a host route when `jido_emit_effects` is enabled. |
+| Mixed, custom, or malformed directives | Fails closed before output application. |
+
+Both effect flags default to disabled. Enable each one only after every executor
+and recovery reader for the affected queues runs a compatible release. During a
+rollback, disable new emission and drain or repair all encoded completions before
+restoring an older reader; recovery of already-durable effects remains ungated.
+
+`inspect_run/2` exposes redacted outbox counts and structural items. Timeline
+events distinguish enqueue from acknowledgement, and `explain_run/2` recommends
+`:deliver_jido_signals` while an item remains pending. Payloads, adapter options,
+and adapter errors stay out of those diagnostics. See the executable
+[minimal host examples](examples/minimal_host_app/README.md) and the full
+[Jido authoring contract](docs/workflow_authoring.md) for restart, unknown
+outcome, registry, and fleet rollout requirements.
+
 ## Long-Running Steps
 
 Workers can ask the journal executor to renew the active claim while a step is

@@ -92,6 +92,11 @@ defmodule Squidie.ReadModel.Inspection.Snapshot do
           deadline: map() | nil,
           manual_state: map() | nil,
           command_history: [map()],
+          jido_signals: %{
+            required(:pending_count) => non_neg_integer(),
+            required(:delivered_count) => non_neg_integer(),
+            required(:items) => [map()]
+          },
           thread_revisions: %{run: non_neg_integer(), dispatch: non_neg_integer()},
           planned_runnables: [map()],
           planned_runnable_keys: [String.t()],
@@ -145,6 +150,7 @@ defmodule Squidie.ReadModel.Inspection.Snapshot do
       critical_threshold: 20_000
     },
     command_history: [],
+    jido_signals: %{pending_count: 0, delivered_count: 0, items: []},
     manual_state: nil,
     child_runs: [],
     dynamic_work: [],

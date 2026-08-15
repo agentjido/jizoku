@@ -24,7 +24,9 @@ defmodule Squidie.Telemetry.Emitter do
     :parent_span_id,
     :causation_id,
     :child_run_id,
-    :dynamic_key
+    :dynamic_key,
+    :outbox_id,
+    :route
   ]
 
   @max_metadata_value_bytes 255

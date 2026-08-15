@@ -56,7 +56,8 @@ defmodule Squidie.Runtime.Routing do
     :heartbeat_interval_ms,
     :now,
     :action_registry,
-    :guardrail_registry
+    :guardrail_registry,
+    :jido_dispatch_routes
   ]
   @journal_dynamic_work_options [
     :runtime,

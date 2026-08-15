@@ -263,6 +263,36 @@ rebuilt from journal facts before recovery. New emission is guarded by the
 default-off `:jido_effects` fleet activation setting, while recovery of already
 durable envelopes remains ungated.
 
+A lone Jido `Emit` directive uses the same completion fence but writes a durable
+signal outbox item instead of dynamic work:
+
+```text
+attempt_completed(source + emit intent)
+  -> runnable_applied(source)
+  -> jido_signal_enqueued(signal + host route name)
+  -> normal successor or run_terminal
+  -> external dispatch
+  -> jido_signal_delivery_acknowledged
+```
+
+The source application, enqueue, and workflow progression are one run-thread
+append. External dispatch happens only after that append commits. The
+acknowledgement may therefore follow `run_terminal`; projection replay accepts
+that one post-terminal fact while continuing to reject post-terminal enqueue or
+ordinary workflow mutation. A send-before-ack crash intentionally redelivers
+the same signal ID. This is an at-least-once boundary, not exactly-once external
+delivery.
+
+Outbox facts persist only a bounded route name. The host supplies the actual
+`Jido.Signal.Dispatch` adapter configuration through
+`:jido_dispatch_routes`, so credentials and adapter state never enter workflow
+history. `Squidie.execute_next/1` delivers the current run's pending items and,
+when the queue is otherwise idle, scans the durable run catalog to reconcile a
+terminal pending item. `Squidie.deliver_jido_signals/2` provides an explicit
+run-scoped repair path. New Emit admission is independently guarded by the
+default-off `:jido_emit_effects` fleet setting; recovery and delivery of already
+durable items are ungated.
+
 When a command reaches the journal runtime, Squidie records a
 `:run_signal_received` fact in the run thread before the command's lifecycle
 facts. Starts, cron starts, manual approvals, rejections, resumes,

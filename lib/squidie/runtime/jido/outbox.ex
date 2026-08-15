@@ -190,6 +190,7 @@ defmodule Squidie.Runtime.Jido.Outbox do
     DispatchProtocol.new_entry(:jido_signal_delivery_acknowledged, %{
       @outbox_id_key => Map.get(intent, :outbox_id),
       @fingerprint_key => Map.get(intent, :signal_fingerprint),
+      @route_key => Map.get(intent, :route),
       run_id: Map.get(intent, :run_id),
       signal_id: Map.get(intent, :signal_id),
       occurred_at: now
@@ -274,6 +275,46 @@ defmodule Squidie.Runtime.Jido.Outbox do
   end
 
   @doc false
+  @spec public_summary(map()) :: %{
+          required(:pending_count) => non_neg_integer(),
+          required(:delivered_count) => non_neg_integer(),
+          required(:items) => [map()]
+        }
+  def public_summary(projection) do
+    public_items = Enum.map(items(projection), &public_item/1)
+
+    %{
+      pending_count: Enum.count(public_items, &(Map.get(&1, :status) == :pending)),
+      delivered_count: Enum.count(public_items, &(Map.get(&1, :status) == :delivered)),
+      items: public_items
+    }
+  end
+
+  @doc false
+  @spec fetch_projected_item(map(), String.t()) :: {:ok, map()} | :error
+  def fetch_projected_item(projection, outbox_id) when is_binary(outbox_id) do
+    fetch_item(projection, outbox_id)
+  end
+
+  @doc false
+  @spec intent_from_item(map()) :: {:ok, intent()} | {:error, {:invalid_jido_emit, atom()}}
+  def intent_from_item(item) when is_map(item) do
+    decode_intent(%{
+      @outbox_id_key => Map.get(item, @outbox_id_key),
+      "run_id" => Map.get(item, "run_id"),
+      @source_runnable_key => Map.get(item, @source_runnable_key),
+      "signal_id" => Map.get(item, "signal_id"),
+      "signal" => Map.get(item, "signal"),
+      @route_key => Map.get(item, @route_key),
+      @fingerprint_key => Map.get(item, @fingerprint_key)
+    })
+  end
+
+  def intent_from_item(_item) do
+    invalid(:intent)
+  end
+
+  @doc false
   @spec decode_signal(map()) :: {:ok, Jido.Signal.t()} | {:error, {:invalid_jido_emit, atom()}}
   def decode_signal(encoded) when is_map(encoded) do
     case Jido.Signal.from_map(encoded) do
@@ -328,9 +369,11 @@ defmodule Squidie.Runtime.Jido.Outbox do
     with true <- projection_shape?(projection),
          {:ok, outbox_id} <- non_empty_value(data, @outbox_id_key),
          {:ok, signal_fingerprint} <- non_empty_value(data, @fingerprint_key),
+         {:ok, route} <- non_empty_value(data, @route_key),
          {:ok, item} <- fetch_item(projection, outbox_id),
          true <- valid_projected_item?({outbox_id, item}),
          true <- Map.get(item, @fingerprint_key) == signal_fingerprint,
+         true <- Map.get(item, @route_key) == route,
          true <- Map.get(item, "run_id") == Map.get(data, :run_id),
          true <- Map.get(item, "signal_id") == Map.get(data, :signal_id),
          true <- Map.get(data, :occurred_at) == entry.occurred_at,
@@ -560,6 +603,24 @@ defmodule Squidie.Runtime.Jido.Outbox do
   defp valid_projected_anomaly?(_anomaly) do
     false
   end
+
+  defp public_item(item) do
+    signal = Map.get(item, "signal", %{})
+
+    %{
+      outbox_id: Map.get(item, @outbox_id_key),
+      signal_id: Map.get(item, "signal_id"),
+      signal_type: Map.get(signal, "type"),
+      route: Map.get(item, "route"),
+      status: public_status(Map.get(item, "status")),
+      enqueued_at: Map.get(item, "enqueued_at"),
+      delivered_at: Map.get(item, "delivered_at")
+    }
+  end
+
+  defp public_status("pending"), do: :pending
+  defp public_status("delivered"), do: :delivered
+  defp public_status(_status), do: :unknown
 
   defp normalize_projected_anomaly(anomaly) do
     %{

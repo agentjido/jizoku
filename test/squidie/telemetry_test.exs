@@ -25,6 +25,9 @@ defmodule Squidie.TelemetryTest do
              [:squidie, :runtime, :step, :execute, :start],
              [:squidie, :runtime, :step, :execute, :stop],
              [:squidie, :runtime, :step, :execute, :exception],
+             [:squidie, :runtime, :jido_signal, :deliver, :start],
+             [:squidie, :runtime, :jido_signal, :deliver, :stop],
+             [:squidie, :runtime, :jido_signal, :deliver, :exception],
              [:squidie, :runtime, :command, :received],
              [:squidie, :runtime, :run, :started],
              [:squidie, :runtime, :run, :terminal],
@@ -39,7 +42,9 @@ defmodule Squidie.TelemetryTest do
              [:squidie, :runtime, :manual, :paused],
              [:squidie, :runtime, :manual, :resolved],
              [:squidie, :runtime, :child, :started],
-             [:squidie, :runtime, :dynamic_work, :recorded]
+             [:squidie, :runtime, :dynamic_work, :recorded],
+             [:squidie, :runtime, :jido_signal, :enqueued],
+             [:squidie, :runtime, :jido_signal, :delivered]
            ]
   end
 

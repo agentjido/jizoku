@@ -216,6 +216,22 @@ defmodule Squidie.Telemetry.JournalEvents do
     })
   end
 
+  defp entry_intents(%{type: :jido_signal_enqueued, data: data}, context) do
+    point(:jido_signal, :enqueued, data, context, %{
+      signal_id: Map.get(data, :signal_id),
+      outbox_id: Map.get(data, "outbox_id"),
+      route: Map.get(data, "route")
+    })
+  end
+
+  defp entry_intents(%{type: :jido_signal_delivery_acknowledged, data: data}, context) do
+    point(:jido_signal, :delivered, data, context, %{
+      signal_id: Map.get(data, :signal_id),
+      outbox_id: Map.get(data, "outbox_id"),
+      route: Map.get(data, "route")
+    })
+  end
+
   defp entry_intents(_entry, _context), do: []
 
   defp retry_intent(%{retry_runnable_key: retry_key} = data, context)

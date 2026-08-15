@@ -23,6 +23,7 @@ defmodule Squidie.ReadModel.Inspection do
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
+  alias Squidie.Runtime.Jido.Outbox
   alias Squidie.Runtime.Jido.ResultEnvelope
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.Options
@@ -216,6 +217,10 @@ defmodule Squidie.ReadModel.Inspection do
         ),
       manual_state: normalized_manual_state,
       command_history: WorkflowAgent.Projection.command_history(workflow_projection),
+      jido_signals:
+        workflow_projection
+        |> WorkflowAgent.Projection.jido_outbox()
+        |> Outbox.public_summary(),
       thread_revisions: %{run: run_thread_rev, dispatch: dispatch_thread_rev},
       planned_runnables: normalized_planned_runnables,
       planned_runnable_keys: WorkflowAgent.planned_runnable_keys(workflow_agent),

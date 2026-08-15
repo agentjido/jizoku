@@ -46,7 +46,7 @@ defmodule Squidie.ReleasePrepScriptTest do
 
     defp deps do
       [
-        {:jido, "~> 2.0"},
+               {:jido, "~> 2.3"},
         {:squidie, "~> 0.3.0"}
       ]
     end

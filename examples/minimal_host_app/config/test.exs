@@ -29,6 +29,7 @@ config :squidie,
   runtime: :journal,
   read_model: :read_model,
   continuation_fences: :enabled,
-  jido_effects: :enabled
+  jido_effects: :enabled,
+  jido_emit_effects: :enabled
 
 config :logger, level: :warning
