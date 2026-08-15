@@ -444,9 +444,6 @@ defmodule Squidie.Runtime.Jido.Outbox do
     []
   end
 
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
   defp fingerprint(value) do
     value
     |> :erlang.term_to_binary([:deterministic])

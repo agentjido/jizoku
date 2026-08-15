@@ -1541,7 +1541,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
 
     case anomaly do
       nil -> projection
-      anomaly -> %__MODULE__{projection | anomalies: [anomaly | projection.anomalies]}
+      anomaly -> %{projection | anomalies: [anomaly | projection.anomalies]}
     end
   end
 
