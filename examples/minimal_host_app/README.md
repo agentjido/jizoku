@@ -1,19 +1,19 @@
 # Minimal Host App
 
-Reference host-app harness for Squidie.
+Reference host-app harness for Jizoku.
 
 This example shows how an application can:
 
-- configure Squidie with its own `Repo`
+- configure Jizoku with its own `Repo`
 - expose workflow operations through an application-facing module
 - pause and resume a human-in-the-loop workflow through that boundary
-- apply Squidie runtime command signals, including Jido envelope interop,
+- apply Jizoku runtime command signals, including Jido envelope interop,
   through `MinimalHostApp.RuntimeSignals`
 - activate cron workflows through a host-owned scheduler plugin
 - run repeatable smoke, resilience, and bounded soak paths during development
 - execute native continue-as-new through fresh linked runs and bounded lineage
   inspection
-- exercise raw Jido actions through Squidie's explicit directive compatibility
+- exercise raw Jido actions through Jizoku's explicit directive compatibility
   boundary
 - schedule allowlisted raw `Jido.Instruction` values as durable dynamic work
 - enqueue and deliver raw Jido `Emit` directives through a durable outbox
@@ -35,14 +35,14 @@ mix setup
 This will:
 
 - create the example app database
-- install Squidie migrations into the example app with `mix squidie.install`
+- install Jizoku migrations into the example app with `mix jizoku.install`
 - run the example app's scheduler and delivery migration
-- run both the example app and Squidie migrations through `mix ecto.migrate`
+- run both the example app and Jizoku migrations through `mix ecto.migrate`
 
 This example is the standalone development harness. Unlike the embedded host-app
 install path, it owns its own scheduler and delivery wiring so the runtime can
 be exercised without depending on another application. The current harness uses
-Oban for cron delivery; workflow state still lives in the Squidie journal.
+Oban for cron delivery; workflow state still lives in the Jizoku journal.
 
 Run the verification tasks one at a time. They share the same test database,
 manual scheduler instance, and local gateway stubs, so parallel runs can
@@ -73,9 +73,9 @@ process:
 MIX_ENV=test mix example.operations
 ```
 
-This runs `mix squidie.status --json` and
-`mix squidie.doctor --json --fail-on-drift`, decodes both reports, verifies the
-database matches Squidie's required schema, and proves the commands do not
+This runs `mix jizoku.status --json` and
+`mix jizoku.doctor --json --fail-on-drift`, decodes both reports, verifies the
+database matches Jizoku's required schema, and proves the commands do not
 start `MinimalHostApp`'s supervision tree.
 
 ## Multi-node Worker Proof
@@ -87,14 +87,14 @@ MIX_ENV=test mix test test/multi_node_host_worker_test.exs
 ```
 
 The suite runs two independent worker identities against one queue and the
-same Postgres-backed Squidie journal. It proves that concurrent workers cannot
+same Postgres-backed Jizoku journal. It proves that concurrent workers cannot
 apply one visible attempt twice, a current heartbeat prevents reclaim, an
 expired claim can be taken over, and stale completion or failure cannot mutate
 the run after takeover. It also checks the inspection and explanation evidence
 for current ownership, expired recovery, cancellation, failure, and completion
 fences.
 
-This is an embedded host-app pattern, not a Squidie cluster. Production hosts
+This is an embedded host-app pattern, not a Jizoku cluster. Production hosts
 still own worker placement and supervision, and side-effecting steps still need
 idempotency because an external action may occur before a worker loses its
 claim.
@@ -139,7 +139,7 @@ The smoke task:
 - activates the same digest workflow through the host app's cron plugin
 - verifies both digest triggers complete through the same workflow graph
 
-The sample enables `config :squidie, continuation_fences: :enabled`,
+The sample enables `config :jizoku, continuation_fences: :enabled`,
 `jido_effects: :enabled`, and `jido_emit_effects: :enabled` only in development
 and test because those smoke paths run one coherent application version. Its
 production configuration remains default-off. Production hosts must first
@@ -153,7 +153,7 @@ as a redaction-safe, non-retryable failure and proves the action output is not
 applied.
 
 `MinimalHostApp.Workflows.JidoEmitWorkflow` demonstrates the supported Emit
-boundary. The raw action creates a real `Jido.Signal`; Squidie records its
+boundary. The raw action creates a real `Jido.Signal`; Jizoku records its
 completion and outbox enqueue before dispatch, delivers it through a host-owned
 route, and appends the acknowledgement after delivery. The test suite exercises
 the same workflow through the isolated in-memory runtime and the Ecto journal,
@@ -162,7 +162,7 @@ ID used for at-least-once deduplication.
 
 `MinimalHostApp.Workflows.JidoInstructionWorkflow` demonstrates the supported
 instruction boundary. Host code supplies an already applied runnable as the
-causal origin, and Squidie resolves the instruction action module through the
+causal origin, and Jizoku resolves the instruction action module through the
 host-owned action registry. The instruction ID becomes the idempotent dynamic
 work identity; execution, retries, result application, and inspection use the
 normal journal runtime.
@@ -247,12 +247,12 @@ transition :check_gateway_status, on: :ok, to: :issue_gateway_credit
 
 The gateway check step also copies the durable step-context metadata into its
 output under `gateway_check.attempt`. That gives the sample app a concrete
-example of using native Squidie context fields such as `idempotency_key` and
+example of using native Jizoku context fields such as `idempotency_key` and
 `claim_id` from an ordinary step module.
 
 `MinimalHostApp.RuntimeSignals` is the concrete signal boundary for this sample.
-It accepts native `Squidie.Runtime.Signal` commands and inbound `Jido.Signal`
-envelopes and passes both directly to `Squidie.apply_signal/2`. The adapter
+It accepts native `Jizoku.Runtime.Signal` commands and inbound `Jido.Signal`
+envelopes and passes both directly to `Jizoku.apply_signal/2`. The adapter
 remains available for outbound conversion. The smoke path also verifies that
 the host-owned envelope source, ID, and correlation survive the boundary and
 that the resulting run/runnable trace remains durable across a worker handoff.
@@ -262,7 +262,7 @@ allowlists `minimal_host.dependency_recovery.requested`, maps its data into the
 compiled `DependencyRecovery` workflow, and returns a lifecycle command without
 accepting module names, storage, queues, or dispatch configuration from the
 signal. `RuntimeSignals.apply_domain/1` supplies that resolver to
-`Squidie.apply_signal/2`. Squidie durably fences the resulting lifecycle
+`Jizoku.apply_signal/2`. Jizoku durably fences the resulting lifecycle
 command by the signal source and ID before applying it, so redelivery after a
 resolver deploy still repairs the original route.
 
@@ -278,7 +278,7 @@ step :authorize_payment, MinimalHostApp.Steps.AuthorizePayment,
 step :capture_payment, MinimalHostApp.Steps.CapturePayment, retry: [max_attempts: 2]
 ```
 
-The capture step fails after its retry policy is exhausted, then Squidie
+The capture step fails after its retry policy is exhausted, then Jizoku
 voids the payment authorization and releases inventory in reverse completion
 order. The smoke task verifies those compensation results through
 `inspect_run(..., include_history: true)`, including the internal
@@ -323,9 +323,9 @@ step :post_local_ledger_entries, MinimalHostApp.Steps.PostLocalLedgerEntries,
 ```
 
 The step writes two local ledger rows through `MinimalHostApp.Repo`. When the
-step returns `{:ok, output}`, both rows commit before Squidie records the
+step returns `{:ok, output}`, both rows commit before Jizoku records the
 completed step. When the step returns `{:error, reason}`, both rows roll back
-and Squidie records the durable step failure. This is a local database
+and Jizoku records the durable step failure. This is a local database
 boundary only; saga compensation and later workflow steps remain explicit
 workflow concerns.
 
@@ -411,7 +411,7 @@ join step:
 
 ```elixir
 defmodule MinimalHostApp.Workflows.DependencyRecovery do
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :dependency_recovery do

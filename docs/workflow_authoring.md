@@ -5,23 +5,23 @@ This guide documents the workflow contract and authoring patterns.
 > ### Learn with Livebook
 >
 > The interactive Livebook demonstrates dependency workflows, DSL declaration, spec normalization, input mapping, execution, and graph output.
-> [![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fdark-trench%2Fsquidie%2Fblob%2Fmain%2Fdocs%2Fworkflow_authoring.livemd)
+> [![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fdark-trench%2Fjizoku%2Fblob%2Fmain%2Fdocs%2Fworkflow_authoring.livemd)
 
 ## Formatter Setup
 
-Squidie exports formatter rules for workflow DSL calls. Host apps can import
+Jizoku exports formatter rules for workflow DSL calls. Host apps can import
 them from their `.formatter.exs`:
 
 ```elixir
 [
-  import_deps: [:squidie],
+  import_deps: [:jizoku],
   inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"]
 ]
 ```
 
 ## Define A Workflow
 
-Workflows are Elixir modules that `use Squidie.Workflow` and declare:
+Workflows are Elixir modules that `use Jizoku.Workflow` and declare:
 
 - one trigger
 - one payload contract
@@ -33,7 +33,7 @@ Workflows are Elixir modules that `use Squidie.Workflow` and declare:
 
 ```elixir
 defmodule Billing.Workflows.PaymentRecovery do
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :payment_recovery do
@@ -71,8 +71,8 @@ Compiled workflows can be exposed as normalized, serializable specs for tooling,
 inspection, and planner rebuilds:
 
 ```elixir
-{:ok, spec} = Squidie.Workflow.to_spec(Billing.Workflows.PaymentRecovery)
-:ok = Squidie.Workflow.validate_spec(spec)
+{:ok, spec} = Jizoku.Workflow.to_spec(Billing.Workflows.PaymentRecovery)
+:ok = Jizoku.Workflow.validate_spec(spec)
 ```
 
 `validate_spec/1` validates the spec as data. It checks trigger shape, payload
@@ -111,16 +111,16 @@ spec = %{
   entry_step: :load_invoice
 }
 
-:ok = Squidie.Workflow.validate_spec(spec, action_registry: registry)
-{:ok, resolved_spec} = Squidie.Workflow.resolve_spec_actions(spec, action_registry: registry)
+:ok = Jizoku.Workflow.validate_spec(spec, action_registry: registry)
+{:ok, resolved_spec} = Jizoku.Workflow.resolve_spec_actions(spec, action_registry: registry)
 
 {:ok, run} =
-  Squidie.start_spec(spec, :manual, %{invoice_id: "inv_123"},
+  Jizoku.start_spec(spec, :manual, %{invoice_id: "inv_123"},
     action_registry: registry
   )
 ```
 
-The registry is an allowlist. Entries must resolve to loaded `Squidie.Step`
+The registry is an allowlist. Entries must resolve to loaded `Jizoku.Step`
 modules or explicit `Jido.Action` modules. Unknown keys, disabled entries such
 as `[module: Billing.Steps.LoadInvoice, enabled?: false]`, and incompatible
 modules return structured `{:invalid_workflow_spec, errors}` before activation.
@@ -139,22 +139,22 @@ runtime-authored spec runs is intentionally rejected for now with
 ## Visual Editor Round Trips
 
 Visual editors should round-trip workflow specs through
-`Squidie.Workflow.EditorSpec` when they need JSON-safe data. This boundary is
+`Jizoku.Workflow.EditorSpec` when they need JSON-safe data. This boundary is
 for loading, validation, preview, editing, and saving. It does not start a run,
 load workflow modules from user input, create atoms from strings, or resolve
 action keys into executable modules.
 
 ```elixir
-{:ok, spec} = Squidie.Workflow.to_spec(Billing.Workflows.PaymentRecovery)
+{:ok, spec} = Jizoku.Workflow.to_spec(Billing.Workflows.PaymentRecovery)
 
 editor_map =
   spec
-  |> Squidie.Workflow.EditorSpec.to_map()
+  |> Jizoku.Workflow.EditorSpec.to_map()
   |> Jason.encode!()
   |> Jason.decode!()
 
-:ok = Squidie.Workflow.EditorSpec.validate_map(editor_map)
-{:ok, graph} = Squidie.Workflow.EditorSpec.preview_graph(editor_map)
+:ok = Jizoku.Workflow.EditorSpec.validate_map(editor_map)
+{:ok, graph} = Jizoku.Workflow.EditorSpec.preview_graph(editor_map)
 ```
 
 When editor JSON uses runtime-authored top-level action keys, pass the same
@@ -164,17 +164,17 @@ host-owned registry used by the start boundary:
 registry = %{"billing.load_invoice" => Billing.Steps.LoadInvoice}
 
 :ok =
-  Squidie.Workflow.EditorSpec.validate_map(editor_map,
+  Jizoku.Workflow.EditorSpec.validate_map(editor_map,
     action_registry: registry
   )
 
 {:ok, draft_graph} =
-  Squidie.Workflow.EditorSpec.preview_graph(editor_map,
+  Jizoku.Workflow.EditorSpec.preview_graph(editor_map,
     action_registry: registry
   )
 
 {:ok, draft_diff} =
-  Squidie.Workflow.EditorSpec.diff(spec, editor_map,
+  Jizoku.Workflow.EditorSpec.diff(spec, editor_map,
     action_registry: registry
   )
 ```
@@ -184,10 +184,10 @@ The round-trip boundary is intentionally data-only:
 ```mermaid
 sequenceDiagram
   participant Editor as Visual Editor
-  participant ToMap as Squidie.Workflow.EditorSpec.to_map
+  participant ToMap as Jizoku.Workflow.EditorSpec.to_map
   participant JSON as JSON encode/decode
-  participant Validate as Squidie.Workflow.EditorSpec.validate_map
-  participant Preview as Squidie.Workflow.EditorSpec.preview_graph
+  participant Validate as Jizoku.Workflow.EditorSpec.validate_map
+  participant Preview as Jizoku.Workflow.EditorSpec.preview_graph
   Editor->>ToMap: Spec struct or map
   ToMap->>ToMap: stringify keys, jsonify values, filter editor-owned fields
   ToMap-->>Editor: editor-safe map
@@ -203,7 +203,7 @@ sequenceDiagram
   Preview-->>Editor: draft diff {added, removed, changed}
 ```
 
-Use `Squidie.preview_spec/3` when an editor needs execution-style node output
+Use `Jizoku.preview_spec/3` when an editor needs execution-style node output
 for a sample payload before publishing or starting a run. Preview execution is
 read-only: it resolves action keys through the host registry, calls only entries
 that opt into `dry_run` behavior, returns per-node outputs or unsupported
@@ -216,7 +216,7 @@ registry = %{
 }
 
 {:ok, preview} =
-  Squidie.preview_spec(editor_map, %{invoice_id: "inv_123"},
+  Jizoku.preview_spec(editor_map, %{invoice_id: "inv_123"},
     action_registry: registry
   )
 
@@ -224,7 +224,7 @@ Enum.map(preview.nodes, &Map.take(&1, [:id, :status, :output, :error]))
 ```
 
 Registry entries without `dry_run: true` or an explicit `dry_run: {Module,
-:function}` callback are reported with `status: :unsupported`; Squidie never
+:function}` callback are reported with `status: :unsupported`; Jizoku never
 falls back to the durable action `run/2` callback during preview.
 
 The editor map uses string keys and JSON-safe values. Editors own declarative
@@ -269,7 +269,7 @@ Validation errors keep stable paths for field highlighting:
 
 ```elixir
 {:error, {:invalid_workflow_editor_spec, errors}} =
-  Squidie.Workflow.EditorSpec.validate_map(%{
+  Jizoku.Workflow.EditorSpec.validate_map(%{
     "workflow" => "Billing.Workflows.PaymentRecovery",
     "triggers" => [],
     "payload" => [],
@@ -289,17 +289,17 @@ Validation errors keep stable paths for field highlighting:
 For runtime-authored workflow activation, keep using `validate_spec/2`,
 `resolve_spec_actions/2`, and `start_spec/3` or `start_spec/4` with a host-owned
 action registry. The editor preview contract is intentionally read-only; runtime
-activation still happens at the Squidie start boundary so action allowlists,
+activation still happens at the Jizoku start boundary so action allowlists,
 payload validation, durable definition persistence, and journal inspection stay
 centralized.
 
-Hosts that want a reusable HTTP node can expose `Squidie.Step.HTTP` through the
+Hosts that want a reusable HTTP node can expose `Jizoku.Step.HTTP` through the
 same registry:
 
 ```elixir
 registry = %{
   "http.request" => [
-    module: Squidie.Step.HTTP,
+    module: Jizoku.Step.HTTP,
     category: "HTTP",
     action_opts: [allowed_hosts: ["api.example.test"]],
     credential_requirements: [%{name: "billing_api", required?: true}]
@@ -307,7 +307,7 @@ registry = %{
 }
 
 :ok =
-  Squidie.Step.HTTP.validate_request(%{
+  Jizoku.Step.HTTP.validate_request(%{
     method: "GET",
     url_template: "https://api.example.test/invoices/{{ invoice_id }}",
     bindings: %{"invoice_id" => "inv_123"},
@@ -326,13 +326,13 @@ context. Retryable HTTP or transport failures return structured retry errors so
 workflow retry policy controls the next attempt.
 
 Hosts that want runtime-authored workflows to call custom Elixir logic can
-expose `Squidie.Step.Elixir` and keep executable ownership in registry
+expose `Jizoku.Step.Elixir` and keep executable ownership in registry
 `action_opts`:
 
 ```elixir
 registry = %{
   "elixir.run" => [
-    module: Squidie.Step.Elixir,
+    module: Jizoku.Step.Elixir,
     category: "Elixir",
     input_contract: %{
       adapter: %{type: :string, required?: true, enum: ["billing.load_invoice"]},
@@ -360,26 +360,26 @@ Pass the registry at start and execution boundaries:
 
 ```elixir
 {:ok, run} =
-  Squidie.start_spec(spec, :manual, payload,
+  Jizoku.start_spec(spec, :manual, payload,
     action_registry: registry
   )
 
 {:ok, snapshot} =
-  Squidie.execute_next(
+  Jizoku.execute_next(
     owner_id: "worker",
     action_registry: registry
   )
 ```
 
 Do not let editor data provide module names, function names, or code snippets.
-`Squidie.Step.Elixir` rejects those fields, validates adapter keys before run
+`Jizoku.Step.Elixir` rejects those fields, validates adapter keys before run
 start, persists only safe adapter metadata in runtime specs, and converts
 adapter failures into structured action errors.
 
 The spec is an Elixir data representation with atom keys and module atoms:
 
 ```elixir
-%Squidie.Workflow.Spec{
+%Jizoku.Workflow.Spec{
   workflow: Billing.Workflows.PaymentRecovery,
   definition_version: "2026-05-26.payment-recovery",
   triggers: [
@@ -417,7 +417,7 @@ The spec is an Elixir data representation with atom keys and module atoms:
 ```
 
 Add `version "2026-05-26.payment-recovery"` inside the `workflow do` block when
-operators need a human-readable definition label. Squidie persists the label
+operators need a human-readable definition label. Jizoku persists the label
 beside the precise definition fingerprint at run start. The version is exposed
 through `list_runs/2`, `inspect_run/2`, `inspect_run_graph/2`, and
 `explain_run/2`, but it does not relax fingerprint compatibility checks.
@@ -454,7 +454,7 @@ transition :check_gateway_status, on: :ok, to: :issue_gateway_credit
 The normalized spec exposes the condition as data:
 
 ```elixir
-%Squidie.Workflow.Spec{
+%Jizoku.Workflow.Spec{
   transitions: [
     %{
       from: :classify,
@@ -467,7 +467,7 @@ The normalized spec exposes the condition as data:
 }
 ```
 
-At runtime, Squidie evaluates conditional transitions in declaration order.
+At runtime, Jizoku evaluates conditional transitions in declaration order.
 The first matching condition wins; an unconditional transition is the fallback.
 Condition values must be JSON-safe because the selected route is persisted in
 durable run history. `greater_than` and `less_than` expect numeric condition
@@ -478,7 +478,7 @@ Invalid specs return structured errors:
 
 ```elixir
 {:error, {:invalid_workflow_spec, errors}} =
-  Squidie.Workflow.validate_spec(%{
+  Jizoku.Workflow.validate_spec(%{
     workflow: "Elixir.System",
     triggers: [],
     payload: [],
@@ -493,9 +493,9 @@ Invalid specs return structured errors:
 
 Serialized module names and fully string-keyed editor records are intentionally
 rejected by `validate_spec/1`; convert editor JSON through
-`Squidie.Workflow.EditorSpec` before treating it as a runtime spec.
-Runtime-authored specs can be activated through `Squidie.start_spec/3` or
-`Squidie.start_spec/4`. When a host accepts spec-shaped data from tooling,
+`Jizoku.Workflow.EditorSpec` before treating it as a runtime spec.
+Runtime-authored specs can be activated through `Jizoku.start_spec/3` or
+`Jizoku.start_spec/4`. When a host accepts spec-shaped data from tooling,
 `validate_spec/2` with an `:action_registry` remains the module ownership
 allowlist.
 
@@ -517,13 +517,13 @@ Current boundary:
 - trigger metadata is validated and stored in the workflow definition
 - manual triggers are runnable through the public API
 - cron activations are delivered by the host scheduler and can start journal
-  runs through `Squidie.Runtime.Runner.perform/2`
+  runs through `Jizoku.Runtime.Runner.perform/2`
 
 Cron workflow example:
 
 ```elixir
 defmodule Content.Workflows.PostDailyDigest do
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :daily_digest do
@@ -552,8 +552,8 @@ Host-app scheduler example:
 
 ```elixir
 def handle_cron_tick do
-  MyApp.SquidieDeliveryAdapter.enqueue_cron(
-    Squidie.config!(),
+  MyApp.JizokuDeliveryAdapter.enqueue_cron(
+    Jizoku.config!(),
     MyApp.Workflows.DailyStandup,
     :daily_standup,
     signal_id: "daily-standup:2026-05-15T09:00:00Z",
@@ -567,7 +567,7 @@ end
 
 Current cron boundary:
 
-- Squidie declares cron intent in the workflow DSL
+- Jizoku declares cron intent in the workflow DSL
 - the host app performs the actual recurring scheduling
 - cron workflow registration is static at boot today
 - delivered cron payloads start runs through the configured runtime, which is
@@ -584,9 +584,9 @@ when a duplicate delivery of the same scheduled activation should return the
 first run instead of creating another run. `idempotency: :skip_duplicate` is
 also accepted for hosts that want to describe the duplicate decision as a skip.
 Both strategies require a stable scheduler identity: pass `signal_id`, or pass
-an `intended_window` with `start_at` and `end_at` so Squidie can derive one.
+an `intended_window` with `start_at` and `end_at` so Jizoku can derive one.
 When idempotency is enabled, the persisted schedule context includes
-`idempotency` and `idempotency_key`. Squidie uses that stable schedule
+`idempotency` and `idempotency_key`. Jizoku uses that stable schedule
 identity to fence duplicate starts for the same workflow and trigger across the
 configured durable storage backend.
 
@@ -623,7 +623,7 @@ Payload validation runs before the run is persisted.
 
 Each `step` is declared in the workflow spec and is either:
 
-- a native Squidie step module that performs domain work
+- a native Jizoku step module that performs domain work
 - a built-in primitive supplied by the runtime
 - a raw `Jido.Action` module used as an explicit interop path
 
@@ -633,11 +633,11 @@ Module step:
 step :load_invoice, Billing.Steps.LoadInvoice
 ```
 
-Native step modules use Squidie concepts only:
+Native step modules use Jizoku concepts only:
 
 ```elixir
 defmodule Billing.Steps.LoadInvoice do
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :load_invoice,
     description: "Loads invoice details",
     input_schema: [
@@ -648,13 +648,13 @@ defmodule Billing.Steps.LoadInvoice do
     ]
 
   @impl true
-  def run(%{invoice_id: invoice_id}, %Squidie.Step.Context{} = context) do
+  def run(%{invoice_id: invoice_id}, %Jizoku.Step.Context{} = context) do
     {:ok, %{invoice: %{id: invoice_id, run_id: context.run_id}}}
   end
 end
 ```
 
-`Squidie.Step.Context` exposes durable Squidie runtime data:
+`Jizoku.Step.Context` exposes durable Jizoku runtime data:
 
 - `run_id`
 - `workflow`
@@ -666,7 +666,7 @@ end
 - `state`, which includes the original payload merged with accumulated run context
 
 `idempotency_key` and `claim_id` are stable, safe attempt identifiers for action
-idempotency and reconciliation. Squidie does not expose raw claim tokens in
+idempotency and reconciliation. Jizoku does not expose raw claim tokens in
 step context.
 
 Native steps may return:
@@ -687,7 +687,7 @@ run context does not. See [Continue as new](continue_as_new.md) for activation,
 durability, inspection, and comparison with child runs, replay, cron, deferred
 continuation, and dynamic work.
 
-When `output: :key` is declared on the workflow step, Squidie stores the
+When `output: :key` is declared on the workflow step, Jizoku stores the
 native step's returned map under that key after the step returns. The
 `output_schema` validates the native step return before that workflow-level
 mapping is applied.
@@ -695,7 +695,7 @@ mapping is applied.
 Raw `Jido.Action` modules remain supported for advanced interop. They execute
 through the same journal-backed runtime and receive the same safe context map,
 including `idempotency_key` and `claim_id` but not claim tokens. Applications
-should prefer `use Squidie.Step` for the common authoring path.
+should prefer `use Jizoku.Step` for the common authoring path.
 
 Raw actions may return `{:ok, output}` or `{:ok, output, []}`. A lone Jido
 `Error` directive becomes an explicit, non-retryable action failure. Its output
@@ -703,23 +703,23 @@ is not applied, its payload is excluded from the durable error, and normal
 workflow error transitions may handle the failed outcome.
 
 A lone standard `Jido.Agent.Directive.run_instruction/1` directive is also
-supported when `config :squidie, jido_effects: :enabled` and the executor has a
-host-owned `:action_registry`. Squidie atomically records the source completion,
+supported when `config :jizoku, jido_effects: :enabled` and the executor has a
+host-owned `:action_registry`. Jizoku atomically records the source completion,
 then atomically applies its output and plans the instruction as durable dynamic
 work. The instruction ID is the stable effect identity; retries, checkpoint
 loss, worker restarts, and unknown append outcomes converge without rerunning a
 durably completed source action. The instruction result enters workflow context
-like other dynamic action output. Squidie records the effect using a dedicated
+like other dynamic action output. Jizoku records the effect using a dedicated
 completion encoding rather than overloading step execution options. The
-`__squidie_jido_result__` output key remains reserved for Squidie's internal raw
+`__jizoku_jido_result__` output key remains reserved for Jizoku's internal raw
 Jido action envelope.
 
-Squidie does not own a Jido AgentServer or its `cmd/2` state, so custom
+Jizoku does not own a Jido AgentServer or its `cmd/2` state, so custom
 `RunInstruction.result_action` callbacks and non-empty directive metadata are
 rejected.
 
 A lone `Jido.Agent.Directive.Emit` is supported when
-`config :squidie, jido_emit_effects: :enabled`. Squidie records the action
+`config :jizoku, jido_emit_effects: :enabled`. Jizoku records the action
 completion before atomically applying its output, enqueueing the signal, and
 recording the normal successor or terminal transition. `dispatch: nil` selects
 the durable route named `"default"`; directive-owned dispatch configuration is
@@ -729,16 +729,16 @@ delivered only after the outbox fact commits.
 Configure delivery routes separately with `:jido_dispatch_routes`:
 
 ```elixir
-config :squidie,
+config :jizoku,
   jido_dispatch_routes: %{
     "default" => {MyApp.JidoSignalAdapter, endpoint: "https://events.example.test"}
   }
 ```
 
-`Squidie.execute_next/1` delivers pending signals after workflow recovery and
+`Jizoku.execute_next/1` delivers pending signals after workflow recovery and
 also reconciles terminal runs when no runnable is available. A host can retry a
-specific run with `Squidie.deliver_jido_signals/2`. Delivery is at-least-once:
-if a process stops after the adapter accepts a signal but before Squidie records
+specific run with `Jizoku.deliver_jido_signals/2`. Delivery is at-least-once:
+if a process stops after the adapter accepts a signal but before Jizoku records
 the acknowledgement, the stable Jido signal ID is delivered again and the
 consumer must deduplicate it. Adapter errors and payloads are not copied into
 the journal or public diagnostics; the durable item remains pending.
@@ -775,7 +775,7 @@ It also differs from a child workflow run: deferred continuation rechecks the
 same declared step, while a child run represents newly discovered work with its
 own workflow lifecycle.
 
-Use deferred continuation when Squidie should own the wakeup and keep the
+Use deferred continuation when Jizoku should own the wakeup and keep the
 pending state visible in run inspection. Prefer a normal step that hands off to
 domain-owned polling work when another system owns the polling lifecycle,
 backoff, cancellation, and alerting, and the workflow should continue only after
@@ -783,7 +783,7 @@ that system sends a later signal or starts a new run.
 
 ```elixir
 defmodule Billing.Steps.CheckGateway do
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :check_gateway,
     input_schema: [gateway_id: [type: :string, required: true]],
     output_schema: [gateway: [type: :map, required: true]]
@@ -801,7 +801,7 @@ defmodule Billing.Steps.CheckGateway do
 end
 ```
 
-Squidie records the completed dispatch attempt and plans a new runnable for
+Jizoku records the completed dispatch attempt and plans a new runnable for
 the same step with the same logical attempt number and a new runnable key. The
 planned runnable carries deferred metadata with the reason, original runnable
 key, and deferred timestamp. `inspect_run/2` reports
@@ -812,23 +812,23 @@ reports that the next safe action is to wait until the attempt is visible.
 
 ## Child Workflow Runs
 
-Native Squidie steps can start another workflow as a durable child run when a
+Native Jizoku steps can start another workflow as a durable child run when a
 step discovers work that is not known at workflow definition time. Use this for
 runtime fan-out where each child needs its own run history, retries,
 inspection, cancellation, and replay boundary.
 
 ```elixir
 defmodule Billing.Steps.StartReceiptDelivery do
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :start_receipt_delivery,
     input_schema: [
       invoice: [type: :map, required: true]
     ]
 
   @impl true
-  def run(%{invoice: invoice}, %Squidie.Step.Context{} = context) do
+  def run(%{invoice: invoice}, %Jizoku.Step.Context{} = context) do
     {:ok, child} =
-      Squidie.start_child_run(
+      Jizoku.start_child_run(
         context,
         Billing.Workflows.SendReceipt,
         :send_receipt,
@@ -842,7 +842,7 @@ defmodule Billing.Steps.StartReceiptDelivery do
 end
 ```
 
-`child_key` is required. Squidie uses the parent run id, parent step,
+`child_key` is required. Jizoku uses the parent run id, parent step,
 child workflow, child trigger, and `child_key` to derive the child identity.
 Calling `start_child_run/5` again with the same logical parent and key returns
 the existing child instead of creating a duplicate.
@@ -851,7 +851,7 @@ If the child workflow has one trigger, `start_child_run/4` can use that default
 trigger:
 
 ```elixir
-Squidie.start_child_run(context, Billing.Workflows.SendReceipt, %{invoice_id: invoice.id},
+Jizoku.start_child_run(context, Billing.Workflows.SendReceipt, %{invoice_id: invoice.id},
   child_key: "receipt_#{invoice.id}"
 )
 ```
@@ -874,9 +874,9 @@ adapter boundaries.
 Dynamic in-run graph expansion is tracked separately from child workflows. The
 runtime can persist, inspect, and optionally schedule bounded runtime-generated
 nodes with producer origins and dynamic edges. Use
-`Squidie.preview_dynamic_work/3` to validate and render a candidate graph
-overlay without appending. Use `Squidie.record_dynamic_work/3` when dashboards
-only need durable metadata. Use `Squidie.schedule_dynamic_work/3` when the
+`Jizoku.preview_dynamic_work/3` to validate and render a candidate graph
+overlay without appending. Use `Jizoku.record_dynamic_work/3` when dashboards
+only need durable metadata. Use `Jizoku.schedule_dynamic_work/3` when the
 dynamic nodes should become executable runnable intents. Preview, record, or
 schedule dynamic work while the producer run is still active; terminal runs
 reject new dynamic work. Scheduling executable dynamic work also requires the
@@ -887,7 +887,7 @@ the producer side effect.
 registry = %{"digest.deliver" => MyApp.Steps.DeliverDigest}
 
 {:ok, _preview} =
-  Squidie.preview_dynamic_work(
+  Jizoku.preview_dynamic_work(
     run_id,
     %{
       dynamic_key: "subscription_digest_fanout",
@@ -904,7 +904,7 @@ inspection metadata:
 
 ```elixir
 {:ok, _snapshot} =
-  Squidie.record_dynamic_work(
+  Jizoku.record_dynamic_work(
     run_id,
     %{
       dynamic_key: "subscription_digest_fanout",
@@ -920,7 +920,7 @@ Scheduling is the executable path:
 
 ```elixir
 {:ok, _snapshot} =
-  Squidie.schedule_dynamic_work(
+  Jizoku.schedule_dynamic_work(
     run_id,
     %{
       dynamic_key: "subscription_digest_fanout",
@@ -945,7 +945,7 @@ editor affordances instead of recomputing graph diffs in the host UI.
 Recorded and scheduled dynamic work expose the same inspection-friendly ids
 through `dynamic_work_overlays` on `inspect_run_graph/2`.
 Scheduled dynamic work requires `:action_registry`; every executable dynamic
-node must include a host-approved action key before Squidie appends the
+node must include a host-approved action key before Jizoku appends the
 dynamic-work fact or planned runnable intents. Scheduled dynamic nodes run
 through `execute_next/1` like declared steps, and graph inspection derives their
 status from the dynamic attempts. Add `retry: [max_attempts: n]` to a dynamic
@@ -990,7 +990,7 @@ step :check_gateway_status, Billing.Steps.CheckGatewayStatus,
 `deadline: [...]` is read-model and operator evidence, not a cancellation
 primitive. The `:within` and optional `:due_soon` values are milliseconds.
 `:escalation` may be `:diagnostic`, `:operator_action`, `:workflow_step`, or
-`:host_callback`; Squidie persists the chosen policy and evaluates
+`:host_callback`; Jizoku persists the chosen policy and evaluates
 `:on_time`, `:due_soon`, `:overdue`, or `:escalated` from the stored timestamps
 when callers inspect the run. Hosts still own alert delivery, notification
 routing, and any workflow or callback invoked because a deadline was missed.
@@ -1017,9 +1017,9 @@ When a run is paused at an approval step, inspect it as usual and then approve
 or reject it through the public API:
 
 ```elixir
-{:ok, paused_run} = Squidie.inspect_run(run_id, include_history: true)
-{:ok, approved_run} = Squidie.approve(run_id, %{actor: "ops_123"})
-{:ok, rejected_run} = Squidie.reject(run_id, %{actor: "ops_456"})
+{:ok, paused_run} = Jizoku.inspect_run(run_id, include_history: true)
+{:ok, approved_run} = Jizoku.approve(run_id, %{actor: "ops_123"})
+{:ok, rejected_run} = Jizoku.reject(run_id, %{actor: "ops_456"})
 ```
 
 With `include_history: true`, the inspected run also exposes `audit_events` so
@@ -1039,7 +1039,7 @@ Manual-review durability notes:
 - reviewer identity, decision, timestamp, and optional review metadata are persisted in the completed step output and merged run context
 - `inspect_run(..., include_history: true)` also returns durable audit events for pause, resume, approval, and rejection actions
 - the resolved `:ok` and `:error` targets plus output-mapping metadata are persisted with the paused step so restart or deploy boundaries do not recompute review semantics from the current workflow definition
-- host apps should apply the latest Squidie migrations before using pause-resume in existing environments
+- host apps should apply the latest Jizoku migrations before using pause-resume in existing environments
 
 ## Jido Runtime Configuration
 
@@ -1047,7 +1047,7 @@ Host apps can configure the Jido-native journal runtime once and let public APIs
 pick up the runtime, read model, storage adapter, and queue defaults:
 
 ```elixir
-config :squidie,
+config :jizoku,
   repo: MyApp.Repo,
   queue: "default"
 ```
@@ -1056,25 +1056,25 @@ With those settings, workflow code can use the same public calls without
 threading journal options through every boundary:
 
 ```elixir
-{:ok, started} = Squidie.start(MyWorkflow, %{account_id: "acct_123"})
-{:ok, snapshot} = Squidie.inspect_run(started.run_id)
-{:ok, snapshot} = Squidie.execute_next(owner_id: "worker-1")
-{:ok, summaries} = Squidie.list_runs([])
-{:ok, workflow_summaries} = Squidie.list_runs(workflow: MyWorkflow)
+{:ok, started} = Jizoku.start(MyWorkflow, %{account_id: "acct_123"})
+{:ok, snapshot} = Jizoku.inspect_run(started.run_id)
+{:ok, snapshot} = Jizoku.execute_next(owner_id: "worker-1")
+{:ok, summaries} = Jizoku.list_runs([])
+{:ok, workflow_summaries} = Jizoku.list_runs(workflow: MyWorkflow)
 
-{:ok, replayed} = Squidie.replay(completed_run_id)
+{:ok, replayed} = Jizoku.replay(completed_run_id)
 
-{:ok, cancellable} = Squidie.start(MyWorkflow, %{account_id: "acct_456"})
-{:ok, cancelled} = Squidie.cancel(cancellable.run_id)
+{:ok, cancellable} = Jizoku.start(MyWorkflow, %{account_id: "acct_456"})
+{:ok, cancelled} = Jizoku.cancel(cancellable.run_id)
 ```
 
-When no `journal_storage` is configured, Squidie infers
-`{Squidie.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}`. The storage
+When no `journal_storage` is configured, Jizoku infers
+`{Jizoku.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}`. The storage
 setting remains intentionally adapter-shaped rather than database-shaped, so
 host apps can override it later without changing workflow code. The built-in
 Ecto adapter is the recommended starting point for Postgres-compatible Ecto
 repos because it persists Jido threads and checkpoints in the host database
-through the Squidie migration. Other Jido-compatible stores can be used, but
+through the Jizoku migration. Other Jido-compatible stores can be used, but
 production adapters should provide ordered per-thread appends, optimistic
 conflict detection, and durable checkpoint reads; not every database can provide
 those properties without extra coordination. Use `Jido.Storage.ETS` only for
@@ -1112,7 +1112,7 @@ Use `inspect_run/2` when application code needs the factual run snapshot. Use
 node-and-edge view without reverse-engineering step history:
 
 ```elixir
-{:ok, graph} = Squidie.inspect_run_graph(run_id)
+{:ok, graph} = Jizoku.inspect_run_graph(run_id)
 ```
 
 For the stable host UI map shape, see the
@@ -1133,7 +1133,7 @@ specific call, pass the same projection options used for inspection:
 
 ```elixir
 {:ok, graph} =
-  Squidie.inspect_run_graph(run_id,
+  Jizoku.inspect_run_graph(run_id,
     journal_storage: storage,
     queue: "default"
   )
@@ -1142,20 +1142,20 @@ specific call, pass the same projection options used for inspection:
 The returned shape is stable across backend execution choices:
 
 ```elixir
-%Squidie.Runs.GraphInspection{
+%Jizoku.Runs.GraphInspection{
   run_id: run_id,
   source: :read_model,
   status: :running,
   current_node_id: "send_email",
   current_node_ids: ["send_email"],
   nodes: [
-    %Squidie.Runs.GraphInspection.Node{
+    %Jizoku.Runs.GraphInspection.Node{
       id: "load_invoice",
       status: :completed
     }
   ],
   edges: [
-    %Squidie.Runs.GraphInspection.Edge{
+    %Jizoku.Runs.GraphInspection.Edge{
       id: "load_invoice:ok:send_email",
       from: "load_invoice",
       to: "send_email",
@@ -1172,7 +1172,7 @@ edge id that distinguishes multiple `from` and `on` edges within the same
 workflow spec:
 
 ```elixir
-%Squidie.Runs.GraphInspection.Edge{
+%Jizoku.Runs.GraphInspection.Edge{
   id: "classify:ok:auto_approve:condition:0",
   from: "classify",
   to: "auto_approve",
@@ -1197,11 +1197,11 @@ sensitive data. Request those fields explicitly:
 
 ```elixir
 {:ok, graph_with_details} =
-  Squidie.inspect_run_graph(run_id, include_history: true)
+  Jizoku.inspect_run_graph(run_id, include_history: true)
 ```
 
 Authorize and redact graph output before exposing it outside trusted operator
-surfaces. If the workflow module can no longer be loaded, Squidie still
+surfaces. If the workflow module can no longer be loaded, Jizoku still
 returns any durable node state it can infer from the run, but `edges` is empty
 because edge topology belongs to the workflow definition.
 
@@ -1232,12 +1232,12 @@ step :post_local_ledger_entries, Billing.Steps.PostLocalLedgerEntries,
 This option is intentionally narrower than the durable workflow. It wraps only
 the custom action's `run/2` callback in `config.repo.transaction/1`. If that
 callback returns `{:error, reason}` or raises, the local repo writes made inside
-the callback roll back and Squidie then records the failed step attempt in
+the callback roll back and Jizoku then records the failed step attempt in
 its normal durable history.
 
 The boundary is not a distributed transaction:
 
-- Squidie still persists run, step, attempt, retry, and dispatch state after
+- Jizoku still persists run, step, attempt, retry, and dispatch state after
   the action returns
 - downstream steps and saga compensation callbacks are outside the local
   transaction
@@ -1262,7 +1262,7 @@ step(:send_receipt, Billing.Steps.SendReceipt, compensatable: false)
 ```
 
 `irreversible: true` means the step's effect cannot be undone in the workflow's
-domain. Squidie treats it as non-compensatable. `compensatable: false` is for
+domain. Jizoku treats it as non-compensatable. `compensatable: false` is for
 steps that may not be strictly irreversible but still have no reliable
 application-owned compensation path.
 
@@ -1278,7 +1278,7 @@ Both markers produce the same replay safety behavior:
   override when re-execution has been reviewed and accepted
 
 These markers do not provide exactly-once delivery or external compensation.
-They keep Squidie honest about recovery policy so a replay cannot silently
+They keep Jizoku honest about recovery policy so a replay cannot silently
 repeat a payment capture, notification, or other non-compensatable effect.
 
 ## Saga Compensation
@@ -1303,13 +1303,13 @@ transition :capture_payment, on: :ok, to: :complete
 ```
 
 When `:capture_payment` exhausts its retry policy and has no `:error`
-transition, Squidie compensates previously completed compensatable steps in
+transition, Jizoku compensates previously completed compensatable steps in
 reverse completion order. In this example it voids the payment authorization,
 then releases inventory. Failed steps are not compensated because their forward
 effect did not complete.
 
 Compensation callbacks use the same step module contract as normal workflow
-steps. Squidie schedules them as internal dynamic runnables named
+steps. Jizoku schedules them as internal dynamic runnables named
 `compensate:<completed_step>`. Their input includes the completed step's name,
 runnable key, input, output, applied timestamp, and the terminal failure that
 started rollback:
@@ -1347,7 +1347,7 @@ cannot continue. Use `recovery: :undo` when the next step reverses application-
 owned local work, such as releasing a reservation that the workflow can still
 control.
 
-The marker does not change retry behavior. Squidie still retries the failed
+The marker does not change retry behavior. Jizoku still retries the failed
 step first when a retry policy exists, then routes through the error transition
 only after retries are exhausted. When the route is chosen,
 `inspect_run(..., include_history: true)` exposes it in the failed step's
@@ -1364,12 +1364,12 @@ target step in event metadata.
 
 ## Step Modules
 
-Custom steps should usually use `Squidie.Step` and return workflow output in a
+Custom steps should usually use `Jizoku.Step` and return workflow output in a
 plain map.
 
 ```elixir
 defmodule Billing.Steps.CheckGatewayStatus do
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :check_gateway_status,
     description: "Checks gateway state",
     input_schema: [
@@ -1383,14 +1383,14 @@ defmodule Billing.Steps.CheckGatewayStatus do
   @impl true
   def run(
         %{invoice: invoice, gateway_url: gateway_url},
-        %Squidie.Step.Context{}
+        %Jizoku.Step.Context{}
       ) do
-    case Squidie.Tools.invoke(Squidie.Tools.HTTP, %{method: :get, url: gateway_url}) do
+    case Jizoku.Tools.invoke(Jizoku.Tools.HTTP, %{method: :get, url: gateway_url}) do
       {:ok, result} ->
         {:ok, %{gateway_check: %{invoice_id: invoice.id, status: result.payload.body}}}
 
       {:error, error} ->
-        {:error, Squidie.Tools.Error.to_map(error)}
+        {:error, Jizoku.Tools.Error.to_map(error)}
     end
   end
 end
@@ -1409,7 +1409,7 @@ Each run starts with its validated payload.
 
 When a step succeeds:
 
-- Squidie merges the returned map into the run context
+- Jizoku merges the returned map into the run context
 - the next step receives the original payload merged with the accumulated context
 
 That means later steps can use values produced by earlier steps without manual
@@ -1453,7 +1453,7 @@ In that example, `:prepare_notification` receives only:
 }
 ```
 
-If any named path is absent, Squidie returns a structured
+If any named path is absent, Jizoku returns a structured
 `:missing_input_path` error before the step begins execution.
 
 Current boundary:
@@ -1488,7 +1488,7 @@ for one or more prerequisite steps, especially when multiple root steps fan in
 to a join step.
 
 In the example above, `:load_account` and `:load_invoice` are independent root
-steps. Squidie does not need a transition between them because neither one
+steps. Jizoku does not need a transition between them because neither one
 depends on the other. They may become visible independently, and
 `:prepare_notification` becomes runnable only after both have completed.
 
@@ -1505,9 +1505,9 @@ as independent runnable work for the same run. A join step is any step with one
 or more dependencies; it becomes runnable only after every declared dependency
 has completed successfully.
 
-Squidie treats Runic-ready work as workflow runnable intent. The journal
+Jizoku treats Runic-ready work as workflow runnable intent. The journal
 runtime persists that intent as durable dispatch entries before workers can
-claim it through `Squidie.execute_next/1`. The workflow contract is the same
+claim it through `Jizoku.execute_next/1`. The workflow contract is the same
 across backends: readiness comes from persisted journal state, not from Oban,
 Bedrock, or any other backend's concurrency model.
 
@@ -1580,9 +1580,9 @@ Supported retry options today:
 - `max_attempts`
 - `backoff: [type: :exponential, min: ..., max: ...]`
 
-Squidie resolves workflow retry policy and appends the next journal dispatch
+Jizoku resolves workflow retry policy and appends the next journal dispatch
 attempt with its computed visibility time. If a step also declares an
-`on: :error` transition, Squidie takes that route only after retries are
+`on: :error` transition, Jizoku takes that route only after retries are
 exhausted.
 
 ## Starting Runs
@@ -1590,7 +1590,7 @@ exhausted.
 If a workflow defines a single trigger, the short path is:
 
 ```elixir
-Squidie.start(Billing.Workflows.PaymentRecovery, %{
+Jizoku.start(Billing.Workflows.PaymentRecovery, %{
   account_id: account_id,
   invoice_id: invoice_id,
   attempt_id: attempt_id,
@@ -1601,7 +1601,7 @@ Squidie.start(Billing.Workflows.PaymentRecovery, %{
 If you want to name the trigger explicitly:
 
 ```elixir
-Squidie.start(Billing.Workflows.PaymentRecovery, :payment_recovery, %{
+Jizoku.start(Billing.Workflows.PaymentRecovery, :payment_recovery, %{
   account_id: account_id,
   invoice_id: invoice_id,
   attempt_id: attempt_id,

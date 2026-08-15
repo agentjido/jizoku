@@ -1,6 +1,6 @@
-# Getting Started With Squidie
+# Getting Started With Jizoku
 
-This Livebook introduces the core Squidie model through a small workflow you
+This Livebook introduces the core Jizoku model through a small workflow you
 can run without creating a Phoenix app or a Postgres database.
 
 The examples use ETS-backed journal storage to keep setup light. Real host apps
@@ -11,29 +11,29 @@ integration guide.
 
 ```elixir
 Mix.install([
-  {:squidie, git: "https://github.com/dark-trench/squidie.git"}
+  {:jizoku, git: "https://github.com/dark-trench/jizoku.git"}
 ])
 ```
 
 ## Runtime Setup
 
-Squidie normally reads runtime configuration from the host application. In
+Jizoku normally reads runtime configuration from the host application. In
 this notebook, we configure it directly and use an ETS table for durable facts
 inside the current Livebook session.
 
 ```elixir
-storage = {Jido.Storage.ETS, table: :squidie_getting_started_livebook}
+storage = {Jido.Storage.ETS, table: :jizoku_getting_started_livebook}
 
 # This placeholder satisfies the library config contract for the notebook.
 # A real host app should configure its actual Ecto repo instead.
-defmodule SquidieLivebook.Repo do
+defmodule JizokuLivebook.Repo do
 end
 
-Application.put_env(:squidie, :repo, SquidieLivebook.Repo)
-Application.put_env(:squidie, :runtime, :journal)
-Application.put_env(:squidie, :read_model, :read_model)
-Application.put_env(:squidie, :journal_storage, storage)
-Application.put_env(:squidie, :queue, "livebook")
+Application.put_env(:jizoku, :repo, JizokuLivebook.Repo)
+Application.put_env(:jizoku, :runtime, :journal)
+Application.put_env(:jizoku, :read_model, :read_model)
+Application.put_env(:jizoku, :journal_storage, storage)
+Application.put_env(:jizoku, :queue, "livebook")
 
 opts = [
   runtime: :journal,
@@ -41,7 +41,7 @@ opts = [
   queue: "livebook"
 ]
 
-defmodule SquidieLivebook.Output do
+defmodule JizokuLivebook.Output do
   def attempt(attempt) do
     Map.take(attempt, [
       :step,
@@ -68,12 +68,12 @@ end
 ## Define Steps
 
 Workflow steps do the domain work. The common authoring path is
-`use Squidie.Step`; raw `Jido.Action` modules are only needed for explicit
+`use Jizoku.Step`; raw `Jido.Action` modules are only needed for explicit
 interop.
 
 ```elixir
-defmodule SquidieLivebook.PackLembas do
-  use Squidie.Step,
+defmodule JizokuLivebook.PackLembas do
+  use Jizoku.Step,
     name: :pack_lembas,
     description: "Packs provisions for the errand",
     input_schema: [
@@ -83,8 +83,8 @@ defmodule SquidieLivebook.PackLembas do
       provisions: [type: :map, required: true]
     ]
 
-  @impl Squidie.Step
-  def run(%{ring_id: ring_id}, %Squidie.Step.Context{}) do
+  @impl Jizoku.Step
+  def run(%{ring_id: ring_id}, %Jizoku.Step.Context{}) do
     {:ok,
      %{
        provisions: %{
@@ -96,8 +96,8 @@ defmodule SquidieLivebook.PackLembas do
   end
 end
 
-defmodule SquidieLivebook.CrossMoria do
-  use Squidie.Step,
+defmodule JizokuLivebook.CrossMoria do
+  use Jizoku.Step,
     name: :cross_moria,
     description: "Crosses Moria with the packed provisions",
     input_schema: [
@@ -107,8 +107,8 @@ defmodule SquidieLivebook.CrossMoria do
       moria: [type: :map, required: true]
     ]
 
-  @impl Squidie.Step
-  def run(%{provisions: provisions}, %Squidie.Step.Context{run_id: run_id}) do
+  @impl Jizoku.Step
+  def run(%{provisions: provisions}, %Jizoku.Step.Context{run_id: run_id}) do
     {:ok,
      %{
        moria: %{
@@ -128,8 +128,8 @@ A workflow declares the trigger, payload, steps, and transitions. The workflow
 definition says what should happen; the journal records what did happen.
 
 ```elixir
-defmodule SquidieLivebook.RingErrandWorkflow do
-  use Squidie.Workflow
+defmodule JizokuLivebook.RingErrandWorkflow do
+  use Jizoku.Workflow
 
   workflow do
     trigger :leave_shire do
@@ -140,8 +140,8 @@ defmodule SquidieLivebook.RingErrandWorkflow do
       end
     end
 
-    step :pack_lembas, SquidieLivebook.PackLembas
-    step :cross_moria, SquidieLivebook.CrossMoria
+    step :pack_lembas, JizokuLivebook.PackLembas
+    step :cross_moria, JizokuLivebook.CrossMoria
 
     transition :pack_lembas, on: :ok, to: :cross_moria
     transition :cross_moria, on: :ok, to: :complete
@@ -156,7 +156,7 @@ tooling can inspect without parsing the module source. It is also the contract
 visual editors and runtime-authored workflows will build on.
 
 ```elixir
-{:ok, spec} = Squidie.Workflow.to_spec(SquidieLivebook.RingErrandWorkflow)
+{:ok, spec} = Jizoku.Workflow.to_spec(JizokuLivebook.RingErrandWorkflow)
 
 %{
   workflow: spec.workflow,
@@ -181,8 +181,8 @@ Manual triggers start through the public API. This workflow has one trigger, so
 
 ```elixir
 {:ok, run} =
-  Squidie.start(
-    SquidieLivebook.RingErrandWorkflow,
+  Jizoku.start(
+    JizokuLivebook.RingErrandWorkflow,
     %{ring_id: "one-ring"},
     opts
   )
@@ -192,7 +192,7 @@ Manual triggers start through the public API. This workflow has one trigger, so
   status: run.status,
   reason: run.reason,
   planned_runnables: run.planned_runnables,
-  visible_attempts: Enum.map(run.visible_attempts, &SquidieLivebook.Output.attempt/1),
+  visible_attempts: Enum.map(run.visible_attempts, &JizokuLivebook.Output.attempt/1),
   scheduled_attempts: run.scheduled_attempts,
   next_visible_at: run.next_visible_at
 }
@@ -204,7 +204,7 @@ exists but should not be claimed until `next_visible_at`.
 
 ## Execute Visible Work
 
-Workers provide capacity by calling `Squidie.execute_next/1`. Each call claims
+Workers provide capacity by calling `Jizoku.execute_next/1`. Each call claims
 one visible journal attempt, runs the step, records the result, and makes the
 next attempt visible when the workflow should continue.
 
@@ -214,18 +214,18 @@ inside that run, such as the visible `:pack_lembas` or `:cross_moria` step.
 ```elixir
 worker_opts = Keyword.put(opts, :owner_id, "livebook-worker")
 
-{:ok, first_step} = Squidie.execute_next(worker_opts)
-{:ok, completed_run} = Squidie.execute_next(worker_opts)
-{:ok, no_more_work} = Squidie.execute_next(worker_opts)
+{:ok, first_step} = Jizoku.execute_next(worker_opts)
+{:ok, completed_run} = Jizoku.execute_next(worker_opts)
+{:ok, no_more_work} = Jizoku.execute_next(worker_opts)
 
 %{
   first_step_status: first_step.status,
   first_step_reason: first_step.reason,
-  visible_after_first_step: Enum.map(first_step.visible_attempts, &SquidieLivebook.Output.attempt/1),
+  visible_after_first_step: Enum.map(first_step.visible_attempts, &JizokuLivebook.Output.attempt/1),
   applied_after_first_step: first_step.applied_runnable_keys,
   completed_status: completed_run.status,
   completed_reason: completed_run.reason,
-  completed_attempts: Enum.map(completed_run.attempts, &SquidieLivebook.Output.attempt/1),
+  completed_attempts: Enum.map(completed_run.attempts, &JizokuLivebook.Output.attempt/1),
   no_more_work: no_more_work
 }
 ```
@@ -246,8 +246,8 @@ This example keeps the parent and child on different queues so you can see that
 the parent retry completes before the child is drained.
 
 ```elixir
-defmodule SquidieLivebook.DeliverInvite do
-  use Squidie.Step,
+defmodule JizokuLivebook.DeliverInvite do
+  use Jizoku.Step,
     name: :deliver_invite,
     description: "Delivers an invite from a child workflow",
     input_schema: [
@@ -259,8 +259,8 @@ defmodule SquidieLivebook.DeliverInvite do
       invite_delivery: [type: :map, required: true]
     ]
 
-  @impl Squidie.Step
-  def run(%{party_id: party_id, guest_id: guest_id} = input, %Squidie.Step.Context{
+  @impl Jizoku.Step
+  def run(%{party_id: party_id, guest_id: guest_id} = input, %Jizoku.Step.Context{
         attempt: attempt
       }) do
     if Map.get(input, :fail_child_once, false) and attempt == 1 do
@@ -271,8 +271,8 @@ defmodule SquidieLivebook.DeliverInvite do
   end
 end
 
-defmodule SquidieLivebook.InviteDeliveryWorkflow do
-  use Squidie.Workflow
+defmodule JizokuLivebook.InviteDeliveryWorkflow do
+  use Jizoku.Workflow
 
   workflow do
     trigger :deliver_invite do
@@ -285,14 +285,14 @@ defmodule SquidieLivebook.InviteDeliveryWorkflow do
       end
     end
 
-    step :deliver_invite, SquidieLivebook.DeliverInvite, retry: [max_attempts: 2]
+    step :deliver_invite, JizokuLivebook.DeliverInvite, retry: [max_attempts: 2]
 
     transition :deliver_invite, on: :ok, to: :complete
   end
 end
 
-defmodule SquidieLivebook.StartInviteChild do
-  use Squidie.Step,
+defmodule JizokuLivebook.StartInviteChild do
+  use Jizoku.Step,
     name: :start_invite_child,
     description: "Starts a child invite workflow",
     input_schema: [
@@ -306,17 +306,17 @@ defmodule SquidieLivebook.StartInviteChild do
       invite_child: [type: :map, required: true]
     ]
 
-  @impl Squidie.Step
+  @impl Jizoku.Step
   def run(
         %{party_id: party_id, guest_id: guest_id, child_queue: child_queue} = input,
-        %Squidie.Step.Context{attempt: attempt} = context
+        %Jizoku.Step.Context{attempt: attempt} = context
       ) do
     child_key = "invite_#{guest_id}"
 
     with {:ok, child_run} <-
-           Squidie.start_child_run(
+           Jizoku.start_child_run(
              context,
-             SquidieLivebook.InviteDeliveryWorkflow,
+             JizokuLivebook.InviteDeliveryWorkflow,
              %{
                party_id: party_id,
                guest_id: guest_id,
@@ -348,8 +348,8 @@ end
 ```
 
 ```elixir
-defmodule SquidieLivebook.NestedInviteWorkflow do
-  use Squidie.Workflow
+defmodule JizokuLivebook.NestedInviteWorkflow do
+  use Jizoku.Workflow
 
   workflow do
     trigger :nested_invite do
@@ -364,7 +364,7 @@ defmodule SquidieLivebook.NestedInviteWorkflow do
       end
     end
 
-    step :start_invite_child, SquidieLivebook.StartInviteChild, retry: [max_attempts: 2]
+    step :start_invite_child, JizokuLivebook.StartInviteChild, retry: [max_attempts: 2]
 
     transition :start_invite_child, on: :ok, to: :complete
   end
@@ -375,8 +375,8 @@ end
 child_queue = "livebook-child"
 
 {:ok, nested_parent} =
-  Squidie.start(
-    SquidieLivebook.NestedInviteWorkflow,
+  Jizoku.start(
+    JizokuLivebook.NestedInviteWorkflow,
     %{
       party_id: "shire-party",
       guest_id: "frodo",
@@ -387,27 +387,27 @@ child_queue = "livebook-child"
     opts
   )
 
-{:ok, parent_retrying} = Squidie.execute_next(worker_opts)
-{:ok, parent_completed} = Squidie.execute_next(worker_opts)
+{:ok, parent_retrying} = Jizoku.execute_next(worker_opts)
+{:ok, parent_completed} = Jizoku.execute_next(worker_opts)
 
 [%{child_run_id: child_run_id}] = parent_completed.child_runs
-{:ok, nested_graph} = Squidie.inspect_run_graph(nested_parent.run_id, opts)
-nested_graph_payload = Squidie.Runs.GraphInspection.to_map(nested_graph)
+{:ok, nested_graph} = Jizoku.inspect_run_graph(nested_parent.run_id, opts)
+nested_graph_payload = Jizoku.Runs.GraphInspection.to_map(nested_graph)
 
 {:ok, child_retrying} =
-  Squidie.execute_next(Keyword.merge(worker_opts, queue: child_queue))
+  Jizoku.execute_next(Keyword.merge(worker_opts, queue: child_queue))
 
 {:ok, child_completed} =
-  Squidie.execute_next(Keyword.merge(worker_opts, queue: child_queue))
+  Jizoku.execute_next(Keyword.merge(worker_opts, queue: child_queue))
 
 %{
-  parent_attempts: Enum.map(parent_completed.attempts, &SquidieLivebook.Output.attempt/1),
+  parent_attempts: Enum.map(parent_completed.attempts, &JizokuLivebook.Output.attempt/1),
   parent_child_runs: parent_completed.child_runs,
   parent_child_links: nested_graph_payload.child_links,
   parent_context: parent_completed.context.invite_child,
   child_before_drain: child_run_id,
-  child_retrying_attempts: Enum.map(child_retrying.attempts, &SquidieLivebook.Output.attempt/1),
-  child_completed_attempts: Enum.map(child_completed.attempts, &SquidieLivebook.Output.attempt/1),
+  child_retrying_attempts: Enum.map(child_retrying.attempts, &JizokuLivebook.Output.attempt/1),
+  child_completed_attempts: Enum.map(child_completed.attempts, &JizokuLivebook.Output.attempt/1),
   child_parent_link: child_completed.parent_run
 }
 ```
@@ -426,7 +426,7 @@ and operator-facing detail pages.
 
 ```elixir
 {:ok, inspected} =
-  Squidie.inspect_run(
+  Jizoku.inspect_run(
     run.run_id,
     Keyword.merge(opts, include_history: true)
   )
@@ -435,10 +435,10 @@ and operator-facing detail pages.
   status: inspected.status,
   reason: inspected.reason,
   context: inspected.context,
-  planned_runnables: Enum.map(inspected.planned_runnables, &SquidieLivebook.Output.runnable/1),
-  visible_attempts: Enum.map(inspected.visible_attempts, &SquidieLivebook.Output.attempt/1),
-  scheduled_attempts: Enum.map(inspected.scheduled_attempts, &SquidieLivebook.Output.attempt/1),
-  attempts: Enum.map(inspected.attempts, &SquidieLivebook.Output.attempt/1),
+  planned_runnables: Enum.map(inspected.planned_runnables, &JizokuLivebook.Output.runnable/1),
+  visible_attempts: Enum.map(inspected.visible_attempts, &JizokuLivebook.Output.attempt/1),
+  scheduled_attempts: Enum.map(inspected.scheduled_attempts, &JizokuLivebook.Output.attempt/1),
+  attempts: Enum.map(inspected.attempts, &JizokuLivebook.Output.attempt/1),
   next_visible_at: inspected.next_visible_at
 }
 ```
@@ -452,14 +452,14 @@ explain what can run now versus what needs a later wakeup.
 Graph inspection gives UI builders a node and edge view of the same run.
 
 ```elixir
-{:ok, graph} = Squidie.inspect_run_graph(run.run_id, opts)
-graph_payload = Squidie.Runs.GraphInspection.to_map(graph)
+{:ok, graph} = Jizoku.inspect_run_graph(run.run_id, opts)
+graph_payload = Jizoku.Runs.GraphInspection.to_map(graph)
 
 %{
   source: graph.source,
   current_node_id: graph.current_node_id,
-  nodes: Enum.map(graph_payload.nodes, &SquidieLivebook.Output.node/1),
-  edges: Enum.map(graph_payload.edges, &SquidieLivebook.Output.edge/1),
+  nodes: Enum.map(graph_payload.nodes, &JizokuLivebook.Output.node/1),
+  edges: Enum.map(graph_payload.edges, &JizokuLivebook.Output.edge/1),
   child_links: graph_payload.child_links
 }
 ```
@@ -475,7 +475,7 @@ Explanation condenses the run into a reason and diagnostics that are easier to
 show to operators.
 
 ```elixir
-{:ok, explanation} = Squidie.explain_run(run.run_id, opts)
+{:ok, explanation} = Jizoku.explain_run(run.run_id, opts)
 
 %{
   status: explanation.status,
@@ -496,8 +496,8 @@ useful when the workflow should continue later, while the journal remains the
 source of truth.
 
 ```elixir
-defmodule SquidieLivebook.RecordGandalfArrival do
-  use Squidie.Step,
+defmodule JizokuLivebook.RecordGandalfArrival do
+  use Jizoku.Step,
     name: :record_gandalf_arrival,
     description: "Records that the delayed rendezvous became visible",
     input_schema: [
@@ -507,14 +507,14 @@ defmodule SquidieLivebook.RecordGandalfArrival do
       rendezvous: [type: :map, required: true]
     ]
 
-  @impl Squidie.Step
-  def run(%{ring_id: ring_id}, %Squidie.Step.Context{}) do
+  @impl Jizoku.Step
+  def run(%{ring_id: ring_id}, %Jizoku.Step.Context{}) do
     {:ok, %{rendezvous: %{ring_id: ring_id, status: "wizard arrived"}}}
   end
 end
 
-defmodule SquidieLivebook.GandalfRendezvousWorkflow do
-  use Squidie.Workflow
+defmodule JizokuLivebook.GandalfRendezvousWorkflow do
+  use Jizoku.Workflow
 
   workflow do
     trigger :wait_for_wizard do
@@ -526,7 +526,7 @@ defmodule SquidieLivebook.GandalfRendezvousWorkflow do
     end
 
     step :wait_for_gandalf, :wait, duration: 1_000
-    step :record_gandalf_arrival, SquidieLivebook.RecordGandalfArrival
+    step :record_gandalf_arrival, JizokuLivebook.RecordGandalfArrival
 
     transition :wait_for_gandalf, on: :ok, to: :record_gandalf_arrival
     transition :record_gandalf_arrival, on: :ok, to: :complete
@@ -538,36 +538,36 @@ wakeup_opts = Keyword.merge(opts, queue: "livebook-wakeup", now: wakeup_time)
 wakeup_worker_opts = Keyword.put(wakeup_opts, :owner_id, "livebook-worker")
 
 {:ok, wakeup_run} =
-  Squidie.start(
-    SquidieLivebook.GandalfRendezvousWorkflow,
+  Jizoku.start(
+    JizokuLivebook.GandalfRendezvousWorkflow,
     %{ring_id: "one-ring"},
     wakeup_opts
   )
 
-{:ok, scheduled_run} = Squidie.execute_next(wakeup_worker_opts)
+{:ok, scheduled_run} = Jizoku.execute_next(wakeup_worker_opts)
 
 %{
   run_id: wakeup_run.run_id,
   reason: scheduled_run.reason,
   visible_attempts: scheduled_run.visible_attempts,
-  scheduled_attempts: Enum.map(scheduled_run.scheduled_attempts, &SquidieLivebook.Output.attempt/1),
+  scheduled_attempts: Enum.map(scheduled_run.scheduled_attempts, &JizokuLivebook.Output.attempt/1),
   next_visible_at: scheduled_run.next_visible_at
 }
 ```
 
-The wait step completed, then Squidie scheduled `record_gandalf_arrival` for later.
+The wait step completed, then Jizoku scheduled `record_gandalf_arrival` for later.
 Until `next_visible_at`, workers should see no visible work for that queue.
 
 ```elixir
-{:ok, :none} = Squidie.execute_next(wakeup_worker_opts)
+{:ok, :none} = Jizoku.execute_next(wakeup_worker_opts)
 
 {:ok, completed_rendezvous} =
-  Squidie.execute_next(Keyword.put(wakeup_worker_opts, :now, scheduled_run.next_visible_at))
+  Jizoku.execute_next(Keyword.put(wakeup_worker_opts, :now, scheduled_run.next_visible_at))
 
 %{
   status: completed_rendezvous.status,
   reason: completed_rendezvous.reason,
-  attempts: Enum.map(completed_rendezvous.attempts, &SquidieLivebook.Output.attempt/1)
+  attempts: Enum.map(completed_rendezvous.attempts, &JizokuLivebook.Output.attempt/1)
 }
 ```
 
@@ -577,8 +577,8 @@ Approval steps pause the workflow until an operator approves or rejects the run.
 This is durable workflow state, not a transient process wait.
 
 ```elixir
-defmodule SquidieLivebook.RecordCouncilApproval do
-  use Squidie.Step,
+defmodule JizokuLivebook.RecordCouncilApproval do
+  use Jizoku.Step,
     name: :record_council_approval,
     description: "Records an approved errand",
     input_schema: [
@@ -589,14 +589,14 @@ defmodule SquidieLivebook.RecordCouncilApproval do
       recorded: [type: :map, required: true]
     ]
 
-  @impl Squidie.Step
-  def run(%{ring_id: ring_id, approval: approval}, %Squidie.Step.Context{}) do
+  @impl Jizoku.Step
+  def run(%{ring_id: ring_id, approval: approval}, %Jizoku.Step.Context{}) do
     {:ok, %{recorded: %{ring_id: ring_id, decision: approval.decision}}}
   end
 end
 
-defmodule SquidieLivebook.RecordCouncilRejection do
-  use Squidie.Step,
+defmodule JizokuLivebook.RecordCouncilRejection do
+  use Jizoku.Step,
     name: :record_council_rejection,
     description: "Records a rejected errand",
     input_schema: [
@@ -607,14 +607,14 @@ defmodule SquidieLivebook.RecordCouncilRejection do
       recorded: [type: :map, required: true]
     ]
 
-  @impl Squidie.Step
-  def run(%{ring_id: ring_id, approval: approval}, %Squidie.Step.Context{}) do
+  @impl Jizoku.Step
+  def run(%{ring_id: ring_id, approval: approval}, %Jizoku.Step.Context{}) do
     {:ok, %{recorded: %{ring_id: ring_id, decision: approval.decision}}}
   end
 end
 
-defmodule SquidieLivebook.CouncilApprovalWorkflow do
-  use Squidie.Workflow
+defmodule JizokuLivebook.CouncilApprovalWorkflow do
+  use Jizoku.Workflow
 
   workflow do
     trigger :council_review do
@@ -626,8 +626,8 @@ defmodule SquidieLivebook.CouncilApprovalWorkflow do
     end
 
     approval_step :wait_for_council, output: :approval
-    step :record_council_approval, SquidieLivebook.RecordCouncilApproval
-    step :record_council_rejection, SquidieLivebook.RecordCouncilRejection
+    step :record_council_approval, JizokuLivebook.RecordCouncilApproval
+    step :record_council_rejection, JizokuLivebook.RecordCouncilRejection
 
     transition :wait_for_council, on: :ok, to: :record_council_approval
     transition :wait_for_council, on: :error, to: :record_council_rejection
@@ -640,24 +640,24 @@ approval_opts = Keyword.put(opts, :queue, "livebook-approval")
 approval_worker_opts = Keyword.put(approval_opts, :owner_id, "livebook-worker")
 
 {:ok, approval_run} =
-  Squidie.start(
-    SquidieLivebook.CouncilApprovalWorkflow,
+  Jizoku.start(
+    JizokuLivebook.CouncilApprovalWorkflow,
     %{ring_id: "one-ring"},
     approval_opts
   )
 
-{:ok, paused_run} = Squidie.execute_next(approval_worker_opts)
+{:ok, paused_run} = Jizoku.execute_next(approval_worker_opts)
 
-{:ok, paused_explanation} = Squidie.explain_run(approval_run.run_id, approval_opts)
+{:ok, paused_explanation} = Jizoku.explain_run(approval_run.run_id, approval_opts)
 
 {:ok, resumed_run} =
-  Squidie.approve(
+  Jizoku.approve(
     approval_run.run_id,
     %{actor: "ops_123", comment: "looks good"},
     approval_opts
   )
 
-{:ok, approved_run} = Squidie.execute_next(approval_worker_opts)
+{:ok, approved_run} = Jizoku.execute_next(approval_worker_opts)
 
 %{
   paused_status: paused_run.status,
@@ -666,7 +666,7 @@ approval_worker_opts = Keyword.put(approval_opts, :owner_id, "livebook-worker")
   paused_summary: paused_explanation.summary,
   paused_next_actions: paused_explanation.next_actions,
   resumed_status: resumed_run.status,
-  visible_after_approval: Enum.map(resumed_run.visible_attempts, &SquidieLivebook.Output.attempt/1),
+  visible_after_approval: Enum.map(resumed_run.visible_attempts, &JizokuLivebook.Output.attempt/1),
   completed_status: approved_run.status,
   manual_state_after_resume: resumed_run.manual_state
 }
@@ -679,9 +679,9 @@ and finishes the workflow.
 
 ## What To Read Next
 
-- [Getting Started](https://github.com/dark-trench/squidie/blob/main/docs/getting_started.md)
-- [Workflow Authoring](https://github.com/dark-trench/squidie/blob/main/docs/workflow_authoring.md)
-- [Reference Workflows](https://github.com/dark-trench/squidie/blob/main/docs/reference_workflows.md)
-- [Graph Inspection Contract](https://github.com/dark-trench/squidie/blob/main/docs/graph_inspection.md)
-- [Host App Integration](https://github.com/dark-trench/squidie/blob/main/docs/host_app_integration.md)
-- [Runtime Architecture](https://github.com/dark-trench/squidie/blob/main/docs/jido_runtime_architecture.md)
+- [Getting Started](https://github.com/dark-trench/jizoku/blob/main/docs/getting_started.md)
+- [Workflow Authoring](https://github.com/dark-trench/jizoku/blob/main/docs/workflow_authoring.md)
+- [Reference Workflows](https://github.com/dark-trench/jizoku/blob/main/docs/reference_workflows.md)
+- [Graph Inspection Contract](https://github.com/dark-trench/jizoku/blob/main/docs/graph_inspection.md)
+- [Host App Integration](https://github.com/dark-trench/jizoku/blob/main/docs/host_app_integration.md)
+- [Runtime Architecture](https://github.com/dark-trench/jizoku/blob/main/docs/jido_runtime_architecture.md)

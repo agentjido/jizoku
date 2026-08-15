@@ -1,9 +1,19 @@
 # Changelog
 
-All notable changes to Squidie will be documented in this file.
+All notable changes to Jizoku will be documented in this file.
 
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
+
+## [Unreleased]
+
+### Changed
+
+- Renamed the runtime, package, OTP application, module namespace, Mix tasks,
+  telemetry, wire identifiers, examples, and documentation from Squidie to
+  Jizoku.
+- Started a new `jizoku_journal_*` persistence schema. Upgrading is an explicit
+  breaking cutover; Jizoku does not replay active Squidie runs.
 
 ## [0.3.7] - 2026-07-29
 

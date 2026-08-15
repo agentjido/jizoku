@@ -16,7 +16,7 @@ Current CI and onboarding smoke tests run with:
 
 ## Installation
 
-Add `:squidie` to the host application's dependencies and fetch dependencies
+Add `:jizoku` to the host application's dependencies and fetch dependencies
 as usual with Mix.
 
 Preferred Hex dependency:
@@ -24,7 +24,7 @@ Preferred Hex dependency:
 ```elixir
 defp deps do
   [
-    {:squidie, "~> 0.3.7"}
+    {:jizoku, "~> 0.3.7"}
   ]
 end
 ```
@@ -37,39 +37,39 @@ dependency:
 defp deps do
   [
     {:jido, "~> 2.0"},
-    {:squidie, "~> 0.3.7"}
+    {:jizoku, "~> 0.3.7"}
   ]
 end
 ```
 
-Then install Squidie's library-owned migrations into the host app:
+Then install Jizoku's library-owned migrations into the host app:
 
 ```sh
-mix squidie.install
+mix jizoku.install
 mix ecto.migrate
-mix squidie.doctor --json --fail-on-drift
+mix jizoku.doctor --json --fail-on-drift
 ```
 
-`mix squidie.install` creates one current-schema Squidie migration in the
+`mix jizoku.install` creates one current-schema Jizoku migration in the
 host application's `priv/repo/migrations` directory. It does not install or run
 migrations for the host application's job backend. The doctor command performs
 a read-only structural check and gives CI a nonzero gate when the migrated host
-database is behind or incompatible with Squidie's required baseline.
+database is behind or incompatible with Jizoku's required baseline.
 
 ## Configuration
 
 Start with three pieces:
 
-1. Squidie config points at the host repo and runtime boundary.
-2. The journal runtime owns its dispatch queue through Squidie config; the
-   host app only needs a worker process that calls `Squidie.execute_next/1`.
-3. Journal workers call `Squidie.execute_next/1` to claim and execute visible
+1. Jizoku config points at the host repo and runtime boundary.
+2. The journal runtime owns its dispatch queue through Jizoku config; the
+   host app only needs a worker process that calls `Jizoku.execute_next/1`.
+3. Journal workers call `Jizoku.execute_next/1` to claim and execute visible
    attempts.
 
-The host application configures Squidie under the `:squidie` application:
+The host application configures Jizoku under the `:jizoku` application:
 
 ```elixir
-config :squidie,
+config :jizoku,
   repo: MyApp.Repo,
   partition: "tenant_acme",
   queue: "default"
@@ -77,8 +77,8 @@ config :squidie,
 
 Host config keys:
 
-- `:repo` - required for the default Ecto-backed journal setup; Squidie uses it
-  to infer `{Squidie.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}` when
+- `:repo` - required for the default Ecto-backed journal setup; Jizoku uses it
+  to infer `{Jizoku.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}` when
   `journal_storage:` is omitted
 
 Optional keys:
@@ -88,7 +88,7 @@ Optional keys:
 - `:read_model` - `:read_model` by default; routes inspection, graph
   inspection, and explanation through journal projections
 - `:journal_storage` - optional for the default Ecto-backed setup; when omitted,
-  Squidie uses `{Squidie.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}`.
+  Jizoku uses `{Jizoku.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}`.
   Set it only to override the storage adapter. Explicit `nil` is rejected for
   journal-backed runtime or read-model paths.
 - `:queue` - `"default"` by default; selects the journal dispatch queue used by
@@ -99,7 +99,7 @@ Optional keys:
 
 When a host uses partitions, it must route the same trusted `:partition`
 through start, worker, cron, signal, control, replay, and inspection calls.
-Run UUIDs and queue names may repeat across partitions. Squidie does not search
+Run UUIDs and queue names may repeat across partitions. Jizoku does not search
 another partition when a lookup misses, and a partition is not an authorization
 boundary; authorize tenant or domain access in the host before selecting it.
 
@@ -109,10 +109,10 @@ partitioned lists or recovery. Drain them there or perform an explicit,
 application-owned migration before changing worker routing. Rolling the config
 back selects the legacy namespace again; it does not merge partitioned history.
 
-Public `Squidie.start/2`, `start/3`, and `start/4` calls resolve those defaults
+Public `Jizoku.start/2`, `start/3`, and `start/4` calls resolve those defaults
 through the application environment too. If a host app starts runs manually
 from IEx, a Phoenix controller, or another direct boundary, it still needs
-`config :squidie, repo: MyApp.Repo` when it wants the default inferred Ecto
+`config :jizoku, repo: MyApp.Repo` when it wants the default inferred Ecto
 storage. Hosts that already own a storage adapter boundary can skip global
 `repo:` config and pass an explicit `journal_storage:` override instead.
 
@@ -121,7 +121,7 @@ lease system.
 
 For most host apps, the inferred Ecto storage is the recommended starting point
 when `MyApp.Repo` uses Postgres or a Postgres-compatible Ecto adapter. It
-persists Jido threads and checkpoints in Squidie's installed tables and keeps
+persists Jido threads and checkpoints in Jizoku's installed tables and keeps
 journal storage in the same transactional database boundary as the host app. The
 boundary remains adapter-shaped, so other Jido-compatible stores can be used
 later, but production stores must still provide ordered per-thread appends,
@@ -131,7 +131,7 @@ compatibility expectations.
 
 The current journal default covers start, cron start, cancellation, replay,
 global and workflow-filtered `list_runs/2`, inspect, explain, graph inspection,
-manual resume/approval controls, and `Squidie.execute_next/1`. Journal listing
+manual resume/approval controls, and `Jizoku.execute_next/1`. Journal listing
 is backed by a durable run catalog fact rather than a storage-adapter scan, and
 returns redacted summaries; use `inspect_run/2` for one run when a caller needs
 inputs, outputs, attempts, or claim metadata. Dashboards can call
@@ -148,29 +148,29 @@ keys, and claim identifiers before returning the payload. See
 
 ## Runtime Boundaries
 
-Most host apps can use Squidie without writing Jido agents, storage calls, or
+Most host apps can use Jizoku without writing Jido agents, storage calls, or
 Bedrock code. The public integration boundary is:
 
 - workflow modules declare triggers, payloads, steps, transitions, retries, and
   manual controls
-- host code starts runs and exposes inspection through `Squidie.start/3`,
-  `Squidie.list_runs/2`, `Squidie.inspect_run/2`,
-  `Squidie.inspect_run_graph/2`, and `Squidie.explain_run/2`
-- host workers provide execution capacity by calling `Squidie.execute_next/1`
+- host code starts runs and exposes inspection through `Jizoku.start/3`,
+  `Jizoku.list_runs/2`, `Jizoku.inspect_run/2`,
+  `Jizoku.inspect_run_graph/2`, and `Jizoku.explain_run/2`
+- host workers provide execution capacity by calling `Jizoku.execute_next/1`
 - host schedulers may deliver cron activations with
-  `Squidie.Executor.Payload.cron/3` and `Squidie.Runtime.Runner.perform/2`
+  `Jizoku.Executor.Payload.cron/3` and `Jizoku.Runtime.Runner.perform/2`
 
-Jido is the runtime foundation behind that boundary. Squidie uses Jido
+Jido is the runtime foundation behind that boundary. Jizoku uses Jido
 journals, storage callbacks, actions, and rebuildable agents internally so run
 state can be reconstructed from durable facts. Users only need to learn those
 details when they are contributing to the runtime, replacing the default journal
 storage adapter, or debugging low-level runtime behavior.
 
 Bedrock is optional. Use the basic `execute_next/1` worker loop when a host only
-needs Squidie to claim visible journal work from the configured storage. Use
+needs Jizoku to claim visible journal work from the configured storage. Use
 Bedrock or another lease-capable backend when the host needs backend-owned
 delivery, delayed visibility, worker leases, heartbeats, retry requeue,
-dead-letter handling, or stale-worker recovery outside the Squidie journal.
+dead-letter handling, or stale-worker recovery outside the Jizoku journal.
 Those backend concerns belong in adapter modules, not workflow modules.
 
 ## Journal Worker Contract
@@ -179,7 +179,7 @@ Step execution is pulled by host-owned workers. A minimal worker can be a small
 GenServer loop under the host supervision tree:
 
 ```elixir
-defmodule MyApp.SquidieWorker do
+defmodule MyApp.JizokuWorker do
   use GenServer
 
   def start_link(opts \\ []) do
@@ -187,7 +187,7 @@ defmodule MyApp.SquidieWorker do
   end
 
   def init(opts) do
-    {:ok, %{owner_id: Keyword.get(opts, :owner_id, "my-app-squidie")}, {:continue, :drain}}
+    {:ok, %{owner_id: Keyword.get(opts, :owner_id, "my-app-jizoku")}, {:continue, :drain}}
   end
 
   def handle_continue(:drain, state), do: {:noreply, drain_once(state)}
@@ -195,7 +195,7 @@ defmodule MyApp.SquidieWorker do
 
   defp drain_once(state) do
     interval =
-      case Squidie.execute_next(
+      case Jizoku.execute_next(
              owner_id: state.owner_id,
              lease_for: 30,
              heartbeat_interval_ms: 10_000
@@ -213,14 +213,14 @@ end
 
 This loop is intentionally small. Production hosts can add capacity limits,
 back-pressure, node placement, metrics, and shutdown policy around the same
-public call. Squidie still owns the journaled claim, completion, retry,
+public call. Jizoku still owns the journaled claim, completion, retry,
 manual-control, and terminal-state facts.
 
 `lease_for` and `heartbeat_interval_ms` are journal executor controls, not an
 external backend requirement. Hosts without Bedrock or another leased job
 backend may still pass them when steps can run longer than a claim window. Oban
 OSS workers fall into this plain-host category for this purpose: keep Oban job
-delivery concerns separate and let `Squidie.execute_next/1` maintain the
+delivery concerns separate and let `Jizoku.execute_next/1` maintain the
 journal claim lease. Short step workers can omit `heartbeat_interval_ms`. Hosts
 that also use a backend lease must maintain that backend lease separately from
 the journal claim lease. The runtime rejects intervals below 50ms to keep
@@ -228,26 +228,26 @@ heartbeat write volume bounded.
 
 ## Telemetry Integration
 
-Squidie emits public runtime events under `[:squidie, :runtime, ...]` for
+Jizoku emits public runtime events under `[:jizoku, :runtime, ...]` for
 command application, executor polls, step invocation, and committed lifecycle
 facts. No runtime config is required to enable emission. Hosts attach handlers
 or supervise their selected reporter/exporter and can use
-`Squidie.Telemetry.metrics/0` as the default bounded-cardinality metric set.
+`Jizoku.Telemetry.metrics/0` as the default bounded-cardinality metric set.
 
 ```elixir
 defmodule MyApp.Metrics do
   def metrics do
-    application_metrics() ++ Squidie.Telemetry.metrics()
+    application_metrics() ++ Jizoku.Telemetry.metrics()
   end
 end
 ```
 
-Use `Squidie.Telemetry.partition_metrics/0` only after accepting the tenant or
+Use `Jizoku.Telemetry.partition_metrics/0` only after accepting the tenant or
 domain cardinality of the configured partition namespace. Correlation fields
 such as run, signal, runnable, and trace IDs are suitable for traces or
 authorized diagnostic logs, but not metric labels.
 
-Lifecycle point events follow successful journal appends. Squidie-owned Ecto
+Lifecycle point events follow successful journal appends. Jizoku-owned Ecto
 step transactions buffer completion events until commit and discard them on
 rollback; arbitrary host-owned outer transactions are outside that guarantee.
 The events remain best-effort and do not replace journal-backed inspection.
@@ -256,8 +256,8 @@ metadata, privacy, and delivery contract.
 
 ## Multi-node Journal Workers
 
-Multiple host application nodes may drain the same Squidie queue. They do not
-form a Squidie cluster and do not require Distributed Erlang. Each node runs
+Multiple host application nodes may drain the same Jizoku queue. They do not
+form a Jizoku cluster and do not require Distributed Erlang. Each node runs
 the same small worker loop against shared durable journal storage, and the
 journal claim is the cross-node ownership boundary.
 
@@ -276,7 +276,7 @@ Use this deployment contract:
 - keep queue placement, worker count, restart policy, back-pressure, and
   shutdown behavior in the host supervision and deployment layers
 
-Concurrent `Squidie.execute_next/1` calls may observe the same visible attempt,
+Concurrent `Jizoku.execute_next/1` calls may observe the same visible attempt,
 but only one claim append can win the dispatch-thread revision fence. A current
 heartbeat extends that winner's lease and prevents reclaim. After the lease
 expires, another owner may append a fresh claim and execute the attempt. The
@@ -289,16 +289,16 @@ the terminal state.
 
 Operators can inspect this boundary without parsing journal entries:
 
-- `Squidie.inspect_run/2` exposes the current `owner_id`, `claim_id`, and
+- `Jizoku.inspect_run/2` exposes the current `owner_id`, `claim_id`, and
   `lease_until` in claimed attempts
 - an expired lease moves the attempt into `expired_claims` and sets the
   snapshot reason to `:expired_claim`
-- `Squidie.explain_run/2` reports `:recover_expired_claim` while takeover is
+- `Jizoku.explain_run/2` reports `:recover_expired_claim` while takeover is
   pending
 - after cancellation, failure, or completion, explanation reports `:terminal`
   and `:inspect_terminal_run` instead of suggesting recovery
 
-These guarantees fence Squidie's durable workflow mutations. They do not make
+These guarantees fence Jizoku's durable workflow mutations. They do not make
 external side effects exactly once. A worker can perform an external action,
 lose its lease before recording completion, and cause a takeover worker to
 perform that action again. Side-effecting steps must therefore use stable
@@ -326,20 +326,20 @@ MIX_ENV=test mix test test/bedrock_multi_node_consumer_test.exs
 That proof runs two independently identified Bedrock consumer managers against
 one queue. It verifies exclusive dispatch, automatic backend lease renewal,
 continued invisibility after the original lease expires, and completion from a
-manager whose initial lease snapshot became stale after renewal. Squidie's
+manager whose initial lease snapshot became stale after renewal. Jizoku's
 journal claim remains a separate fence inside the delivered job.
 
 ## Cron Payload Contract
 
-Cron starts are the `Squidie.Executor` payload boundary. Hosts
-that already have a scheduler can enqueue `Squidie.Executor.Payload.cron/3`
-and deliver the stored payload to `Squidie.Runtime.Runner.perform/2`:
+Cron starts are the `Jizoku.Executor` payload boundary. Hosts
+that already have a scheduler can enqueue `Jizoku.Executor.Payload.cron/3`
+and deliver the stored payload to `Jizoku.Runtime.Runner.perform/2`:
 
 ```elixir
-defmodule MyApp.SquidieCronExecutor do
-  @behaviour Squidie.Executor
+defmodule MyApp.JizokuCronExecutor do
+  @behaviour Jizoku.Executor
 
-  alias Squidie.Executor.Payload
+  alias Jizoku.Executor.Payload
 
   def enqueue_cron(_config, workflow, trigger, opts) do
     workflow
@@ -362,7 +362,7 @@ defmodule MyApp.SquidieCronExecutor do
   defp queue do
     :my_app
     |> Application.get_env(__MODULE__, [])
-    |> Keyword.get(:queue, :squidie)
+    |> Keyword.get(:queue, :jizoku)
   end
 end
 ```
@@ -377,13 +377,13 @@ Return `{:ok, metadata}` after enqueueing. Metadata is returned to the caller an
 can be included in host-owned logs or telemetry, so useful values are `:job_id`,
 `:queue`, `:worker`, and `:scheduled_at`.
 
-The queued job should deliver the stored payload back to Squidie without
+The queued job should deliver the stored payload back to Jizoku without
 knowing workflow details:
 
 ```elixir
-defmodule MyApp.SquidieJob do
+defmodule MyApp.JizokuJob do
   def perform(%{payload: payload}) do
-    Squidie.Runtime.Runner.perform(payload)
+    Jizoku.Runtime.Runner.perform(payload)
   end
 end
 ```
@@ -391,7 +391,7 @@ end
 `MyApp.JobQueue` is intentionally a placeholder. In a real host app, replace it
 with the app's durable job backend. Cron activation is host-owned; the host
 scheduler should call `enqueue_cron/4` or enqueue
-`Squidie.Executor.Payload.cron/3`.
+`Jizoku.Executor.Payload.cron/3`.
 
 When a scheduler can provide deterministic schedule metadata, pass it with the
 cron payload instead of adding it to workflow input:
@@ -406,7 +406,7 @@ Payload.cron(MyApp.Workflows.DailyStandup, :daily_standup,
 )
 ```
 
-Squidie persists this under `run.context.schedule` before workflow
+Jizoku persists this under `run.context.schedule` before workflow
 processing. Steps can read it from `context.state.schedule`, and inspection or
 explanation surfaces can show the intended window separately from actual worker
 receive time.
@@ -415,14 +415,14 @@ If the workflow declares `cron ..., idempotency: :return_existing_run` or
 `idempotency: :skip_duplicate`, the scheduler identity also becomes the start
 idempotency key. Duplicate delivery of the same workflow, trigger, and key will
 not insert a second run. Idempotent cron starts must include `signal_id` or a
-complete `intended_window`; otherwise Squidie returns
+complete `intended_window`; otherwise Jizoku returns
 `{:error, {:missing_schedule_idempotency_key, trigger_name}}`.
 
 With the journal default, cron payload delivery through
-`Squidie.Runtime.Runner.perform/2` starts a journal run and persists the
+`Jizoku.Runtime.Runner.perform/2` starts a journal run and persists the
 schedule context on the `:run_started` journal fact. Only cron payloads are
 accepted because step execution is claimed through
-`Squidie.execute_next/1`.
+`Jizoku.execute_next/1`.
 
 That is the whole execution contract for the journal-backed runtime. Workflow
 modules, context modules, and controllers should not need to know which job
@@ -431,17 +431,17 @@ backend the scheduler uses.
 ## Optional Lease Contract
 
 Backends that expose worker leases can also implement
-`Squidie.Executor.Leases`. This is separate from the queue delivery adapter: it claims
+`Jizoku.Executor.Leases`. This is separate from the queue delivery adapter: it claims
 visible work, heartbeats active claims, completes delivered work, and returns
 failed work to the backend's retry or dead-letter policy.
 
 The journal-backed runtime does not require a lease adapter. The behavior exists so
 Bedrock or another durable backend can expose lease semantics through a stable
-Squidie boundary without changing workflow modules.
+Jizoku boundary without changing workflow modules.
 
 ## Bedrock Lease Backend Setup
 
-Squidie stays backend-neutral: workflow modules and runtime state do not
+Jizoku stays backend-neutral: workflow modules and runtime state do not
 depend on Bedrock APIs. For hosts that want backend-owned leasing today, Bedrock
 is the recommended reference backend because it already owns durable delivery,
 delayed visibility, leases, heartbeats, retry timing, and recovery. That same
@@ -452,30 +452,30 @@ node boundaries.
 Use `examples/bedrock_minimal_host_app` as the concrete setup guide. The example
 keeps the storage and lease boundaries explicit:
 
-- `BedrockMinimalHostApp.Repo` stores Squidie workflow and attempt state.
+- `BedrockMinimalHostApp.Repo` stores Jizoku workflow and attempt state.
 - `BedrockMinimalHostApp.JobQueue` stores queue items, delayed visibility,
   leases, retries, and queue metadata.
-- `BedrockMinimalHostApp.SquidieDeliveryAdapter` adapts cron activations to Bedrock
+- `BedrockMinimalHostApp.JizokuDeliveryAdapter` adapts cron activations to Bedrock
   Job Queue payloads.
-- `BedrockMinimalHostApp.SquidieLeaseAdapter` adapts Bedrock claims,
-  heartbeats, completion, and failure to `Squidie.Executor.Leases`.
-- `BedrockMinimalHostApp.Jobs.SquidiePayload` delivers cron payloads and then
+- `BedrockMinimalHostApp.JizokuLeaseAdapter` adapts Bedrock claims,
+  heartbeats, completion, and failure to `Jizoku.Executor.Leases`.
+- `BedrockMinimalHostApp.Jobs.JizokuPayload` delivers cron payloads and then
   drains visible journal attempts while the Bedrock lease is held.
 
 There are two independent lease layers in that setup. The Bedrock lease belongs
 to the host job backend and controls whether the payload job can be redelivered.
-The Squidie journal claim lease belongs to `Squidie.execute_next/1` and
+The Jizoku journal claim lease belongs to `Jizoku.execute_next/1` and
 controls whether another workflow worker can reclaim a journal attempt. The
 Bedrock example passes `journal_heartbeat_interval_ms` into `execute_next/1` so
-long-running journal steps keep their Squidie claim alive while the Bedrock
+long-running journal steps keep their Jizoku claim alive while the Bedrock
 payload job is executing. That option does not renew the Bedrock job lease; the
 host backend must size and renew its own lease separately.
 
-The payload worker is the executor boundary. It should deliver a Squidie
-payload, then drain visible journal attempts with `Squidie.execute_next/1`.
+The payload worker is the executor boundary. It should deliver a Jizoku
+payload, then drain visible journal attempts with `Jizoku.execute_next/1`.
 Do not enqueue one Bedrock job per workflow step. Do not use Bedrock job retry
 settings to represent workflow step retry policy. Step retry, terminal failure,
-pause, approval, and compensation routing are Squidie runtime facts driven by
+pause, approval, and compensation routing are Jizoku runtime facts driven by
 the workflow DSL and persisted by `execute_next/1`.
 
 Treat `{:ok, snapshot}` from `execute_next/1` as successful job progress even
@@ -485,7 +485,7 @@ be redelivered by the backend.
 
 A host app using the same shape should:
 
-1. Configure `:squidie` with the host repo and journal queue.
+1. Configure `:jizoku` with the host repo and journal queue.
 2. Configure the cron adapter's Bedrock queue id and topic.
 3. Start the host repo, Bedrock cluster, and Bedrock job queue under
    supervision.
@@ -498,15 +498,15 @@ A host app using the same shape should:
 The example config shape is:
 
 ```elixir
-config :my_app, MyApp.SquidieDeliveryAdapter,
+config :my_app, MyApp.JizokuDeliveryAdapter,
   queue_id: "tenant_a",
-  topic: "squidie:payload"
+  topic: "jizoku:payload"
 
-config :squidie,
+config :jizoku,
   repo: MyApp.Repo,
   queue: "tenant_a"
 
-config :my_app, MyApp.Jobs.SquidiePayload,
+config :my_app, MyApp.Jobs.JizokuPayload,
   journal_heartbeat_interval_ms: 10_000,
   max_journal_attempts: 50
 ```
@@ -516,12 +516,12 @@ To verify the reference path locally:
 ```sh
 cd examples/bedrock_minimal_host_app
 mix setup
-MIX_ENV=test mix test test/bedrock_job_queue_stress_test.exs test/bedrock_minimal_host_app/squidie_lease_adapter_test.exs
+MIX_ENV=test mix test test/bedrock_job_queue_stress_test.exs test/bedrock_minimal_host_app/jizoku_lease_adapter_test.exs
 ```
 
 That test path covers Bedrock queue behavior plus the lease adapter contract.
-It does not make Bedrock a required Squidie dependency; another durable
-delivery adapter can use the same Squidie boundaries if it provides equivalent
+It does not make Bedrock a required Jizoku dependency; another durable
+delivery adapter can use the same Jizoku boundaries if it provides equivalent
 delivery, lease, heartbeat, retry, and recovery semantics.
 
 For background on why durable workflow systems often benefit from queueing close
@@ -533,14 +533,14 @@ paper.
 
 For a new integration, the shortest path to a successful first run is:
 
-1. Add `:squidie` to the host app's dependencies.
+1. Add `:jizoku` to the host app's dependencies.
 2. Add or confirm a working Postgres-backed `Repo`.
-3. Run `mix squidie.install`.
+3. Run `mix jizoku.install`.
 4. Run `mix ecto.migrate`.
-5. Configure `:squidie` with the host app's `Repo`.
+5. Configure `:jizoku` with the host app's `Repo`.
 6. Start the host app's `Repo` under supervision.
 7. Start one workflow through the public API, execute visible attempts with
-   `Squidie.execute_next/1`, and inspect it with history enabled.
+   `Jizoku.execute_next/1`, and inspect it with history enabled.
 
 Add a host job system only when the app needs one for cron scheduling,
 backend-owned leases, or other application work.
@@ -549,23 +549,23 @@ backend-owned leases, or other application work.
 
 For an existing Phoenix or OTP application:
 
-1. Add the `:squidie` dependency.
+1. Add the `:jizoku` dependency.
 2. Configure `:repo` to point at the app's existing repo.
-3. Call `Squidie.config!/0` during boot or integration setup to verify the
+3. Call `Jizoku.config!/0` during boot or integration setup to verify the
    required contract is present.
-4. Integrate Squidie from the host application's contexts, services,
+4. Integrate Jizoku from the host application's contexts, services,
    controllers, or internal APIs.
 
 The host application is responsible for:
 
 - database setup and migrations
-- journal worker lifecycle for `Squidie.execute_next/1`
+- journal worker lifecycle for `Jizoku.execute_next/1`
 - any HTTP or internal API endpoints exposed to end users
 
 That means the embedded install path assumes:
 
 - the host app already owns its `Repo`
-- the host app starts workers that call `Squidie.execute_next/1`
+- the host app starts workers that call `Jizoku.execute_next/1`
 - the host app adds job-backend tables only for its own scheduler or lease backend
 
 ## Minimal OTP Host Skeleton
@@ -574,9 +574,9 @@ For a plain OTP application, the minimum moving pieces are:
 
 - a `Repo` module
 - `Repo` in the application supervision tree
-- a supervised worker that periodically calls `Squidie.execute_next/1`
-- `:squidie` configuration pointing at that `Repo`
-- one host-facing module that calls `Squidie`
+- a supervised worker that periodically calls `Jizoku.execute_next/1`
+- `:jizoku` configuration pointing at that `Repo`
+- one host-facing module that calls `Jizoku`
 
 Dependency shape:
 
@@ -585,7 +585,7 @@ defp deps do
   [
     {:ecto_sql, "~> 3.13"},
     {:postgrex, "~> 0.20"},
-    {:squidie, "~> 0.3.7"}
+    {:jizoku, "~> 0.3.7"}
   ]
 end
 ```
@@ -606,29 +606,29 @@ Host-facing boundary:
 ```elixir
 defmodule MyApp.WorkflowRuns do
   def start_payment_recovery(payload) do
-    Squidie.start(MyApp.Workflows.PaymentRecovery, :payment_recovery, payload)
+    Jizoku.start(MyApp.Workflows.PaymentRecovery, :payment_recovery, payload)
   end
 
   def inspect_run(run_id) do
-    Squidie.inspect_run(run_id, include_history: true)
+    Jizoku.inspect_run(run_id, include_history: true)
   end
 
   def resume(run_id, attrs \\ %{}) do
-    Squidie.resume(run_id, attrs)
+    Jizoku.resume(run_id, attrs)
   end
 
   def approve(run_id, attrs) do
-    Squidie.approve(run_id, attrs)
+    Jizoku.approve(run_id, attrs)
   end
 
   def reject(run_id, attrs) do
-    Squidie.reject(run_id, attrs)
+    Jizoku.reject(run_id, attrs)
   end
 end
 ```
 
 If the host app exposes pause-resume or approval workflows, keep the latest
-Squidie migrations applied before deploying the feature. Paused step runs
+Jizoku migrations applied before deploying the feature. Paused step runs
 now persist internal resume metadata so `resume/2`, `approve/3`, and
 `reject/3` can continue with stable output and transition semantics after
 restarts or code changes.
@@ -661,14 +661,14 @@ run includes chronological `step_runs`, declared `steps` state, and durable
 ## Minimal Phoenix Host Skeleton
 
 A Phoenix application uses the same runtime contract. The main difference is
-that Squidie usually sits behind a context or controller boundary.
+that Jizoku usually sits behind a context or controller boundary.
 
 Typical shape:
 
-- add `:squidie` to the Phoenix app
+- add `:jizoku` to the Phoenix app
 - keep using the Phoenix app's existing `Repo`
-- start a supervised worker that calls `Squidie.execute_next/1`
-- configure `:squidie` to use that `Repo`
+- start a supervised worker that calls `Jizoku.execute_next/1`
+- configure `:jizoku` to use that `Repo`
 - expose workflow operations through a context or controller
 
 Add `:jido` explicitly only when the Phoenix app defines raw `Jido.Action`
@@ -679,23 +679,23 @@ Context boundary:
 ```elixir
 defmodule MyApp.WorkflowRuns do
   def start_payment_recovery(attrs) do
-    Squidie.start(MyApp.Workflows.PaymentRecovery, :payment_recovery, attrs)
+    Jizoku.start(MyApp.Workflows.PaymentRecovery, :payment_recovery, attrs)
   end
 
   def inspect_run(run_id) do
-    Squidie.inspect_run(run_id, include_history: true)
+    Jizoku.inspect_run(run_id, include_history: true)
   end
 
   def resume(run_id, attrs \\ %{}) do
-    Squidie.resume(run_id, attrs)
+    Jizoku.resume(run_id, attrs)
   end
 
   def approve(run_id, attrs) do
-    Squidie.approve(run_id, attrs)
+    Jizoku.approve(run_id, attrs)
   end
 
   def reject(run_id, attrs) do
-    Squidie.reject(run_id, attrs)
+    Jizoku.reject(run_id, attrs)
   end
 end
 ```
@@ -716,7 +716,7 @@ For local development and examples, a minimal host app can provide:
 
 - a local Postgres-backed repo
 - a local background job setup
-- direct application code calls into Squidie
+- direct application code calls into Jizoku
 
 This uses the same configuration contract as an existing application setup.
 In that mode, the example app may also own its job-backend migrations because
@@ -728,13 +728,13 @@ install.
 Host applications can validate the contract directly:
 
 ```elixir
-{:ok, config} = Squidie.config()
+{:ok, config} = Jizoku.config()
 ```
 
 Or raise on missing required keys:
 
 ```elixir
-config = Squidie.config!()
+config = Jizoku.config!()
 ```
 
 ## Example Development Harness
@@ -760,23 +760,23 @@ The example app wires:
 
 - its own `MinimalHostApp.Repo`
 - journal runtime smoke paths that use inferred Ecto storage and
-  `Squidie.execute_next/1`, including cron activation through the journal
+  `Jizoku.execute_next/1`, including cron activation through the journal
   runtime
 - a Jido command-signal round trip that proves durable trace lineage across a
   worker handoff and captures a committed lifecycle telemetry event
 - a versioned graph mutation with dependency chain and fan-in readiness,
   injected post-commit dispatch failure, explicit reconciliation, redacted
   inspection, and terminal completion
-- cron activation smoke paths that deliver `Squidie.Executor.Payload.cron/3`
-  through `Squidie.Runtime.Runner.perform/1`
-- Squidie through `MinimalHostApp.WorkflowRuns`
+- cron activation smoke paths that deliver `Jizoku.Executor.Payload.cron/3`
+  through `Jizoku.Runtime.Runner.perform/1`
+- Jizoku through `MinimalHostApp.WorkflowRuns`
 
 ## Inspecting History
 
 For real host apps, `inspect_run/2` is most useful with history enabled:
 
 ```elixir
-Squidie.inspect_run(run_id, include_history: true)
+Jizoku.inspect_run(run_id, include_history: true)
 ```
 
 That returns the top-level run plus:
@@ -792,7 +792,7 @@ Use `explain_run/2` when an operator surface needs the current reason and safe
 next actions instead of the full inspection snapshot:
 
 ```elixir
-{:ok, explanation} = Squidie.explain_run(run_id)
+{:ok, explanation} = Jizoku.explain_run(run_id)
 
 %{
   status: explanation.status,

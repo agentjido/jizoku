@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Package version without the leading v, for example 0.3.1"
+        description: "Package version without the leading v, for example 0.4.0"
         required: true
         type: string
 
@@ -41,6 +41,15 @@ jobs:
           --health-retries 5
 
     steps:
+      - name: Require explicit Jizoku release activation
+        env:
+          JIZOKU_RELEASES_ENABLED: ${{ vars.JIZOKU_RELEASES_ENABLED }}
+        run: |
+          if [ "$JIZOKU_RELEASES_ENABLED" != "true" ]; then
+            echo "::error::Jizoku Hex releases are disabled until the coordinated cutover"
+            exit 1
+          fi
+
       - name: Checkout main
         uses: actions/checkout@v7
         with:
@@ -104,7 +113,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          elixir scripts/squidie_release_prep.exs "$RELEASE_VERSION" --notes-file /tmp/squidie-release-notes.md
+          elixir scripts/jizoku_release_prep.exs "$RELEASE_VERSION" --notes-file /tmp/jizoku-release-notes.md
           mix format
 
       - name: Verify release
@@ -132,7 +141,7 @@ jobs:
           fi
 
           mix hex.publish --dry-run --yes
-          mix hex.build --unpack --output /tmp/squidie-hex-package
+          mix hex.build --unpack --output /tmp/jizoku-hex-package
 
       - name: Commit release metadata
         if: ${{ steps.release_state.outputs.existing_release != 'true' }}
@@ -152,7 +161,7 @@ jobs:
 
           git commit \
             -m "chore: release ${RELEASE_VERSION}" \
-            -m "Update Squidie package metadata and changelog for ${RELEASE_VERSION}."
+            -m "Update Jizoku package metadata and changelog for ${RELEASE_VERSION}."
 
       - name: Tag and push release
         if: ${{ steps.release_state.outputs.existing_release != 'true' }}
@@ -175,7 +184,7 @@ jobs:
 
           gh release create "v${RELEASE_VERSION}" \
             --title "v${RELEASE_VERSION}" \
-            --notes-file /tmp/squidie-release-notes.md
+            --notes-file /tmp/jizoku-release-notes.md
 
       - name: Publish package
         env:

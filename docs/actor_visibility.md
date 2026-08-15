@@ -2,13 +2,13 @@
 
 ## Overview
 
-Actor visibility in Squidie provides a host-controlled authorization boundary that allows deriving less-sensitive views of workflow data for different actors without mutating the durable history. This enables secure multi-tenant access patterns where different users see appropriate levels of detail based on their authorization scope.
+Actor visibility in Jizoku provides a host-controlled authorization boundary that allows deriving less-sensitive views of workflow data for different actors without mutating the durable history. This enables secure multi-tenant access patterns where different users see appropriate levels of detail based on their authorization scope.
 
 ## Core Concepts
 
 ### Visibility Scopes
 
-Squidie defines three standard visibility scopes, each providing different levels of information access:
+Jizoku defines three standard visibility scopes, each providing different levels of information access:
 
 #### `:external` (Most Restrictive)
 - **Purpose**: Minimal information for external users and public APIs
@@ -44,16 +44,16 @@ The following fields are automatically redacted for non-auditor actors:
 
 ```elixir
 # Get a workflow snapshot
-{:ok, snapshot} = Squidie.inspect(run_id)
+{:ok, snapshot} = Jizoku.inspect(run_id)
 
 # Redact for external actor (most restrictive)
-external_view = Squidie.ReadModel.Visibility.redact(snapshot, :external)
+external_view = Jizoku.ReadModel.Visibility.redact(snapshot, :external)
 
 # Redact for operator actor
-operator_view = Squidie.ReadModel.Visibility.redact(snapshot, :operator)
+operator_view = Jizoku.ReadModel.Visibility.redact(snapshot, :operator)
 
 # Get full auditor view (no redaction)
-auditor_view = Squidie.ReadModel.Visibility.redact(snapshot, :auditor)
+auditor_view = Jizoku.ReadModel.Visibility.redact(snapshot, :auditor)
 ```
 
 ### Custom Visibility Policies
@@ -64,7 +64,7 @@ Host applications can define custom visibility policies to map actors to scopes:
 
 ```elixir
 defmodule MyApp.VisibilityPolicy do
-  @behaviour Squidie.ReadModel.Visibility.Policy
+  @behaviour Jizoku.ReadModel.Visibility.Policy
 
   @impl true
   def visibility_scope(actor, _view) do
@@ -77,7 +77,7 @@ defmodule MyApp.VisibilityPolicy do
 end
 
 # Usage
-redacted_view = Squidie.ReadModel.Visibility.redact(
+redacted_view = Jizoku.ReadModel.Visibility.redact(
   snapshot,
   %{role: "support"},
   MyApp.VisibilityPolicy
@@ -88,7 +88,7 @@ redacted_view = Squidie.ReadModel.Visibility.redact(
 
 ```elixir
 defmodule MyApp.ConfigurablePolicy do
-  @behaviour Squidie.ReadModel.Visibility.Policy
+  @behaviour Jizoku.ReadModel.Visibility.Policy
 
   @impl true
   def visibility_scope(actor, view, opts) do
@@ -103,7 +103,7 @@ defmodule MyApp.ConfigurablePolicy do
 end
 
 # Usage with options
-redacted_view = Squidie.ReadModel.Visibility.redact(
+redacted_view = Jizoku.ReadModel.Visibility.redact(
   snapshot,
   %{tenant_id: "acme", role: "owner"},
   {MyApp.ConfigurablePolicy, tenant_id: "acme"}
@@ -121,7 +121,7 @@ policy_fn = fn
 end
 
 # Apply the policy
-redacted_view = Squidie.ReadModel.Visibility.redact(
+redacted_view = Jizoku.ReadModel.Visibility.redact(
   snapshot,
   %{support: true},
   policy_fn
@@ -141,10 +141,10 @@ defmodule MyAppWeb.WorkflowController do
     actor = get_current_user(conn)
 
     # Fetch workflow snapshot
-    {:ok, snapshot} = Squidie.inspect(run_id)
+    {:ok, snapshot} = Jizoku.inspect(run_id)
 
     # Apply visibility policy based on actor
-    redacted_view = Squidie.ReadModel.Visibility.redact(
+    redacted_view = Jizoku.ReadModel.Visibility.redact(
       snapshot,
       actor,
       MyApp.VisibilityPolicy
@@ -167,10 +167,10 @@ defmodule MyAppWeb.WorkflowLive do
     actor = get_actor_from_session(session)
 
     # Subscribe to workflow updates
-    Squidie.subscribe(run_id)
+    Jizoku.subscribe(run_id)
 
     # Get initial snapshot with appropriate visibility
-    {:ok, snapshot} = Squidie.inspect(run_id)
+    {:ok, snapshot} = Jizoku.inspect(run_id)
     redacted_view = apply_visibility(snapshot, actor)
 
     {:ok, assign(socket, workflow: redacted_view, actor: actor)}
@@ -184,7 +184,7 @@ defmodule MyAppWeb.WorkflowLive do
   end
 
   defp apply_visibility(snapshot, actor) do
-    Squidie.ReadModel.Visibility.redact(
+    Jizoku.ReadModel.Visibility.redact(
       snapshot,
       actor,
       MyApp.VisibilityPolicy
@@ -199,11 +199,11 @@ end
 defmodule MyApp.WorkflowActions do
   def approve_task(run_id, task_ref, actor) do
     # Actor information is preserved in command history
-    Squidie.signal(run_id, {:approve, task_ref}, actor: actor)
+    Jizoku.signal(run_id, {:approve, task_ref}, actor: actor)
   end
 
   def reject_task(run_id, task_ref, actor, reason) do
-    Squidie.signal(
+    Jizoku.signal(
       run_id,
       {:reject, task_ref, reason: reason},
       actor: actor
@@ -211,7 +211,7 @@ defmodule MyApp.WorkflowActions do
   end
 
   def pause_workflow(run_id, actor) do
-    Squidie.signal(run_id, :pause, actor: actor)
+    Jizoku.signal(run_id, :pause, actor: actor)
   end
 end
 ```
@@ -222,7 +222,7 @@ When actors perform manual actions, their information is captured in the command
 
 ```elixir
 # Command with actor information
-{:ok, _} = Squidie.signal(
+{:ok, _} = Jizoku.signal(
   run_id,
   {:approve, "review_task"},
   actor: %{
@@ -233,14 +233,14 @@ When actors perform manual actions, their information is captured in the command
 )
 
 # The actor information is stored in command receipts
-{:ok, snapshot} = Squidie.inspect(run_id)
+{:ok, snapshot} = Jizoku.inspect(run_id)
 
 # Auditors can see full command history with actors
-auditor_view = Squidie.ReadModel.Visibility.redact(snapshot, :auditor)
+auditor_view = Jizoku.ReadModel.Visibility.redact(snapshot, :auditor)
 # auditor_view.command_history includes actor information
 
 # External users cannot see command history
-external_view = Squidie.ReadModel.Visibility.redact(snapshot, :external)
+external_view = Jizoku.ReadModel.Visibility.redact(snapshot, :external)
 # external_view.command_history is nil (redacted)
 ```
 
@@ -256,10 +256,10 @@ def show_workflow(conn, %{"id" => run_id}) do
 
   # Host authorization check
   with :ok <- authorize_workflow_access(actor, run_id) do
-    {:ok, snapshot} = Squidie.inspect(run_id)
+    {:ok, snapshot} = Jizoku.inspect(run_id)
 
     # Then apply visibility policy
-    view = Squidie.ReadModel.Visibility.redact(snapshot, actor, policy())
+    view = Jizoku.ReadModel.Visibility.redact(snapshot, actor, policy())
     json(conn, view)
   else
     {:error, :unauthorized} -> send_resp(conn, 403, "Forbidden")
@@ -274,15 +274,15 @@ Never serialize full snapshots directly to untrusted clients:
 ```elixir
 # WRONG - Exposes sensitive data
 def unsafe_endpoint(conn, %{"id" => run_id}) do
-  {:ok, snapshot} = Squidie.inspect(run_id)
+  {:ok, snapshot} = Jizoku.inspect(run_id)
   json(conn, snapshot)  # DON'T DO THIS!
 end
 
 # CORRECT - Always redact first
 def safe_endpoint(conn, %{"id" => run_id}) do
-  {:ok, snapshot} = Squidie.inspect(run_id)
+  {:ok, snapshot} = Jizoku.inspect(run_id)
   actor = get_current_user(conn)
-  view = Squidie.ReadModel.Visibility.redact(snapshot, actor, policy())
+  view = Jizoku.ReadModel.Visibility.redact(snapshot, actor, policy())
   json(conn, view)
 end
 ```
@@ -293,7 +293,7 @@ The `:auditor` scope provides complete access to all data. Restrict it carefully
 
 ```elixir
 defmodule MyApp.StrictPolicy do
-  @behaviour Squidie.ReadModel.Visibility.Policy
+  @behaviour Jizoku.ReadModel.Visibility.Policy
 
   @impl true
   def visibility_scope(actor, _view) do
@@ -317,10 +317,10 @@ Visibility redaction creates derived views without modifying the durable history
 
 ```elixir
 # Original data remains intact in the journal
-{:ok, full_snapshot} = Squidie.inspect(run_id)
+{:ok, full_snapshot} = Jizoku.inspect(run_id)
 
 # Redaction creates a new view, doesn't modify original
-external_view = Squidie.ReadModel.Visibility.redact(full_snapshot, :external)
+external_view = Jizoku.ReadModel.Visibility.redact(full_snapshot, :external)
 
 # The journal still contains all original data
 # Only privileged processes should access it directly
@@ -331,11 +331,11 @@ external_view = Squidie.ReadModel.Visibility.redact(full_snapshot, :external)
 ```elixir
 defmodule MyApp.VisibilityPolicyTest do
   use ExUnit.Case
-  alias Squidie.ReadModel.Visibility
+  alias Jizoku.ReadModel.Visibility
 
   setup do
     # Create test snapshot with sensitive data
-    snapshot = %Squidie.ReadModel.Snapshot{
+    snapshot = %Jizoku.ReadModel.Snapshot{
       run_id: "test_run",
       status: :running,
       input: %{secret: "sensitive_data"},
@@ -386,7 +386,7 @@ end
 
 ```elixir
 defmodule MyApp.MultiTenantPolicy do
-  @behaviour Squidie.ReadModel.Visibility.Policy
+  @behaviour Jizoku.ReadModel.Visibility.Policy
 
   @impl true
   def visibility_scope(actor, view, opts) do
@@ -417,7 +417,7 @@ end
 
 ```elixir
 defmodule MyApp.RBACPolicy do
-  @behaviour Squidie.ReadModel.Visibility.Policy
+  @behaviour Jizoku.ReadModel.Visibility.Policy
 
   @role_scopes %{
     "admin" => :auditor,
@@ -439,7 +439,7 @@ end
 
 ```elixir
 defmodule MyApp.TimeBasedPolicy do
-  @behaviour Squidie.ReadModel.Visibility.Policy
+  @behaviour Jizoku.ReadModel.Visibility.Policy
 
   @impl true
   def visibility_scope(actor, view) do
@@ -490,10 +490,10 @@ assert scope == :external
 
 ```elixir
 # Correct - includes actor
-Squidie.signal(run_id, :pause, actor: %{id: "user_123"})
+Jizoku.signal(run_id, :pause, actor: %{id: "user_123"})
 
 # Incorrect - missing actor
-Squidie.signal(run_id, :pause)  # Actor won't be recorded
+Jizoku.signal(run_id, :pause)  # Actor won't be recorded
 ```
 
 ### Issue: Performance with Large Snapshots
@@ -514,8 +514,8 @@ defmodule MyApp.CachedVisibility do
         cached_view
 
       _ ->
-        {:ok, snapshot} = Squidie.inspect(run_id)
-        view = Squidie.ReadModel.Visibility.redact(snapshot, actor, policy)
+        {:ok, snapshot} = Jizoku.inspect(run_id)
+        view = Jizoku.ReadModel.Visibility.redact(snapshot, actor, policy)
         cache_view(cache_key, view)
         view
     end
@@ -528,4 +528,4 @@ end
 - [Observability Guide](./observability.md) - Data visibility tiers and patterns
 - [Host App Integration](./host_app_integration.md#observability) - Integration guidelines
 - [Usage Rules](../usage-rules/host-apps.md) - Host application requirements
-- Module documentation: `Squidie.ReadModel.Visibility`
+- Module documentation: `Jizoku.ReadModel.Visibility`

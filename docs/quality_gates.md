@@ -1,6 +1,6 @@
 # Quality Gates
 
-Squidie uses the standard `mix precommit` gate for required local verification.
+Jizoku uses the standard `mix precommit` gate for required local verification.
 The structural quality tools below are part of that gate and also run in CI.
 
 ## Commands

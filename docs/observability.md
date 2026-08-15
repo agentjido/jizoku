@@ -1,30 +1,30 @@
 # Observability
 
-Squidie is observable through durable runtime state first. Host applications
+Jizoku is observable through durable runtime state first. Host applications
 inspect the journal-backed read models, graph output, and explanation
-diagnostics for authoritative state. Squidie also emits a stable public
-`:telemetry` contract under `[:squidie, :runtime, ...]` for live measurements.
+diagnostics for authoritative state. Jizoku also emits a stable public
+`:telemetry` contract under `[:jizoku, :runtime, ...]` for live measurements.
 
 Telemetry is a best-effort operational signal, not a replacement for the
-journal. Squidie installs no reporter, exporter, logger integration, dashboard,
+journal. Jizoku installs no reporter, exporter, logger integration, dashboard,
 or alert policy; the host application owns those choices.
 
 ## Runtime State Surfaces
 
 Use these public APIs as the stable observability boundary:
 
-- `Squidie.list_runs/2` - redacted run index rows for dashboards and queue
+- `Jizoku.list_runs/2` - redacted run index rows for dashboards and queue
   views.
-- `Squidie.inspect_run/2` - one run's durable state, including attempts,
+- `Jizoku.inspect_run/2` - one run's durable state, including attempts,
   visible work, scheduled work, expired claims, manual state, context, and
   anomalies.
-- `Squidie.inspect_run_graph/2` - graph-oriented node and edge state for UI
+- `Jizoku.inspect_run_graph/2` - graph-oriented node and edge state for UI
   builders.
-- `Squidie.inspect_run_timeline/2` - chronological operator events for trace
+- `Jizoku.inspect_run_timeline/2` - chronological operator events for trace
   views without parsing raw journal entries.
-- `Squidie.explain_run/2` - operator-facing reason, details, evidence, and
+- `Jizoku.explain_run/2` - operator-facing reason, details, evidence, and
   next actions.
-- `Squidie.inspect_continuation_chain/2` - explicitly bounded traversal of
+- `Jizoku.inspect_continuation_chain/2` - explicitly bounded traversal of
   continue-as-new predecessor or successor lineage.
 
 All of these surfaces expose the selected `partition`. Treat
@@ -40,13 +40,13 @@ Use `inspect_run/2` only after selecting a specific run and applying the host
 app's authorization rules.
 
 For read-only fleet and queue summaries outside a dashboard, use
-`mix squidie.status`; use `mix squidie.doctor` for configuration, claim,
+`mix jizoku.status`; use `mix jizoku.doctor` for configuration, claim,
 pending-fact, manual-action, anomaly, and schema diagnostics. See
 [Operational CLI Diagnostics](operations.md#operational-cli-diagnostics).
 
 ## Redaction And Field Selection
 
-Treat Squidie observability data as three tiers:
+Treat Jizoku observability data as three tiers:
 
 | Tier | Examples | Suggested use |
 | --- | --- | --- |
@@ -56,13 +56,13 @@ Treat Squidie observability data as three tiers:
 
 `inspect_run/2` and `inspect_run_graph/2` can expose host-domain data because
 step inputs, outputs, errors, manual metadata, and durable context come from the
-embedding application. Squidie cannot know which fields are customer data,
+embedding application. Jizoku cannot know which fields are customer data,
 provider responses, tokens, or internal notes. Apply an allow-list at the HTTP,
 LiveView, CLI, or API boundary instead of serializing the full snapshot by
 default.
 
-`Squidie.ReadModel.Visibility.redact/2` and
-`Squidie.ReadModel.Visibility.redact/3` provide the built-in projection
+`Jizoku.ReadModel.Visibility.redact/2` and
+`Jizoku.ReadModel.Visibility.redact/3` provide the built-in projection
 helper for that boundary. For comprehensive documentation on actor visibility
 and redaction patterns, see the [Actor Visibility Guide](./actor_visibility.md). The helper accepts an existing listing summary,
 inspection snapshot, graph inspection, timeline, or explanation diagnostic plus
@@ -72,22 +72,22 @@ form accepts a host policy. Policies may return `:external`, `:operator`, or
 operator views keep high-level runtime status and current/manual task shape
 without payloads, command history, claim metadata, or attempt results.
 The helper also applies conservative nested redaction to JSON-ready maps, which
-is useful after calling `Squidie.Runs.GraphInspection.to_map/1`.
+is useful after calling `Jizoku.Runs.GraphInspection.to_map/1`.
 
 ```elixir
-defmodule MyApp.SquidieVisibility do
+defmodule MyApp.JizokuVisibility do
   def visibility_scope(%{role: :auditor}, _view), do: :auditor
   def visibility_scope(%{role: :support}, _view), do: :operator
   def visibility_scope(_actor, _view), do: :external
 end
 
-{:ok, snapshot} = Squidie.inspect_run(run_id, include_history: true)
+{:ok, snapshot} = Jizoku.inspect_run(run_id, include_history: true)
 
 {:ok, visible_snapshot} =
-  Squidie.ReadModel.Visibility.redact(
+  Jizoku.ReadModel.Visibility.redact(
     snapshot,
     current_actor,
-    MyApp.SquidieVisibility
+    MyApp.JizokuVisibility
   )
 ```
 
@@ -148,7 +148,7 @@ For dashboards, start with `list_runs/2`, then inspect selected runs with
 history only when the caller needs detailed attempts or audit evidence.
 Use `inspect_continuation_chain/2` only when an operator explicitly needs more
 than the immediate continuation edge, and keep `max_hops` bounded.
-Deadline alerting belongs at the host boundary: use Squidie's deadline state
+Deadline alerting belongs at the host boundary: use Jizoku's deadline state
 as durable evidence, then route notifications or operator actions through the
 host application's policy and authorization layer.
 
@@ -200,13 +200,13 @@ edges. It is useful when a host UI needs to show:
 - dependency edges and pending joins
 - manual-state detail when history is included
 
-For JSON or LiveView boundaries, call `Squidie.Runs.GraphInspection.to_map/1`
+For JSON or LiveView boundaries, call `Jizoku.Runs.GraphInspection.to_map/1`
 after applying the host app's authorization and redaction policy. See
 [Graph inspection contract](graph_inspection.md) for the stable map shape.
 
 ## Logs
 
-Squidie emits application logs only for explicit built-in `:log` workflow
+Jizoku emits application logs only for explicit built-in `:log` workflow
 steps. It does not currently attach automatic logger metadata such as `run_id`,
 `workflow`, `step`, or `attempt` to every runtime log.
 
@@ -215,24 +215,24 @@ with its own logger metadata:
 
 ```elixir
 Logger.metadata(queue: queue, worker: worker_id)
-Squidie.execute_next(queue: queue, owner_id: worker_id)
+Jizoku.execute_next(queue: queue, owner_id: worker_id)
 ```
 
 For step-specific external calls, prefer logging at the host boundary or inside
-native `Squidie.Step` modules, and avoid logging secrets, claim tokens,
+native `Jizoku.Step` modules, and avoid logging secrets, claim tokens,
 payloads, or raw provider responses.
 
 ## Runtime Telemetry
 
-`Squidie.Telemetry.events/0` returns every public event. There are four span
+`Jizoku.Telemetry.events/0` returns every public event. There are four span
 boundaries:
 
 | Operation | Event prefix |
 | --- | --- |
-| Runtime command application | `[:squidie, :runtime, :command, :apply]` |
-| Worker execution poll | `[:squidie, :runtime, :executor, :execute_next]` |
-| Actual step invocation | `[:squidie, :runtime, :step, :execute]` |
-| External Jido signal delivery | `[:squidie, :runtime, :jido_signal, :deliver]` |
+| Runtime command application | `[:jizoku, :runtime, :command, :apply]` |
+| Worker execution poll | `[:jizoku, :runtime, :executor, :execute_next]` |
+| Actual step invocation | `[:jizoku, :runtime, :step, :execute]` |
+| External Jido signal delivery | `[:jizoku, :runtime, :jido_signal, :deliver]` |
 
 Each prefix emits `:start` followed by either `:stop` or `:exception`:
 
@@ -258,7 +258,7 @@ The runtime also emits these committed lifecycle point events:
 | Control and branching | `:manual, :paused`; `:manual, :resolved`; `:child, :started`; `:dynamic_work, :recorded` |
 | Jido signal outbox | `:jido_signal, :enqueued`; `:jido_signal, :delivered` |
 
-All point names start with `[:squidie, :runtime]`. Point measurements are
+All point names start with `[:jizoku, :runtime]`. Point measurements are
 `%{count: 1, system_time: integer}`. One `:runnable, :planned` event is emitted
 for each runnable in a committed planning fact. A failed attempt that durably
 schedules a retry emits both `:attempt, :failed` and
@@ -278,12 +278,12 @@ available. The complete allowlist is:
 - Jido delivery fields: `outbox_id` and `route`
 
 Metadata values are atoms, integers, or valid non-empty strings of at most 255
-bytes. Squidie drops every non-allowlisted or invalid value. In particular,
+bytes. Jizoku drops every non-allowlisted or invalid value. In particular,
 events never publish workflow payloads, step inputs or results, raw errors,
 arbitrary command/manual metadata, actors, comments, claim or owner values,
 idempotency keys, credentials, or trace state.
 
-Runtime commands carry an optional W3C-compatible trace. Squidie creates a root
+Runtime commands carry an optional W3C-compatible trace. Jizoku creates a root
 trace at the command boundary when one is missing, preserves it on the run, and
 persists child spans for runnable lineage. Trace IDs are 32 lowercase hexadecimal
 characters and span IDs are 16; all-zero identifiers are rejected. A runnable
@@ -293,13 +293,13 @@ Successors, retries, deferred continuations, compensation, child work, and
 dynamic work receive persisted child spans. Replay starts a fresh command
 lineage rather than inheriting the source run's trace.
 
-`Squidie.Runtime.Signal.JidoAdapter` preserves the Jido/CloudEvents envelope ID
+`Jizoku.Runtime.Signal.JidoAdapter` preserves the Jido/CloudEvents envelope ID
 and carries trace correlation through the Jido `"correlation"` extension. It
 does not rely on process-dictionary trace state.
 
 ### Metrics And Cardinality
 
-`Squidie.Telemetry.metrics/0` returns reporter-neutral `Telemetry.Metrics`
+`Jizoku.Telemetry.metrics/0` returns reporter-neutral `Telemetry.Metrics`
 definitions for span durations and exceptions plus command, run, runnable, and
 selected attempt counters. The defaults use bounded tags such as `workflow`,
 `step`, `queue`, `status`, `command_type`, and `outcome`. Correlation fields
@@ -307,7 +307,7 @@ such as `run_id`, `signal_id`, `runnable_key`, and trace IDs are never built-in
 metric tags.
 
 Partition can be high-cardinality in multi-tenant systems, so it is excluded
-from the defaults. Use `Squidie.Telemetry.partition_metrics/0` only when the
+from the defaults. Use `Jizoku.Telemetry.partition_metrics/0` only when the
 host has reviewed and accepted that cardinality. High-volume heartbeat,
 claimed-attempt, manual, child, and dynamic-work events remain available for
 custom metrics but are not in the recommended default set.
@@ -316,7 +316,7 @@ A host metrics module can expose the definitions to its selected reporter:
 
 ```elixir
 def metrics do
-  application_metrics() ++ Squidie.Telemetry.metrics()
+  application_metrics() ++ Jizoku.Telemetry.metrics()
 end
 ```
 
@@ -330,31 +330,31 @@ successful journal append. Conflicts, stale claims, semantic duplicate no-ops,
 checkpoint writes, projection rebuilds, and replaying source history do not
 emit lifecycle points. Append batches preserve event order.
 
-For a Squidie-owned `transaction: :repo` step, completion-related event intents
+For a Jizoku-owned `transaction: :repo` step, completion-related event intents
 are buffered until the outer Ecto transaction commits. A rollback, returned
 transaction error, raise, throw, or exit discards them. On success, buffered
 points flush before the enclosing executor `:stop` event. Heartbeats use their
 own storage path and are not held behind the step transaction.
 
 These guarantees do not extend through an arbitrary caller-owned outer
-`Repo.transaction/1` that Squidie does not control. Telemetry handlers are also
+`Repo.transaction/1` that Jizoku does not control. Telemetry handlers are also
 best-effort: handler failures do not change runtime results, and a VM crash
-after commit but before emission can lose an event. Squidie does not guarantee
+after commit but before emission can lose an event. Jizoku does not guarantee
 exactly-once telemetry delivery; use journal-backed read models for durable
 reconciliation or add a host-owned durable outbox when that guarantee is
 required.
 
 ### Host Telemetry
 
-Host applications may add their own spans around Squidie calls when they need
+Host applications may add their own spans around Jizoku calls when they need
 application-specific dimensions:
 
 ```elixir
 :telemetry.span(
-  [:my_app, :squidie, :execute_next],
+  [:my_app, :jizoku, :execute_next],
   %{queue: queue, worker: worker_id},
   fn ->
-    result = Squidie.execute_next(queue: queue, owner_id: worker_id)
+    result = Jizoku.execute_next(queue: queue, owner_id: worker_id)
     {result, %{result: elem(result, 0)}}
   end
 )

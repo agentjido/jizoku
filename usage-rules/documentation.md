@@ -1,4 +1,4 @@
-# Squidie Documentation Usage Rules
+# Jizoku Documentation Usage Rules
 
 ## Manual Structure
 
@@ -11,7 +11,7 @@
 ## Current Language
 
 - Describe the runtime as Jido-native and journal-backed.
-- Describe step execution as pulled through `Squidie.execute_next/1`.
+- Describe step execution as pulled through `Jizoku.execute_next/1`.
 - Describe Bedrock as the recommended reference backend for backend-owned
   leases.
 - Describe storage as adapter-shaped and database-agnostic, while explaining

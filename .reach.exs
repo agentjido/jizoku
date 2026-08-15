@@ -10,10 +10,10 @@
   ],
   tests: [
     hints: [
-      {"lib/squidie/runtime/**", ["test/squidie/runtime/**"]},
-      {"lib/squidie/workflow/**", ["test/squidie/workflow/**"]},
-      {"lib/squidie/read_model/**", ["test/squidie/read_model/**"]},
-      {"lib/squidie/tools/**", ["test/squidie/tools/**"]}
+      {"lib/jizoku/runtime/**", ["test/jizoku/runtime/**"]},
+      {"lib/jizoku/workflow/**", ["test/jizoku/workflow/**"]},
+      {"lib/jizoku/read_model/**", ["test/jizoku/read_model/**"]},
+      {"lib/jizoku/tools/**", ["test/jizoku/tools/**"]}
     ]
   ]
 ]

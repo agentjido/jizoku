@@ -1,4 +1,4 @@
-# Squidie Runtime Usage Rules
+# Jizoku Runtime Usage Rules
 
 ## Journal Runtime
 
@@ -36,7 +36,7 @@
 - Normalize raw `Jido.Instruction` values only through executable dynamic work.
   Require an explicit applied origin, resolve the action module through exactly
   one enabled registry key, persist the instruction ID as dynamic identity, and
-  let trusted Squidie attempt context override instruction context.
+  let trusted Jizoku attempt context override instruction context.
 - Treat dynamic edges as inspection metadata until dependency-ordered dynamic
   scheduling is explicitly implemented.
 - Treat scheduled dynamic nodes as replay-unsafe by default unless a future
@@ -49,9 +49,9 @@
 
 ## Execution
 
-- Execute visible work through `Squidie.execute_next/1`.
+- Execute visible work through `Jizoku.execute_next/1`.
 - Use a stable `owner_id` for workers when possible.
-- Use `heartbeat_interval_ms` on `Squidie.execute_next/1` for long-running
+- Use `heartbeat_interval_ms` on `Jizoku.execute_next/1` for long-running
   steps that may exceed the journal claim lease window. Keep intervals at or
   above the runtime minimum and large enough to avoid unnecessary journal write
   volume.
@@ -73,7 +73,7 @@
 - Previewing or recording dynamic work must not schedule dispatch attempts,
   change dependency readiness, or mutate terminal-state decisions.
 - Scheduling dynamic work must use durable planned runnable intents and the
-  normal `Squidie.execute_next/1` claim, completion, failure, and application
+  normal `Jizoku.execute_next/1` claim, completion, failure, and application
   path.
 - Dynamic node retry must be persisted in the planned runnable metadata; do not
   recover retry behavior from current host code alone.
@@ -84,15 +84,15 @@
 
 ## Runtime Command Signals
 
-- Treat `Squidie.Runtime.Signal` as the Squidie-native command envelope for
+- Treat `Jizoku.Runtime.Signal` as the Jizoku-native command envelope for
   runtime control.
-- Public control APIs and `Squidie.apply_signal/2` must apply signals through
+- Public control APIs and `Jizoku.apply_signal/2` must apply signals through
   the journal runtime, including starts, cron starts, replays, cancellation, and
   manual controls.
 - Pass recognized command `Jido.Signal` envelopes from agents, routers, or
-  other Jido primitives directly to `Squidie.apply_signal/2`. Use
-  `Squidie.Runtime.Signal.JidoAdapter` for outbound conversion. Route arbitrary
-  domain signals only through a host-owned `Squidie.Jido.SignalResolver` that
+  other Jido primitives directly to `Jizoku.apply_signal/2`. Use
+  `Jizoku.Runtime.Signal.JidoAdapter` for outbound conversion. Route arbitrary
+  domain signals only through a host-owned `Jizoku.Jido.SignalResolver` that
   returns a closed start or run-control command.
 - Preserve runtime routing authority outside resolvers. Resolver output cannot
   select storage, queues, dispatch adapters, or modules derived from signal
@@ -116,7 +116,7 @@
 - Emit lifecycle point events only from successful journal appends, in append
   order. Rebuilds, checkpoints, conflicts, stale operations, and duplicate
   no-ops must not emit lifecycle points.
-- Buffer completion event intents inside Squidie-owned Ecto step transactions;
+- Buffer completion event intents inside Jizoku-owned Ecto step transactions;
   flush after commit and discard on rollback or non-local exit.
 - Keep telemetry metadata on the public allowlist. Never emit payloads,
   results, raw errors, arbitrary metadata, claim/owner values, idempotency keys,
@@ -128,7 +128,7 @@
 
 ## Storage
 
-- Keep `Squidie.Runtime.Journal.Storage` as the Squidie-owned storage
+- Keep `Jizoku.Runtime.Journal.Storage` as the Jizoku-owned storage
   boundary.
 - Treat `:partition` as part of every durable workflow identity. Scope run,
   dispatch, workflow-index, global-catalog, and checkpoint keys together; never

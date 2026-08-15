@@ -1,9 +1,9 @@
 # Durable Dispatch Protocol
 
-Squidie's journal-backed runtime treats dispatch state as an append-only journal.
+Jizoku's journal-backed runtime treats dispatch state as an append-only journal.
 The protocol and pure projection are storage-independent, and
-`Squidie.Runtime.Journal` persists the same entries through
-`Squidie.Runtime.Journal.Storage`, which currently delegates to `Jido.Storage`
+`Jizoku.Runtime.Journal` persists the same entries through
+`Jizoku.Runtime.Journal.Storage`, which currently delegates to `Jido.Storage`
 thread journals and checkpoints.
 
 ## Threads
@@ -16,17 +16,17 @@ thread journals and checkpoints.
 - Run index thread: rebuildable lookup entries for finding runs by workflow or
   host-facing keys.
 
-`Squidie.Runtime.Journal` maps those logical threads to Jido thread IDs such
-as `squidie:run:<run-id>`, `squidie:dispatch:<queue>`, and
-`squidie:run_index:<workflow>`. Runtime entries keep the Squidie protocol
+`Jizoku.Runtime.Journal` maps those logical threads to Jido thread IDs such
+as `jizoku:run:<run-id>`, `jizoku:dispatch:<queue>`, and
+`jizoku:run_index:<workflow>`. Runtime entries keep the Jizoku protocol
 type as the Jido entry kind and store the protocol data as the entry payload, so
 projections can be rebuilt from the thread after process restart.
 
 ## Journal Storage Boundary
 
 The journal boundary accepts any configured storage adapter through
-`Squidie.Runtime.Journal.Storage`. Today that boundary delegates to
-`Jido.Storage`, but Squidie runtime modules depend on the Squidie-owned
+`Jizoku.Runtime.Journal.Storage`. Today that boundary delegates to
+`Jido.Storage`, but Jizoku runtime modules depend on the Jizoku-owned
 boundary so the core protocol can stay database-agnostic as the Jido-native
 runtime evolves.
 
@@ -35,10 +35,10 @@ option, return `{:error, :conflict}` for stale appends, and store projection
 checkpoints with the exact thread revision they cover. Checkpoints are rebuild
 accelerators; the append-only thread remains the source of truth.
 
-The storage-backed slices prove the Squidie protocol can persist and restore
+The storage-backed slices prove the Jizoku protocol can persist and restore
 dispatch projections through `Jido.Storage`. Host apps can now configure the
 Jido-native runtime, projection read model, journal storage adapter, and queue at
-the Squidie boundary so start, execution, inspection, and manual controls use
+the Jizoku boundary so start, execution, inspection, and manual controls use
 the journal path without per-call runtime options.
 
 ## Journal Runtime Support
@@ -46,9 +46,9 @@ the journal path without per-call runtime options.
 The journal runtime is built around append-only facts, rebuildable Jido agents,
 and optional checkpoints:
 
-- `Squidie.Runtime.WorkflowAgent` and `Squidie.Runtime.DispatchAgent` are
+- `Jizoku.Runtime.WorkflowAgent` and `Jizoku.Runtime.DispatchAgent` are
   `Jido.Agent` modules whose state can be rebuilt from journal entries.
-- `Squidie.Runtime.Journal.Storage` is the Squidie-owned boundary that
+- `Jizoku.Runtime.Journal.Storage` is the Jizoku-owned boundary that
   validates storage config before delegating to a `Jido.Storage` adapter.
 - Run threads record workflow lifecycle facts, planned runnables, applied
   runnables, child-run lineage, manual pauses or resolutions, and terminal
@@ -66,8 +66,8 @@ and optional checkpoints:
   of truth.
 
 The Postgres-backed adapter,
-`Squidie.Runtime.Journal.Storage.Ecto`, persists Jido thread entries and
-checkpoints in Squidie tables installed through the host migration. Appends
+`Jizoku.Runtime.Journal.Storage.Ecto`, persists Jido thread entries and
+checkpoints in Jizoku tables installed through the host migration. Appends
 lock the thread row, honor Jido's `:expected_rev` option, and assign stable
 per-thread sequence numbers before writing entries. The example host app smoke
 path now exercises `Squid -> journal runtime -> Jido agents -> Ecto/Postgres`
@@ -110,10 +110,10 @@ not mean every database is an equally good fit. A backend that cannot provide
 atomic per-thread append, deterministic ordering, conflict detection, and
 durable checkpoint reads would need extra coordination or should not be used as
 a production journal backend. The recommended Postgres-compatible path is
-`Squidie.Runtime.Journal.Storage.Ecto`, which satisfies the Jido storage
-callbacks through the host repo and Squidie journal tables. A future
+`Jizoku.Runtime.Journal.Storage.Ecto`, which satisfies the Jido storage
+callbacks through the host repo and Jizoku journal tables. A future
 Bedrock-backed storage path should implement the same journal storage contract
-where Bedrock is available. Squidie should not introduce a second
+where Bedrock is available. Jizoku should not introduce a second
 persistence contract for those stores; adapters only need to satisfy the
 journal storage boundary.
 
@@ -126,7 +126,7 @@ projection can still rediscover the visible attempt after restart. Duplicate
 runnable intent entries are idempotent when their scheduled fields match;
 conflicting entries for the same `runnable_key` are anomalies.
 
-`Squidie.Runtime.DispatchNotifier` is the live wakeup boundary. Dispatch
+`Jizoku.Runtime.DispatchNotifier` is the live wakeup boundary. Dispatch
 scheduling first appends `:attempt_scheduled`; only after that commit succeeds
 may a configured notifier emit a live hint to a worker, agent, signal router, or
 other host-owned delivery surface. Successful notifications append
@@ -136,12 +136,12 @@ back scheduling because durable dispatch state remains authoritative.
 If a crash happens after the workflow run thread records planned runnables but
 before the dispatch thread records matching `attempt_scheduled` entries, rebuilt
 agents can recover through
-`Squidie.Runtime.WorkflowAgent.schedule_pending_dispatches/4`. The workflow
+`Jizoku.Runtime.WorkflowAgent.schedule_pending_dispatches/4`. The workflow
 agent derives planned-but-unscheduled runnables from the run projection, and the
 dispatch agent appends the missing dispatch intents with its current dispatch
 thread revision as the optimistic fence.
 
-`Squidie.Runtime.AgentRecovery.recover/4` is the restart coordinator for the
+`Jizoku.Runtime.AgentRecovery.recover/4` is the restart coordinator for the
 current Jido-native agent slices. It rebuilds the run's workflow agent and the
 queue's dispatch agent, schedules planned-but-missing dispatch intents first,
 and only then applies completed dispatch results that are still missing from the
@@ -156,7 +156,7 @@ do.
 
 ## Backend Lease Alignment
 
-Squidie models workflow-specific facts, but its dispatch vocabulary is
+Jizoku models workflow-specific facts, but its dispatch vocabulary is
 designed to map to durable queue and lease backends:
 
 - `attempt_scheduled` maps to an enqueued durable work item.
@@ -167,12 +167,12 @@ designed to map to durable queue and lease backends:
 - `attempt_heartbeat`, `attempt_completed`, and `attempt_failed` require the
   current claim fence.
 
-Squidie should integrate through backend adapters rather than make durable
+Jizoku should integrate through backend adapters rather than make durable
 queue systems depend on Squid-specific workflow concepts. The adapter can map
 Squid runnables to backend work items and translate lifecycle signals back into
 the projection. Bedrock is the recommended reference backend today because the
 example app exercises durable queueing, delayed visibility, claims, heartbeats,
-completion, retry, and dead-letter behavior. The Squidie core protocol
+completion, retry, and dead-letter behavior. The Jizoku core protocol
 remains backend-neutral so host applications can still provide another backend
 with equivalent lease and recovery semantics.
 
@@ -180,7 +180,7 @@ with equivalent lease and recovery semantics.
 
 The protocol does not assume Oban, Broadway, Bedrock, or a custom process as
 the delivery mechanism. A runner may wake, claim, execute, retry, or redeliver
-work, but Squidie treats the journal as authoritative for intent, claim,
+work, but Jizoku treats the journal as authoritative for intent, claim,
 lease, fencing, completion, failure, and retry visibility.
 
 ## Claims, Leases, And Heartbeats
@@ -195,11 +195,11 @@ expired; active claim takeover is an anomaly. Claims are valid only after the
 attempt's `visible_at`, and heartbeat, completion, and failure facts are valid
 only before the current lease expires.
 
-`Squidie.Runtime.DispatchAgent.claim_next/4`,
-`Squidie.Runtime.DispatchAgent.heartbeat/6`,
-`Squidie.Runtime.DispatchAgent.complete/7`, and
-`Squidie.Runtime.DispatchAgent.fail/7` are the current durable claim lifecycle
-boundaries for the Jido-native runtime work. `Squidie.execute_next/1` owns the
+`Jizoku.Runtime.DispatchAgent.claim_next/4`,
+`Jizoku.Runtime.DispatchAgent.heartbeat/6`,
+`Jizoku.Runtime.DispatchAgent.complete/7`, and
+`Jizoku.Runtime.DispatchAgent.fail/7` are the current durable claim lifecycle
+boundaries for the Jido-native runtime work. `Jizoku.execute_next/1` owns the
 claim token after claiming work. When called with `heartbeat_interval_ms: n`, the
 executor heartbeats the active claim until the step completes, fails, or the
 executor exits. Claiming selects the next visible or expired attempt from a
@@ -212,7 +212,7 @@ API returns a lifecycle update map containing the updated `:agent`, the lifecycl
 available at `agent.state.projection`; concurrent stale callers receive
 `{:error, :conflict}` from the journal append.
 
-Backend-owned lease integration remains dependency-free at the Squidie core
+Backend-owned lease integration remains dependency-free at the Jizoku core
 layer. Bedrock is the recommended reference backend, but the protocol only
 requires the lease, heartbeat, conflict, retry, and recovery semantics described
 above.
@@ -224,13 +224,13 @@ Duplicate completion entries with the same claim and result are idempotent.
 Conflicting or stale completions are ignored and reported as anomalies. Retry
 scheduling is a durable fact with its own `visible_at`, so retry visibility
 survives restart. A runnable result can be applied to the run thread only after
-the matching completion is durable. `Squidie.Runtime.WorkflowAgent.apply_result/4`
+the matching completion is durable. `Jizoku.Runtime.WorkflowAgent.apply_result/4`
 is the current run-thread apply boundary: it accepts a completed dispatch
 attempt, validates that the runnable belongs to the rebuilt workflow projection,
 and appends `:runnable_applied` with an optimistic run-thread fence. Duplicate
 application of an already-applied runnable is idempotent.
 
-`Squidie.Runtime.WorkflowAgent.apply_pending_results/4` is the restart
+`Jizoku.Runtime.WorkflowAgent.apply_pending_results/4` is the restart
 recovery boundary for lost live wakeups: rebuilt workflow and dispatch agents
 derive completed-but-unapplied attempts from their durable projections and append
 the missing run-thread applications in order, using the latest run-thread fence
@@ -239,8 +239,8 @@ after each append.
 ## Child Run Lineage
 
 Dynamic child workflow starts are run-thread facts. A native step calls
-`Squidie.start_child_run/4` or `Squidie.start_child_run/5` with its
-`Squidie.Step.Context` and a required `child_key`. The runtime derives child
+`Jizoku.start_child_run/4` or `Jizoku.start_child_run/5` with its
+`Jizoku.Step.Context` and a required `child_key`. The runtime derives child
 identity from the parent run id, parent step, child workflow, child trigger, and
 child key.
 

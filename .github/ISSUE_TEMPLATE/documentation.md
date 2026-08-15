@@ -1,6 +1,6 @@
 ---
 name: Documentation
-about: Suggest improvements or report issues in Squidie documentation
+about: Suggest improvements or report issues in Jizoku documentation
 labels: documentation
 ---
 

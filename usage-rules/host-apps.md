@@ -1,11 +1,11 @@
-# Squidie Host App Usage Rules
+# Jizoku Host App Usage Rules
 
 ## Configuration
 
-- Configure Squidie with the host repo and queue:
+- Configure Jizoku with the host repo and queue:
 
   ```elixir
-  config :squidie,
+  config :jizoku,
     repo: MyApp.Repo,
     partition: "tenant_acme",
     queue: "default"
@@ -23,7 +23,7 @@
 
 ## Worker Loop
 
-- Start one or more supervised workers that call `Squidie.execute_next/1`.
+- Start one or more supervised workers that call `Jizoku.execute_next/1`.
 - Back off briefly when `execute_next/1` returns `{:ok, :none}`.
 - Add metrics, capacity limits, and shutdown behavior around the public call
   rather than inside workflow modules.
@@ -34,8 +34,8 @@
 
 - Declare cron triggers in workflow modules.
 - Keep recurring scheduling in the host app.
-- Deliver cron activations with `Squidie.Executor.Payload.cron/3` and
-  `Squidie.Runtime.Runner.perform/2`.
+- Deliver cron activations with `Jizoku.Executor.Payload.cron/3` and
+  `Jizoku.Runtime.Runner.perform/2`.
 - Include `signal_id` or a complete `intended_window` for idempotent cron
   triggers.
 - Preserve the active `:partition` in durable cron payloads.
@@ -43,8 +43,8 @@
 
 ## Runtime Commands
 
-- Host API and operator boundaries may build `Squidie.Runtime.Signal` values
-  and pass them to `Squidie.apply_signal/2`.
+- Host API and operator boundaries may build `Jizoku.Runtime.Signal` values
+  and pass them to `Jizoku.apply_signal/2`.
 - Attach host-owned metadata and idempotency keys for externally delivered
   commands so duplicate delivery and operator audit history are explicit.
 - Preserve the active partition when constructing or adapting signals; a
@@ -52,24 +52,24 @@
 - Assert `command_history` in integration tests for cancel, resume, approval,
   rejection, replay, and scheduler-driven starts.
 - Convert outbound commands to raw `Jido.Signal` only through
-  `Squidie.Runtime.Signal.JidoAdapter`. Pass recognized inbound Jido command
-  envelopes directly to `Squidie.apply_signal/2`. Route domain signals through
-  an allowlisted `Squidie.Jido.SignalResolver`; keep workflow modules and
+  `Jizoku.Runtime.Signal.JidoAdapter`. Pass recognized inbound Jido command
+  envelopes directly to `Jizoku.apply_signal/2`. Route domain signals through
+  an allowlisted `Jizoku.Jido.SignalResolver`; keep workflow modules and
   lifecycle command selection in trusted host code.
 - Do not let resolvers accept storage, queue, runtime, dispatch, or module names
-  from signal payloads. Squidie keeps those choices at the host call boundary.
+  from signal payloads. Jizoku keeps those choices at the host call boundary.
 - Treat CloudEvents source and ID as one identity. Reusing that pair is an exact
   delivery retry and reuses the first durable resolver decision; send a new ID
   for a new domain event.
-- Authorize inbound Jido commands before calling Squidie. Their CloudEvents
+- Authorize inbound Jido commands before calling Jizoku. Their CloudEvents
   source is persisted as audit provenance and is not an authorization grant.
 
 ## Read-Model Visibility
 
 - Authorize run listing, inspection, graph, and explanation calls at the host
   boundary.
-- Use `Squidie.ReadModel.Visibility.redact/2` for default external-safe views
-  or `Squidie.ReadModel.Visibility.redact/3` with a host policy when exposing
+- Use `Jizoku.ReadModel.Visibility.redact/2` for default external-safe views
+  or `Jizoku.ReadModel.Visibility.redact/3` with a host policy when exposing
   read-model data to actor-scoped UI, API, or CLI surfaces.
 - Treat `:auditor` visibility as privileged; it preserves full snapshots and
   diagnostics.
@@ -81,7 +81,7 @@
 
 ## Observability
 
-- Use `Squidie.Telemetry.metrics/0` for the recommended metric definitions;
+- Use `Jizoku.Telemetry.metrics/0` for the recommended metric definitions;
   use `partition_metrics/0` only after reviewing partition cardinality.
 - Keep telemetry reporters, exporters, dashboards, alerts, sampling, and
   structured logger integration in the host app.

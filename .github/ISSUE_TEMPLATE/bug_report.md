@@ -1,12 +1,12 @@
 ---
 name: Bug Report
-about: Report a bug in Squidie
+about: Report a bug in Jizoku
 labels: bug
 ---
 
 ## Environment
 
-- Squidie version:
+- Jizoku version:
 - Elixir & Erlang/OTP versions (output of `elixir --version`):
 - Operating system:
 - Database (PostgreSQL version):
