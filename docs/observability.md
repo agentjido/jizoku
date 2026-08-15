@@ -183,6 +183,9 @@ adapter options, and adapter errors are excluded. The timeline adds
 an acknowledgement the same timestamp as terminalization, the stable tie order
 keeps the post-terminal acknowledgement after `:run_terminal`.
 
+Signal IDs and route names are structural debugging fields, not secret-bearing
+fields. Hosts should keep both opaque and free of personal or sensitive data.
+
 Use this for incident pages, CLI output, and support views where raw journal
 facts would be too noisy.
 

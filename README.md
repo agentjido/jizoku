@@ -782,6 +782,9 @@ Emit delivery is host-owned and at-least-once. Squidie persists the signal and
 route before dispatch, then records an acknowledgement after the adapter
 accepts it. Keep the signal ID stable and deduplicate it at the consumer:
 
+Signal IDs and route names appear in operator diagnostics and metrics. Keep
+them opaque and free of secrets or personal data.
+
 ```elixir
 config :squidie,
   jido_emit_effects: :enabled,
