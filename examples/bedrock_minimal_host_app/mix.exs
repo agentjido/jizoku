@@ -26,8 +26,8 @@ defmodule BedrockMinimalHostApp.MixProject do
   defp deps do
     [
       {:bypass, "~> 2.1", only: :test},
-      {:bedrock, "~> 0.4.0"},
-      {:bedrock_job_queue, github: "bedrock-kv/job_queue"},
+      {:bedrock, "~> 0.5.2"},
+      {:bedrock_job_queue, "~> 0.3.0"},
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22.2"},
       {:squidie, path: "../.."},

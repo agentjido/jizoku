@@ -315,6 +315,20 @@ It runs distinct `node-a` and `node-b` owners against one Postgres-backed
 journal queue and covers claim contention, heartbeat renewal, expired takeover,
 stale completion and failure, operator evidence, and terminal fencing.
 
+Hosts using Bedrock Job Queue can verify the separate delivery-lease boundary
+through the Bedrock example:
+
+```sh
+cd examples/bedrock_minimal_host_app
+MIX_ENV=test mix test test/bedrock_multi_node_consumer_test.exs
+```
+
+That proof runs two independently identified Bedrock consumer managers against
+one queue. It verifies exclusive dispatch, automatic backend lease renewal,
+continued invisibility after the original lease expires, and completion from a
+manager whose initial lease snapshot became stale after renewal. Squidie's
+journal claim remains a separate fence inside the delivered job.
+
 ## Cron Payload Contract
 
 Cron starts are the `Squidie.Executor` payload boundary. Hosts

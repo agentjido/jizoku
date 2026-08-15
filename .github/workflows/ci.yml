@@ -208,7 +208,7 @@ jobs:
         run: mix compile --warnings-as-errors
 
       - name: Run Bedrock stress coverage
-        run: MIX_ENV=test mix test test/bedrock_job_queue_stress_test.exs
+        run: MIX_ENV=test mix test test/bedrock_job_queue_stress_test.exs test/bedrock_multi_node_consumer_test.exs
 
   credo:
     name: Code Quality (Credo)

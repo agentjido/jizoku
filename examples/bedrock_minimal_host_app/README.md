@@ -50,7 +50,7 @@ Bedrock storage or a real cluster topology.
 Run the Bedrock job queue stress coverage:
 
 ```sh
-MIX_ENV=test mix test test/action_registry_test.exs test/bedrock_job_queue_stress_test.exs test/bedrock_minimal_host_app/squidie_lease_adapter_test.exs
+MIX_ENV=test mix test test/action_registry_test.exs test/bedrock_job_queue_stress_test.exs test/bedrock_multi_node_consumer_test.exs test/bedrock_minimal_host_app/squidie_lease_adapter_test.exs
 ```
 
 The stress test covers:
@@ -61,6 +61,9 @@ The stress test covers:
 - priority ordering
 - delayed job visibility
 - leasing and lease extension
+- two independently identified consumers contending for one queued job without
+  duplicate dispatch, including automatic lease renewal and stale-lease
+  completion
 - retry requeue and dead-letter behavior
 - Squidie cron payloads being mapped into Bedrock jobs
 - the `Squidie.Executor.Leases` contract through a Bedrock-backed example

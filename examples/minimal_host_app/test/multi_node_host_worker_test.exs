@@ -184,6 +184,13 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
     assert count_entries(entries, :attempt_claimed) == 2
     assert count_entries(entries, :attempt_completed) == 1
     assert count_entries(entries, :attempt_failed) == 0
+
+    run_entries = run_entries!(run.run_id)
+    assert count_entries(run_entries, :runnable_applied) == 1
+    assert count_entries(run_entries, :run_terminal) == 1
+
+    assert %{probe: %{id: "stale-completion", status: "completed"}} =
+             find_entry!(run_entries, :runnable_applied).data.result
   end
 
   test "an expired claim is taken over and stale failure is rejected", %{
@@ -244,6 +251,10 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
     entries = dispatch_entries!()
     assert count_entries(entries, :attempt_completed) == 0
     assert count_entries(entries, :attempt_failed) == 0
+
+    run_entries = run_entries!(run.run_id)
+    assert count_entries(run_entries, :runnable_applied) == 0
+    assert count_entries(run_entries, :run_terminal) == 1
   end
 
   test "terminal failure fences a competing node from later work", %{
@@ -378,6 +389,10 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
     Enum.find(entries, fn entry ->
       entry.type == type and Map.get(entry.data, :claim_id) == claim_id
     end) || flunk("missing #{inspect(type)} entry for claim #{inspect(claim_id)}")
+  end
+
+  defp find_entry!(entries, type) do
+    Enum.find(entries, &(&1.type == type)) || flunk("missing #{inspect(type)} entry")
   end
 
   defp count_entries(entries, type), do: Enum.count(entries, &(&1.type == type))
