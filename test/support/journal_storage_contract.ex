@@ -1,4 +1,4 @@
-defmodule Squidie.JournalStorageContract do
+defmodule Jizoku.JournalStorageContract do
   @moduledoc false
 
   import ExUnit.Assertions
@@ -22,7 +22,7 @@ defmodule Squidie.JournalStorageContract do
       Enum.map(@contract_tests, fn {description, contract_case} ->
         quote do
           test unquote(description), context do
-            Squidie.JournalStorageContract.run(
+            Jizoku.JournalStorageContract.run(
               unquote(contract_case),
               contract_storage(context),
               &contract_run_task/1

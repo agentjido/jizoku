@@ -2,7 +2,7 @@ defmodule MinimalHostApp.WorkflowRuns do
   @moduledoc """
   Application-facing boundary for workflow operations in the example host app.
 
-  A real Phoenix or OTP application would call Squidie from a context or
+  A real Phoenix or OTP application would call Jizoku from a context or
   service like this one rather than directly from controllers or jobs.
   """
 
@@ -68,32 +68,32 @@ defmodule MinimalHostApp.WorkflowRuns do
         }
 
   @type run_result ::
-          Squidie.ReadModel.Inspection.Snapshot.t()
+          Jizoku.ReadModel.Inspection.Snapshot.t()
 
   @type explanation_result ::
-          Squidie.ReadModel.Explanation.Diagnostic.t()
+          Jizoku.ReadModel.Explanation.Diagnostic.t()
 
-  @type listing_result :: Squidie.ReadModel.Listing.Summary.t()
+  @type listing_result :: Jizoku.ReadModel.Listing.Summary.t()
 
   alias MinimalHostApp.Steps
-  alias Squidie.Runtime.Signal
+  alias Jizoku.Runtime.Signal
 
   @spec start_payment_recovery(payment_recovery_attrs()) ::
           {:ok, run_result()} | {:error, term()}
   def start_payment_recovery(attrs) when is_map(attrs) do
-    Squidie.start(MinimalHostApp.Workflows.PaymentRecovery, :payment_recovery, attrs)
+    Jizoku.start(MinimalHostApp.Workflows.PaymentRecovery, :payment_recovery, attrs)
   end
 
   @spec start_cancellable_wait(cancellable_wait_attrs()) ::
           {:ok, run_result()} | {:error, term()}
   def start_cancellable_wait(attrs) when is_map(attrs) do
-    Squidie.start(MinimalHostApp.Workflows.CancellableWait, attrs)
+    Jizoku.start(MinimalHostApp.Workflows.CancellableWait, attrs)
   end
 
   @spec start_retry_verification(retry_verification_attrs()) ::
           {:ok, run_result()} | {:error, term()}
   def start_retry_verification(attrs) when is_map(attrs) do
-    Squidie.start(MinimalHostApp.Workflows.RetryVerification, :retry_verification, attrs)
+    Jizoku.start(MinimalHostApp.Workflows.RetryVerification, :retry_verification, attrs)
   end
 
   @doc """
@@ -102,7 +102,7 @@ defmodule MinimalHostApp.WorkflowRuns do
   @spec start_recurring_cursor(recurring_cursor_attrs(), keyword()) ::
           {:ok, run_result()} | {:error, term()}
   def start_recurring_cursor(attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
-    Squidie.start(
+    Jizoku.start(
       MinimalHostApp.Workflows.RecurringCursor,
       :recurring_cursor,
       attrs,
@@ -113,25 +113,25 @@ defmodule MinimalHostApp.WorkflowRuns do
   @spec start_dependency_recovery(dependency_recovery_attrs()) ::
           {:ok, run_result()} | {:error, term()}
   def start_dependency_recovery(attrs) when is_map(attrs) do
-    Squidie.start(MinimalHostApp.Workflows.DependencyRecovery, :dependency_recovery, attrs)
+    Jizoku.start(MinimalHostApp.Workflows.DependencyRecovery, :dependency_recovery, attrs)
   end
 
   @spec start_manual_approval(manual_approval_attrs()) ::
           {:ok, run_result()} | {:error, term()}
   def start_manual_approval(attrs) when is_map(attrs) do
-    Squidie.start(MinimalHostApp.Workflows.ManualApproval, :manual_approval, attrs)
+    Jizoku.start(MinimalHostApp.Workflows.ManualApproval, :manual_approval, attrs)
   end
 
   @spec start_manual_pause(manual_pause_attrs()) ::
           {:ok, run_result()} | {:error, term()}
   def start_manual_pause(attrs) when is_map(attrs) do
-    Squidie.start(MinimalHostApp.Workflows.ManualPause, :manual_pause, attrs)
+    Jizoku.start(MinimalHostApp.Workflows.ManualPause, :manual_pause, attrs)
   end
 
   @spec start_manual_digest(manual_digest_attrs()) ::
           {:ok, run_result()} | {:error, term()}
   def start_manual_digest(attrs) when is_map(attrs) do
-    Squidie.start(MinimalHostApp.Workflows.DailyDigest, :manual_digest, attrs)
+    Jizoku.start(MinimalHostApp.Workflows.DailyDigest, :manual_digest, attrs)
   end
 
   @doc """
@@ -140,7 +140,7 @@ defmodule MinimalHostApp.WorkflowRuns do
   @spec start_runtime_digest(runtime_digest_attrs(), keyword()) ::
           {:ok, run_result()} | {:error, term()}
   def start_runtime_digest(attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
-    Squidie.start_spec(
+    Jizoku.start_spec(
       runtime_digest_spec(),
       :manual_digest,
       attrs,
@@ -153,7 +153,7 @@ defmodule MinimalHostApp.WorkflowRuns do
   """
   @spec start_saga_checkout(saga_checkout_attrs()) :: {:ok, run_result()} | {:error, term()}
   def start_saga_checkout(attrs) when is_map(attrs) do
-    Squidie.start(MinimalHostApp.Workflows.SagaCheckout, :saga_checkout, attrs)
+    Jizoku.start(MinimalHostApp.Workflows.SagaCheckout, :saga_checkout, attrs)
   end
 
   @doc """
@@ -162,7 +162,7 @@ defmodule MinimalHostApp.WorkflowRuns do
   @spec start_local_ledger_checkout(local_ledger_checkout_attrs()) ::
           {:ok, run_result()} | {:error, term()}
   def start_local_ledger_checkout(attrs) when is_map(attrs) do
-    Squidie.start(
+    Jizoku.start(
       MinimalHostApp.Workflows.LocalLedgerCheckout,
       :local_ledger_checkout,
       attrs
@@ -175,7 +175,7 @@ defmodule MinimalHostApp.WorkflowRuns do
   @spec start_nested_invite_delivery(nested_invite_delivery_attrs()) ::
           {:ok, run_result()} | {:error, term()}
   def start_nested_invite_delivery(attrs) when is_map(attrs) do
-    Squidie.start(
+    Jizoku.start(
       MinimalHostApp.Workflows.NestedInviteDelivery,
       :nested_invite_delivery,
       attrs
@@ -184,36 +184,36 @@ defmodule MinimalHostApp.WorkflowRuns do
 
   @spec inspect_payment_recovery(Ecto.UUID.t()) :: {:ok, run_result()} | {:error, term()}
   def inspect_payment_recovery(run_id) do
-    Squidie.inspect_run(run_id)
+    Jizoku.inspect_run(run_id)
   end
 
   @spec inspect_run(Ecto.UUID.t(), keyword()) :: {:ok, run_result()} | {:error, term()}
   def inspect_run(run_id, opts \\ []) do
-    Squidie.inspect_run(run_id, opts)
+    Jizoku.inspect_run(run_id, opts)
   end
 
   @spec inspect_continuation_chain(Ecto.UUID.t(), keyword()) ::
-          {:ok, Squidie.ReadModel.ContinuationChain.t()} | {:error, term()}
+          {:ok, Jizoku.ReadModel.ContinuationChain.t()} | {:error, term()}
   def inspect_continuation_chain(run_id, opts \\ []) do
-    Squidie.inspect_continuation_chain(run_id, opts)
+    Jizoku.inspect_continuation_chain(run_id, opts)
   end
 
   @spec schedule_dynamic_work(Ecto.UUID.t(), map() | Jido.Instruction.t(), keyword()) ::
           {:ok, run_result()} | {:error, term()}
   def schedule_dynamic_work(run_id, attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
-    Squidie.schedule_dynamic_work(run_id, attrs, opts)
+    Jizoku.schedule_dynamic_work(run_id, attrs, opts)
   end
 
   @spec explain_run(Ecto.UUID.t()) :: {:ok, explanation_result()} | {:error, term()}
   def explain_run(run_id) do
-    Squidie.explain_run(run_id)
+    Jizoku.explain_run(run_id)
   end
 
   @spec cancel(Ecto.UUID.t()) :: {:ok, run_result()} | {:error, term()}
   def cancel(run_id) do
     with {:ok, signal} <-
            Signal.cancel_run(run_id, metadata: %{source: "minimal_host_app.workflow_runs"}) do
-      Squidie.apply_signal(signal)
+      Jizoku.apply_signal(signal)
     end
   end
 
@@ -223,42 +223,42 @@ defmodule MinimalHostApp.WorkflowRuns do
   @spec resume(Ecto.UUID.t(), map()) :: {:ok, run_result()} | {:error, term()}
   def resume(run_id, attrs) when is_map(attrs) do
     with {:ok, signal} <- Signal.resume_run(run_id, attrs) do
-      Squidie.apply_signal(signal)
+      Jizoku.apply_signal(signal)
     end
   end
 
   @spec approve(Ecto.UUID.t(), map()) :: {:ok, run_result()} | {:error, term()}
   def approve(run_id, attrs) when is_map(attrs) do
     with {:ok, signal} <- Signal.approve_run(run_id, attrs) do
-      Squidie.apply_signal(signal)
+      Jizoku.apply_signal(signal)
     end
   end
 
   @spec reject(Ecto.UUID.t(), map()) :: {:ok, run_result()} | {:error, term()}
   def reject(run_id, attrs) when is_map(attrs) do
     with {:ok, signal} <- Signal.reject_run(run_id, attrs) do
-      Squidie.apply_signal(signal)
+      Jizoku.apply_signal(signal)
     end
   end
 
   @spec replay(Ecto.UUID.t()) :: {:ok, run_result()} | {:error, term()}
   def replay(run_id) do
-    Squidie.replay(run_id)
+    Jizoku.replay(run_id)
   end
 
   @spec list_dependency_recovery_runs(keyword()) :: {:ok, [listing_result()]} | {:error, term()}
   def list_dependency_recovery_runs(opts \\ []) do
-    Squidie.list_runs([workflow: MinimalHostApp.Workflows.DependencyRecovery], opts)
+    Jizoku.list_runs([workflow: MinimalHostApp.Workflows.DependencyRecovery], opts)
   end
 
   @spec list_runs(keyword()) :: {:ok, [listing_result()]} | {:error, term()}
   def list_runs(opts \\ []) do
-    Squidie.list_runs([], opts)
+    Jizoku.list_runs([], opts)
   end
 
   @spec list_daily_digest_runs() :: {:ok, [listing_result()]} | {:error, term()}
   def list_daily_digest_runs do
-    Squidie.list_runs(workflow: MinimalHostApp.Workflows.DailyDigest)
+    Jizoku.list_runs(workflow: MinimalHostApp.Workflows.DailyDigest)
   end
 
   defp runtime_action_registry do

@@ -1,0 +1,12 @@
+defmodule Jizoku.GraphMutation.Preview do
+  @moduledoc """
+  Read-only outcome contract for a proposed graph mutation.
+
+  Applied operations are stored as redacted summaries so the struct is safe for
+  host tooling without another serialization step.
+  """
+
+  use Jizoku.GraphMutation.Outcome,
+    statuses: [:applicable, :duplicate, :invalid],
+    graph_state?: true
+end

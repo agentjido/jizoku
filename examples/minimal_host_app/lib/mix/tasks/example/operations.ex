@@ -1,6 +1,6 @@
 defmodule Mix.Tasks.Example.Operations do
   @moduledoc """
-  Verifies Squidie's operational commands through the example host app.
+  Verifies Jizoku's operational commands through the example host app.
 
   The verification runs both commands without starting the host application's
   supervision tree, decodes their JSON output, and enables the schema-drift
@@ -9,7 +9,7 @@ defmodule Mix.Tasks.Example.Operations do
 
   use Mix.Task
 
-  @shortdoc "Verifies Squidie's operational commands"
+  @shortdoc "Verifies Jizoku's operational commands"
 
   @impl Mix.Task
   def run([]) do
@@ -18,12 +18,12 @@ defmodule Mix.Tasks.Example.Operations do
     Mix.shell(Mix.Shell.Process)
 
     try do
-      status = run_json_task!("squidie.status", ["--json"])
+      status = run_json_task!("jizoku.status", ["--json"])
       validate_status!(status)
       ensure_host_not_started!()
 
       doctor =
-        run_json_task!("squidie.doctor", ["--json", "--fail-on-drift"])
+        run_json_task!("jizoku.doctor", ["--json", "--fail-on-drift"])
 
       validate_doctor!(doctor)
       ensure_host_not_started!()
@@ -31,7 +31,7 @@ defmodule Mix.Tasks.Example.Operations do
       Mix.shell(previous_shell)
     end
 
-    Mix.shell().info("Squidie operational command verification passed.")
+    Mix.shell().info("Jizoku operational command verification passed.")
   end
 
   def run(_args) do
@@ -69,7 +69,7 @@ defmodule Mix.Tasks.Example.Operations do
               is_list(queue_reports),
        do: :ok
 
-  defp validate_status!(_report), do: Mix.raise("unexpected squidie.status JSON contract")
+  defp validate_status!(_report), do: Mix.raise("unexpected jizoku.status JSON contract")
 
   defp validate_doctor!(%{
          "schema_version" => 1,
@@ -79,11 +79,11 @@ defmodule Mix.Tasks.Example.Operations do
        when is_list(checks) and is_integer(pass) and is_integer(warn) and is_integer(fail) do
     case Enum.find(checks, &(&1["id"] == "schema")) do
       %{"status" => "pass", "details" => %{"status" => "current"}} -> :ok
-      _check -> Mix.raise("squidie.doctor did not report the example schema as current")
+      _check -> Mix.raise("jizoku.doctor did not report the example schema as current")
     end
   end
 
-  defp validate_doctor!(_report), do: Mix.raise("unexpected squidie.doctor JSON contract")
+  defp validate_doctor!(_report), do: Mix.raise("unexpected jizoku.doctor JSON contract")
 
   defp ensure_host_not_started! do
     if Process.whereis(MinimalHostApp.Supervisor) do

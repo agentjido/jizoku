@@ -14,13 +14,13 @@ config :minimal_host_app, Oban,
   plugins: [
     {MinimalHostApp.CronPlugin, workflows: [MinimalHostApp.Workflows.DailyDigest]}
   ],
-  queues: [squidie: 5]
+  queues: [jizoku: 5]
 
-config :minimal_host_app, MinimalHostApp.SquidieDeliveryAdapter,
+config :minimal_host_app, MinimalHostApp.JizokuDeliveryAdapter,
   oban_name: Oban,
-  queue: :squidie
+  queue: :jizoku
 
-config :squidie,
+config :jizoku,
   repo: MinimalHostApp.Repo
 
 import_config "#{config_env()}.exs"

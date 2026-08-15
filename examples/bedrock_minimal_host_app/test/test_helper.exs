@@ -43,7 +43,7 @@ end
 Ecto.Migrator.with_repo(BedrockMinimalHostApp.Repo, fn repo ->
   Ecto.Migrator.run(repo, Path.expand("../priv/repo/migrations", __DIR__), :up, all: true)
 
-  Ecto.Migrator.run(repo, Application.app_dir(:squidie, "priv/repo/migrations"), :up, all: true)
+  Ecto.Migrator.run(repo, Application.app_dir(:jizoku, "priv/repo/migrations"), :up, all: true)
 end)
 
 case Node.start(:bedrock_minimal_host_app_test, :shortnames) do

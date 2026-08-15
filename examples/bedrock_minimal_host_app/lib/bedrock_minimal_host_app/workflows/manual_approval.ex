@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Workflows.ManualApproval do
   Example workflow that waits for an explicit operator approval or rejection.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :manual_approval do

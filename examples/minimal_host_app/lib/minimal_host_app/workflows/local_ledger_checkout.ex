@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.LocalLedgerCheckout do
   Example workflow for a same-process local repo transaction group.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :local_ledger_checkout do

@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Steps.CheckGatewayStatus do
   Example step that checks payment gateway state.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :check_gateway_status,
     description: "Checks gateway state",
     input_schema: [
@@ -15,10 +15,10 @@ defmodule MinimalHostApp.Steps.CheckGatewayStatus do
     ]
 
   @impl true
-  @spec run(map(), Squidie.Step.Context.t()) ::
+  @spec run(map(), Jizoku.Step.Context.t()) ::
           {:ok, map()} | {:defer, map(), keyword()} | {:retry, map()}
   def run(%{invoice: invoice, gateway_url: gateway_url}, context) do
-    case Squidie.Tools.invoke(Squidie.Tools.HTTP, %{method: :get, url: gateway_url}) do
+    case Jizoku.Tools.invoke(Jizoku.Tools.HTTP, %{method: :get, url: gateway_url}) do
       {:ok, %{payload: %{status: 202, body: body}}} ->
         {:defer,
          %{
@@ -42,7 +42,7 @@ defmodule MinimalHostApp.Steps.CheckGatewayStatus do
 
       {:error, error} ->
         {:retry,
-         Map.put(Squidie.Tools.Error.to_map(error), :gateway_check, %{
+         Map.put(Jizoku.Tools.Error.to_map(error), :gateway_check, %{
            attempt: attempt_metadata(context)
          })}
     end

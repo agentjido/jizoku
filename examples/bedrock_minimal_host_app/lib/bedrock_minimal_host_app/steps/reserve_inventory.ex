@@ -6,7 +6,7 @@ defmodule BedrockMinimalHostApp.Steps.ReserveInventory do
   if a downstream checkout step fails after retries are exhausted.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :reserve_inventory,
     description: "Reserves inventory for an order",
     input_schema: [

@@ -3,8 +3,8 @@ maybe_put = fn config, key, value ->
 end
 
 repo_config =
-  :squidie
-  |> Application.fetch_env!(Squidie.Test.Repo)
+  :jizoku
+  |> Application.fetch_env!(Jizoku.Test.Repo)
   |> then(fn config ->
     case Keyword.fetch(config, :url) do
       {:ok, url} ->
@@ -38,14 +38,14 @@ case Ecto.Adapters.Postgres.storage_up(repo_config) do
   {:error, term} -> raise "failed to create test database: #{inspect(term)}"
 end
 
-{:ok, _pid} = Squidie.Test.Repo.start_link()
+{:ok, _pid} = Jizoku.Test.Repo.start_link()
 
-Ecto.Migrator.with_repo(Squidie.Test.Repo, fn repo ->
-  Ecto.Migrator.run(repo, Application.app_dir(:squidie, "priv/repo/migrations"), :up, all: true)
+Ecto.Migrator.with_repo(Jizoku.Test.Repo, fn repo ->
+  Ecto.Migrator.run(repo, Application.app_dir(:jizoku, "priv/repo/migrations"), :up, all: true)
 
   Ecto.Migrator.run(repo, Path.expand("support/migrations", __DIR__), :up, all: true)
 end)
 
-Ecto.Adapters.SQL.Sandbox.mode(Squidie.Test.Repo, :manual)
+Ecto.Adapters.SQL.Sandbox.mode(Jizoku.Test.Repo, :manual)
 
 ExUnit.start()

@@ -30,13 +30,13 @@ defmodule MinimalHostApp.MixProject do
       {:jason, "~> 1.4"},
       {:oban, "~> 2.22"},
       {:postgrex, ">= 0.0.0"},
-      {:squidie, path: "../.."}
+      {:jizoku, path: "../.."}
     ]
   end
 
   defp aliases do
     [
-      setup: ["deps.get", "squidie.install", "ecto.setup"],
+      setup: ["deps.get", "jizoku.install", "ecto.setup"],
       "ecto.setup": ["ecto.create", "ecto.migrate"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       smoke: ["run -e 'MinimalHostApp.Smoke.run_all!()'"]

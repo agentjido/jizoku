@@ -6,7 +6,7 @@ defmodule BedrockMinimalHostApp.Steps.StartNestedInvite do
   same behavior after VM restart and does not depend on process-local state.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :start_nested_invite,
     description: "Starts an invite delivery child workflow",
     input_schema: [
@@ -21,17 +21,17 @@ defmodule BedrockMinimalHostApp.Steps.StartNestedInvite do
     ]
 
   @impl true
-  @spec run(map(), Squidie.Step.Context.t()) ::
+  @spec run(map(), Jizoku.Step.Context.t()) ::
           {:ok, map()} | {:retry, map()} | {:error, term()}
   def run(
         %{party_id: party_id, guest_id: guest_id, child_queue: child_queue} = input,
-        %Squidie.Step.Context{attempt: attempt} = context
+        %Jizoku.Step.Context{attempt: attempt} = context
       )
       when is_binary(child_queue) do
     child_key = "invite_#{guest_id}"
 
     with {:ok, child_run} <-
-           Squidie.start_child_run(
+           Jizoku.start_child_run(
              context,
              BedrockMinimalHostApp.Workflows.InviteDelivery,
              %{
@@ -64,7 +64,7 @@ defmodule BedrockMinimalHostApp.Steps.StartNestedInvite do
   end
 
   defp reused_after_retry?(
-         %Squidie.ReadModel.Inspection.Snapshot{parent_run: parent_run},
+         %Jizoku.ReadModel.Inspection.Snapshot{parent_run: parent_run},
          attempt
        ) do
     attempt > 1 and is_map(parent_run) and Map.get(parent_run, :attempt) == 1

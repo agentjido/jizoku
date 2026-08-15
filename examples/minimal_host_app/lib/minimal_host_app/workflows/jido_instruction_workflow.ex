@@ -3,12 +3,12 @@ defmodule MinimalHostApp.Workflows.JidoInstructionWorkflow do
   Battle-tests direct `Jido.Instruction` scheduling through durable dynamic work.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   defmodule Prepare do
-    use Squidie.Step, name: :prepare_jido_instruction
+    use Jizoku.Step, name: :prepare_jido_instruction
 
-    @impl Squidie.Step
+    @impl Jizoku.Step
     def run(_input, _context) do
       {:ok, %{prepared: true}}
     end
@@ -27,9 +27,9 @@ defmodule MinimalHostApp.Workflows.JidoInstructionWorkflow do
   end
 
   defmodule Finish do
-    use Squidie.Step, name: :finish_jido_instruction
+    use Jizoku.Step, name: :finish_jido_instruction
 
-    @impl Squidie.Step
+    @impl Jizoku.Step
     def run(_input, _context) do
       {:ok, %{instruction_workflow_finished: true}}
     end

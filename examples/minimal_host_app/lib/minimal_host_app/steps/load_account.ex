@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Steps.LoadAccount do
   Example step that loads account context for dependency-based workflows.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :load_account,
     description: "Loads account context",
     input_schema: [
@@ -14,7 +14,7 @@ defmodule MinimalHostApp.Steps.LoadAccount do
     ]
 
   @impl true
-  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()}
+  @spec run(map(), Jizoku.Step.Context.t()) :: {:ok, map()}
   def run(%{account_id: account_id}, _context) do
     {:ok,
      %{

@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Steps.RecordApproval do
   Example step that records a manual approval decision after a paused gate.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :record_approval,
     description: "Records an approved manual review result",
     input_schema: [
@@ -12,7 +12,7 @@ defmodule BedrockMinimalHostApp.Steps.RecordApproval do
     ]
 
   @impl true
-  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()}
+  @spec run(map(), Jizoku.Step.Context.t()) :: {:ok, map()}
   def run(%{account_id: account_id, approval: approval}, _context) do
     {:ok,
      approval

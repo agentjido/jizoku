@@ -6,7 +6,7 @@ defmodule BedrockMinimalHostApp.Steps.ReleaseInventory do
   output and records the domain-level rollback result.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :release_inventory,
     description: "Releases a previous inventory reservation",
     input_schema: [

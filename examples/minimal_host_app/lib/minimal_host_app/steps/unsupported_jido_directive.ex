@@ -1,6 +1,6 @@
 defmodule MinimalHostApp.Steps.UnsupportedJidoDirective do
   @moduledoc """
-  Raw Jido action used to exercise Squidie's directive compatibility boundary.
+  Raw Jido action used to exercise Jizoku's directive compatibility boundary.
 
   The custom directive is deliberately unsupported, so the sample workflow
   must fail without applying the action output or exposing its payload.
@@ -8,7 +8,7 @@ defmodule MinimalHostApp.Steps.UnsupportedJidoDirective do
 
   use Jido.Action,
     name: "unsupported_jido_directive",
-    description: "Returns a Jido directive that Squidie must reject explicitly",
+    description: "Returns a Jido directive that Jizoku must reject explicitly",
     schema: []
 
   defmodule CustomDirective do

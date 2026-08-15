@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Steps.PrepareNotification do
   Example join step that waits for account and invoice context.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :prepare_notification,
     description: "Builds notification context once dependencies are ready",
     input_schema: [
@@ -15,7 +15,7 @@ defmodule BedrockMinimalHostApp.Steps.PrepareNotification do
     ]
 
   @impl true
-  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()}
+  @spec run(map(), Jizoku.Step.Context.t()) :: {:ok, map()}
   def run(%{account: account, invoice: invoice}, _context) do
     {:ok,
      %{

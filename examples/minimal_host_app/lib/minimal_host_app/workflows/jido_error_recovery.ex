@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.JidoErrorRecovery do
   Battle-tests native `Jido.Agent.Directive.Error` workflow recovery.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   defmodule Reject do
     use Jido.Action,
@@ -21,9 +21,9 @@ defmodule MinimalHostApp.Workflows.JidoErrorRecovery do
   end
 
   defmodule Recover do
-    use Squidie.Step, name: :recover_jido_error
+    use Jizoku.Step, name: :recover_jido_error
 
-    @impl Squidie.Step
+    @impl Jizoku.Step
     def run(_input, _context) do
       {:ok, %{jido_error_recovered: true}}
     end

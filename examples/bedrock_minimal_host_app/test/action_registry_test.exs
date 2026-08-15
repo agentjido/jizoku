@@ -7,7 +7,7 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
   alias BedrockMinimalHostApp.Workflows.RawJidoWorkflow
 
   test "validates runtime-authored specs through host-owned action keys" do
-    spec = %Squidie.Workflow.Spec{
+    spec = %Jizoku.Workflow.Spec{
       workflow: BedrockMinimalHostApp.RuntimeAuthoredPaymentRecovery,
       triggers: [
         %{
@@ -43,10 +43,10 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
       "payment.notify_customer" => Steps.NotifyCustomer
     }
 
-    assert :ok = Squidie.Workflow.validate_spec(spec, action_registry: registry)
+    assert :ok = Jizoku.Workflow.validate_spec(spec, action_registry: registry)
 
     assert {:ok, resolved} =
-             Squidie.Workflow.resolve_spec_actions(spec, action_registry: registry)
+             Jizoku.Workflow.resolve_spec_actions(spec, action_registry: registry)
 
     assert Enum.map(resolved.steps, &{&1.name, &1.module, &1.metadata.action}) == [
              {:load_invoice, Steps.LoadInvoice, "payment.load_invoice"},
@@ -70,21 +70,21 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
     assert run.definition_version == "bedrock-minimal-host-runtime-digest-v1"
     assert [%{step: "record_digest_delivery", status: :available}] = run.visible_attempts
 
-    assert {:ok, completed_run} = Squidie.execute_next(journal_storage: storage)
+    assert {:ok, completed_run} = Jizoku.execute_next(journal_storage: storage)
     assert completed_run.status == :completed
   end
 
   test "executes a raw Jido action through the normal journal runtime" do
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: RawJidoWorkflow,
                now: ~U[2026-08-10 12:00:00Z]
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
 
-    assert {:ok, run} = Squidie.Test.start(runtime, %{value: "bedrock"})
-    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert {:ok, run} = Jizoku.Test.start(runtime, %{value: "bedrock"})
+    assert {:completed, completed} = Jizoku.Test.drain(runtime, run)
 
     assert completed.context.jido_result == %{
              value: "BEDROCK",
@@ -93,7 +93,7 @@ defmodule BedrockMinimalHostApp.ActionRegistryTest do
   end
 
   test "compiled payment recovery workflow exposes numeric gateway routing condition" do
-    assert {:ok, spec} = Squidie.Workflow.to_spec(PaymentRecovery)
+    assert {:ok, spec} = Jizoku.Workflow.to_spec(PaymentRecovery)
 
     assert Enum.any?(spec.transitions, fn
              %{

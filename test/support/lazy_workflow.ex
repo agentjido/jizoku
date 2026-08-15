@@ -1,7 +1,7 @@
-defmodule Squidie.TestSupport.LazyWorkflow do
+defmodule Jizoku.TestSupport.LazyWorkflow do
   @moduledoc false
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :manual do
@@ -12,7 +12,7 @@ defmodule Squidie.TestSupport.LazyWorkflow do
       end
     end
 
-    step :load_invoice, Squidie.TestSupport.LazyWorkflow.LoadInvoice, retry: [max_attempts: 1]
+    step :load_invoice, Jizoku.TestSupport.LazyWorkflow.LoadInvoice, retry: [max_attempts: 1]
     transition :load_invoice, on: :ok, to: :complete
   end
 end

@@ -6,7 +6,7 @@ defmodule MinimalHostApp.Steps.AuthorizePayment do
   void it during compensation if capture fails.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :authorize_payment,
     description: "Authorizes payment for an order",
     input_schema: [

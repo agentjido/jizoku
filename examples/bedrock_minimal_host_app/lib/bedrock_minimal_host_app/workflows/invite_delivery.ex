@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Workflows.InviteDelivery do
   Child workflow used by the nested workflow smoke path.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :deliver_invite do

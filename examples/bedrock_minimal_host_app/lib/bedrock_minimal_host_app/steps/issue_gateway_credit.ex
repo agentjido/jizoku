@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Steps.IssueGatewayCredit do
   Example compensation step for a failed gateway recovery path.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :issue_gateway_credit,
     description: "Issues a credit after gateway recovery cannot continue",
     input_schema: [
@@ -15,7 +15,7 @@ defmodule BedrockMinimalHostApp.Steps.IssueGatewayCredit do
     ]
 
   @impl true
-  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()}
+  @spec run(map(), Jizoku.Step.Context.t()) :: {:ok, map()}
   def run(%{account_id: account_id, invoice: invoice}, _context) do
     {:ok,
      %{

@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.DependencyRecovery do
   Example dependency-based workflow with two roots and one join step.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     version "2026-05-26.dependency-recovery"

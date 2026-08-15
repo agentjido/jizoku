@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Workflows.DependencyRecovery do
   Example dependency-based workflow with two roots and one join step.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :dependency_recovery do

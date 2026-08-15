@@ -1,16 +1,16 @@
-defmodule Squidie.MixProject do
+defmodule Jizoku.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :squidie,
-      version: "0.3.7",
+      app: :jizoku,
+      version: "0.4.0",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       description: description(),
-      source_url: "https://github.com/dark-trench/squidie",
-      homepage_url: "https://github.com/dark-trench/squidie",
+      source_url: "https://github.com/dark-trench/jizoku",
+      homepage_url: "https://github.com/dark-trench/jizoku",
       docs: docs(),
       package: package(),
       aliases: aliases(),
@@ -33,7 +33,7 @@ defmodule Squidie.MixProject do
   def application do
     [
       extra_applications: [:logger],
-      mod: {Squidie.Application, []}
+      mod: {Jizoku.Application, []}
     ]
   end
 
@@ -52,12 +52,12 @@ defmodule Squidie.MixProject do
 
   defp package do
     [
-      name: "squidie",
+      name: "jizoku",
       maintainers: ["Cristiano Carvalho"],
       licenses: ["Apache-2.0"],
       files:
         ~w(lib priv/repo docs usage-rules usage-rules.md .formatter.exs mix.exs mix.lock README* CHANGELOG* LICENSE* CONTRIBUTING* CODE_OF_CONDUCT*),
-      links: %{"GitHub" => "https://github.com/dark-trench/squidie"}
+      links: %{"GitHub" => "https://github.com/dark-trench/jizoku"}
     ]
   end
 
@@ -88,6 +88,7 @@ defmodule Squidie.MixProject do
         "docs/host_app_integration.md",
         "docs/operations.md",
         "docs/production_readiness.md",
+        "docs/migration_guide.md",
         "usage-rules.md",
         "usage-rules/runtime.md",
         "usage-rules/host-apps.md",
@@ -123,7 +124,8 @@ defmodule Squidie.MixProject do
           "docs/quality_gates.md",
           "docs/compatibility.md",
           "docs/storage_strategy.md",
-          "docs/production_readiness.md"
+          "docs/production_readiness.md",
+          "docs/migration_guide.md"
         ],
         Internals: [
           "docs/architecture.md",
@@ -166,6 +168,7 @@ defmodule Squidie.MixProject do
         "compile --warnings-as-errors",
         "xref graph --format cycles --label compile-connected --fail-above 0",
         "deps.unlock --check-unused",
+        "brand.audit",
         "format --check-formatted",
         "credo --strict",
         "quality_gates",
@@ -175,6 +178,7 @@ defmodule Squidie.MixProject do
         "test"
       ],
       quality_gates: ["quality.ex_dna", "quality.reach"],
+      "brand.audit": ["run scripts/jizoku_rebrand_audit.exs"],
       "quality.ex_dna": ["ex_dna --min-mass 40 --max-clones 0 --format console"],
       "quality.reach": ["reach.check --smells --strict"]
     ]

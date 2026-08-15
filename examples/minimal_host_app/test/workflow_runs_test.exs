@@ -5,7 +5,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.RuntimeSignals
   alias MinimalHostApp.Smoke
   alias MinimalHostApp.Steps
-  alias MinimalHostApp.Workers.SquidieWorker
+  alias MinimalHostApp.Workers.JizokuWorker
   alias MinimalHostApp.WorkflowRuns
   alias MinimalHostApp.Workflows.DailyDigest
   alias MinimalHostApp.Workflows.DependencyRecovery
@@ -18,21 +18,21 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.Workflows.PaymentRecovery
   alias MinimalHostApp.Workflows.RetryVerification
   alias Oban.Job
-  alias Squidie.ReadModel.Inspection.Snapshot
-  alias Squidie.ReadModel.Listing.Summary
-  alias Squidie.Runtime.Signal
+  alias Jizoku.ReadModel.Inspection.Snapshot
+  alias Jizoku.ReadModel.Listing.Summary
+  alias Jizoku.Runtime.Signal
 
   test "public test runtime drains the host dependency workflow in memory" do
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: DependencyRecovery,
                now: ~U[2026-08-10 12:00:00Z]
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
 
     assert {:ok, run} =
-             Squidie.Test.start(runtime, %{
+             Jizoku.Test.start(runtime, %{
                account_id: "account-test-kit",
                invoice_id: "invoice-test-kit",
                attempt_id: "attempt-test-kit"
@@ -40,7 +40,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     execute_task =
       Task.async(fn ->
-        Squidie.Test.execute_until(runtime, run, fn snapshot ->
+        Jizoku.Test.execute_until(runtime, run, fn snapshot ->
           Map.has_key?(snapshot.context, :account) and
             Map.has_key?(snapshot.context, :invoice)
         end)
@@ -51,22 +51,22 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert intermediate.context.invoice.id == "invoice-test-kit"
     refute Map.has_key?(intermediate.context, :notification)
 
-    assert {:ok, restarted_runtime} = Squidie.Test.restart_runtime(runtime)
-    on_exit(fn -> Squidie.Test.stop_runtime(restarted_runtime) end)
+    assert {:ok, restarted_runtime} = Jizoku.Test.restart_runtime(runtime)
+    on_exit(fn -> Jizoku.Test.stop_runtime(restarted_runtime) end)
     assert restarted_runtime.id != runtime.id
-    assert {:error, :runtime_stopped} = Squidie.Test.inspect(runtime, run)
+    assert {:error, :runtime_stopped} = Jizoku.Test.inspect(runtime, run)
 
-    assert :ok = Squidie.Test.delete_checkpoints(restarted_runtime)
-    assert {:ok, rebuilt} = Squidie.Test.inspect(restarted_runtime, run)
+    assert :ok = Jizoku.Test.delete_checkpoints(restarted_runtime)
+    assert {:ok, rebuilt} = Jizoku.Test.inspect(restarted_runtime, run)
     assert rebuilt == intermediate
 
-    assert :ok = Squidie.Test.inject_append_conflict(restarted_runtime, :dispatch)
-    assert {:error, :conflict} = Squidie.Test.drain(restarted_runtime, run)
-    assert {:completed, snapshot} = Squidie.Test.drain(restarted_runtime, run)
+    assert :ok = Jizoku.Test.inject_append_conflict(restarted_runtime, :dispatch)
+    assert {:error, :conflict} = Jizoku.Test.drain(restarted_runtime, run)
+    assert {:completed, snapshot} = Jizoku.Test.drain(restarted_runtime, run)
     assert snapshot.context.account.id == "account-test-kit"
     assert snapshot.context.invoice.id == "invoice-test-kit"
     assert snapshot.context.notification.channel == "email"
-    assert {:ok, ^snapshot} = Squidie.Test.check_invariants(restarted_runtime, run)
+    assert {:ok, ^snapshot} = Jizoku.Test.check_invariants(restarted_runtime, run)
 
     assert {:ok,
             %{
@@ -77,7 +77,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
               status: :completed,
               terminal_status: :completed,
               events: golden_events
-            } = golden} = Squidie.Test.golden_history(restarted_runtime, run)
+            } = golden} = Jizoku.Test.golden_history(restarted_runtime, run)
 
     assert Enum.map(golden_events, &{&1.type, Map.get(&1, :step), Map.get(&1, :runnable)}) == [
              {:command_received, nil, nil},
@@ -103,15 +103,15 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
   test "raw Jido action directives fail before their output is applied" do
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: JidoDirectiveBoundary,
                now: ~U[2026-08-10 12:00:00Z]
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
 
-    assert {:ok, run} = Squidie.Test.start(runtime, %{})
-    assert {:failed, failed} = Squidie.Test.drain(runtime, run)
+    assert {:ok, run} = Jizoku.Test.start(runtime, %{})
+    assert {:failed, failed} = Jizoku.Test.drain(runtime, run)
     assert failed.applied_runnable_keys == []
 
     assert failed.terminal_error == %{
@@ -127,16 +127,16 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     now = ~U[2026-08-10 12:00:00Z]
 
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: JidoEmitWorkflow,
                now: now,
                jido_dispatch_routes: jido_routes(self())
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
 
-    assert {:ok, run} = Squidie.Test.start(runtime, %{order_id: "order-test-runtime"})
-    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert {:ok, run} = Jizoku.Test.start(runtime, %{order_id: "order-test-runtime"})
+    assert {:completed, completed} = Jizoku.Test.drain(runtime, run)
 
     assert_receive {:signal,
                     %Jido.Signal{
@@ -151,7 +151,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert completed.jido_signals.pending_count == 0
     assert completed.jido_signals.delivered_count == 1
 
-    assert {:ok, timeline} = Squidie.Test.timeline(runtime, completed)
+    assert {:ok, timeline} = Jizoku.Test.timeline(runtime, completed)
 
     assert Enum.map(
              Enum.filter(
@@ -169,7 +169,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     queue = "jido-emit-#{System.unique_integer([:positive])}"
 
     assert {:ok, started} =
-             Squidie.start(
+             Jizoku.start(
                JidoEmitWorkflow,
                :manual,
                %{order_id: "order-ecto"},
@@ -177,7 +177,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              )
 
     assert {:ok, completed} =
-             Squidie.execute_next(
+             Jizoku.execute_next(
                queue: queue,
                owner_id: "minimal-host-jido-emit",
                jido_dispatch_routes: jido_routes(self())
@@ -197,7 +197,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert signal_id == "#{started.run_id}:order-prepared"
     refute_receive {:signal, %Jido.Signal{id: ^signal_id}}
 
-    assert {:ok, explanation} = Squidie.explain_run(started.run_id, queue: queue)
+    assert {:ok, explanation} = Jizoku.explain_run(started.run_id, queue: queue)
     assert explanation.details.jido_signal_delivery.delivered_count == 1
     refute :deliver_jido_signals in explanation.next_actions
     refute inspect(explanation.details.jido_signal_delivery) =~ "order-ecto"
@@ -205,15 +205,15 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
   test "raw Jido error directives use durable workflow error transitions" do
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: JidoErrorRecovery,
                now: ~U[2026-08-10 12:00:00Z]
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
 
-    assert {:ok, run} = Squidie.Test.start(runtime, %{})
-    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert {:ok, run} = Jizoku.Test.start(runtime, %{})
+    assert {:completed, completed} = Jizoku.Test.drain(runtime, run)
     assert completed.context.jido_error_recovered == true
     refute Map.has_key?(completed.context, :must_not_be_applied)
 
@@ -232,17 +232,17 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     now = ~U[2026-08-10 12:00:00Z]
 
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: JidoInstructionWorkflow,
                action_registry: %{"sample.enrich" => JidoInstructionWorkflow.Enrich},
                now: now
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
-    assert {:ok, run} = Squidie.Test.start(runtime, %{})
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
+    assert {:ok, run} = Jizoku.Test.start(runtime, %{})
 
     assert {:reached, prepared} =
-             Squidie.Test.execute_until(
+             Jizoku.Test.execute_until(
                runtime,
                run,
                &(&1.applied_runnable_keys != []),
@@ -276,15 +276,15 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, scheduled} = WorkflowRuns.schedule_dynamic_work(run.run_id, instruction, opts)
     assert {:ok, ^scheduled} = WorkflowRuns.schedule_dynamic_work(run.run_id, instruction, opts)
 
-    assert {:blocked, enriched} = Squidie.Test.drain(runtime, run)
+    assert {:blocked, enriched} = Jizoku.Test.drain(runtime, run)
 
     assert enriched.context.instruction_order == %{
              id: "order-123",
              request_id: "request-456"
            }
 
-    assert {:ok, _advanced} = Squidie.Test.advance_time(runtime, 60, :second)
-    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert {:ok, _advanced} = Jizoku.Test.advance_time(runtime, 60, :second)
+    assert {:completed, completed} = Jizoku.Test.drain(runtime, run)
     assert completed.context.instruction_workflow_finished
   end
 
@@ -292,15 +292,15 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     now = ~U[2026-08-10 12:00:00Z]
 
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: JidoRunInstructionWorkflow,
                action_registry: %{"sample.enrich" => JidoInstructionWorkflow.Enrich},
                now: now
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
-    assert {:ok, run} = Squidie.Test.start(runtime, %{})
-    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
+    assert {:ok, run} = Jizoku.Test.start(runtime, %{})
+    assert {:completed, completed} = Jizoku.Test.drain(runtime, run)
     assert completed.context.prepared == true
     assert completed.context.instruction_order.id == "order-from-directive"
 
@@ -322,10 +322,10 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     registry = %{"sample.enrich" => JidoInstructionWorkflow.Enrich}
 
     assert {:ok, started} =
-             Squidie.start(JidoRunInstructionWorkflow, :manual, %{}, queue: queue)
+             Jizoku.start(JidoRunInstructionWorkflow, :manual, %{}, queue: queue)
 
     assert {:ok, after_source} =
-             Squidie.execute_next(
+             Jizoku.execute_next(
                queue: queue,
                owner_id: "minimal-host-jido-directive-source",
                action_registry: registry
@@ -337,7 +337,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     refute Map.has_key?(after_source.context, :instruction_order)
 
     assert {:ok, completed} =
-             Squidie.execute_next(
+             Jizoku.execute_next(
                queue: queue,
                owner_id: "minimal-host-jido-directive-followup",
                action_registry: registry
@@ -356,41 +356,41 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     now = ~U[2026-08-10 12:00:00Z]
 
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: RetryVerification,
                now: now
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
 
     assert {:ok, run} =
-             Squidie.Test.start(runtime, %{attempt_id: "attempt-test-kit-virtual-time"})
+             Jizoku.Test.start(runtime, %{attempt_id: "attempt-test-kit-virtual-time"})
 
     on_exit(fn ->
       :persistent_term.erase({MinimalHostApp.Steps.FailOnce, run.run_id})
     end)
 
-    assert {:blocked, retrying} = Squidie.Test.drain(runtime, run)
+    assert {:blocked, retrying} = Jizoku.Test.drain(runtime, run)
     assert retrying.next_visible_at == DateTime.add(now, 1_000, :millisecond)
 
-    assert {:ok, explanation} = Squidie.Test.explain(runtime, run)
+    assert {:ok, explanation} = Jizoku.Test.explain(runtime, run)
     assert explanation.reason == :attempt_scheduled_for_later
     assert explanation.next_actions == [:wait_until_attempt_visible]
     assert explanation.details.next_visible_at == retrying.next_visible_at
 
-    assert {:ok, timeline} = Squidie.Test.timeline(runtime, run)
+    assert {:ok, timeline} = Jizoku.Test.timeline(runtime, run)
     assert Enum.any?(timeline.events, &(&1.type == :attempt_failed))
 
     assertion =
       assert_raise ExUnit.AssertionError, fn ->
-        Squidie.Test.assert_status(runtime, run, :completed, diagnostics: :timeline)
+        Jizoku.Test.assert_status(runtime, run, :completed, diagnostics: :timeline)
       end
 
     assert assertion.message =~ "timeline (schema v1)"
     assert assertion.message =~ "attempt_failed"
 
-    assert {:ok, _now} = Squidie.Test.advance_time(runtime, 1, :second)
-    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert {:ok, _now} = Jizoku.Test.advance_time(runtime, 1, :second)
+    assert {:completed, completed} = Jizoku.Test.drain(runtime, run)
 
     assert completed.context.retry_probe == %{
              attempt_id: "attempt-test-kit-virtual-time",
@@ -423,7 +423,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     }
 
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: spec,
                action_stubs: %{
                  "test.prepare" => [{:ok, %{message_id: "message-123"}}],
@@ -431,14 +431,14 @@ defmodule MinimalHostApp.WorkflowRunsTest do
                }
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
 
-    assert {:ok, run} = Squidie.Test.start(runtime, %{})
-    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert {:ok, run} = Jizoku.Test.start(runtime, %{})
+    assert {:completed, completed} = Jizoku.Test.drain(runtime, run)
     assert completed.context.prepared == %{message_id: "message-123"}
     assert completed.context.delivery == %{status: "delivered"}
 
-    assert {:ok, calls} = Squidie.Test.stub_calls(runtime, "test.deliver")
+    assert {:ok, calls} = Jizoku.Test.stub_calls(runtime, "test.deliver")
     assert [%{input: %{prepared: %{message_id: "message-123"}}}] = calls
   end
 
@@ -446,15 +446,15 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     now = ~U[2026-08-10 12:00:00Z]
 
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: DailyDigest,
                now: now
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
 
     assert {:ok, run} =
-             Squidie.Test.start_cron(
+             Jizoku.Test.start_cron(
                runtime,
                :daily_digest,
                %{channel: "ops", digest_date: "2026-08-10"},
@@ -465,7 +465,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert run.context.schedule.received_at == DateTime.to_iso8601(now)
     assert run.context.schedule.signal_id == "daily-digest-test-kit"
 
-    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert {:completed, completed} = Jizoku.Test.drain(runtime, run)
     assert completed.context.digest_delivery.channel == "ops"
     assert completed.context.digest_delivery.digest_date == "2026-08-10"
   end
@@ -474,36 +474,36 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     now = ~U[2026-08-10 12:00:00Z]
 
     assert {:ok, runtime} =
-             Squidie.Test.start_runtime(
+             Jizoku.Test.start_runtime(
                workflow: ManualApproval,
                now: now
              )
 
-    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+    on_exit(fn -> Jizoku.Test.stop_runtime(runtime) end)
 
-    assert {:ok, run} = Squidie.Test.start(runtime, %{account_id: "acct-test-kit"})
-    assert {:blocked, paused} = Squidie.Test.drain(runtime, run)
+    assert {:ok, run} = Jizoku.Test.start(runtime, %{account_id: "acct-test-kit"})
+    assert {:blocked, paused} = Jizoku.Test.drain(runtime, run)
     assert paused.status == :paused
     assert paused.manual_state.step == "wait_for_approval"
 
-    assert {:ok, _now} = Squidie.Test.advance_time(runtime, 30, :second)
+    assert {:ok, _now} = Jizoku.Test.advance_time(runtime, 30, :second)
 
     assert {:ok, %{status: :running}} =
-             Squidie.Test.approve(
+             Jizoku.Test.approve(
                runtime,
                run,
                %{actor: "ops-test", comment: "approved in test"},
                idempotency_key: "approval-test-kit"
              )
 
-    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+    assert {:completed, completed} = Jizoku.Test.drain(runtime, run)
     assert completed.context.approval.status == "approved"
     assert completed.context.approval.actor == "ops-test"
     assert completed.context.approval.comment == "approved in test"
   end
 
   defmodule InvalidRecurringIdempotentCronWorkflow do
-    use Squidie.Workflow
+    use Jizoku.Workflow
 
     workflow do
       trigger :daily_digest do
@@ -527,15 +527,15 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     daily_digest_entities = Spark.Dsl.Extension.get_entities(DailyDigest, [:workflow])
 
     assert [
-             %Squidie.Workflow.TriggerSpec{
+             %Jizoku.Workflow.TriggerSpec{
                name: :manual_digest,
-               definitions: [%Squidie.Workflow.TriggerDefinitionSpec{type: :manual}],
-               payload: [%Squidie.Workflow.PayloadSpec{fields: manual_fields}]
+               definitions: [%Jizoku.Workflow.TriggerDefinitionSpec{type: :manual}],
+               payload: [%Jizoku.Workflow.PayloadSpec{fields: manual_fields}]
              },
-             %Squidie.Workflow.TriggerSpec{
+             %Jizoku.Workflow.TriggerSpec{
                name: :daily_digest,
                definitions: [
-                 %Squidie.Workflow.TriggerDefinitionSpec{
+                 %Jizoku.Workflow.TriggerDefinitionSpec{
                    type: :cron,
                    config: %{
                      expression: "@reboot",
@@ -544,9 +544,9 @@ defmodule MinimalHostApp.WorkflowRunsTest do
                    }
                  }
                ],
-               payload: [%Squidie.Workflow.PayloadSpec{fields: cron_fields}]
+               payload: [%Jizoku.Workflow.PayloadSpec{fields: cron_fields}]
              }
-           ] = Enum.filter(daily_digest_entities, &match?(%Squidie.Workflow.TriggerSpec{}, &1))
+           ] = Enum.filter(daily_digest_entities, &match?(%Jizoku.Workflow.TriggerSpec{}, &1))
 
     assert Enum.map(manual_fields, & &1.name) == [:channel, :digest_date]
     assert Enum.map(cron_fields, & &1.name) == [:channel, :digest_date]
@@ -554,7 +554,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     payment_recovery_entities = Spark.Dsl.Extension.get_entities(PaymentRecovery, [:workflow])
 
     assert Enum.any?(payment_recovery_entities, fn
-             %Squidie.Workflow.TransitionSpec{
+             %Jizoku.Workflow.TransitionSpec{
                from: :check_gateway_status,
                on: :ok,
                to: :notify_customer,
@@ -567,7 +567,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            end)
 
     assert Enum.any?(payment_recovery_entities, fn
-             %Squidie.Workflow.TransitionSpec{
+             %Jizoku.Workflow.TransitionSpec{
                from: :check_gateway_status,
                on: :ok,
                to: :issue_gateway_credit,
@@ -580,7 +580,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            end)
 
     assert Enum.any?(payment_recovery_entities, fn
-             %Squidie.Workflow.TransitionSpec{
+             %Jizoku.Workflow.TransitionSpec{
                from: :check_gateway_status,
                on: :error,
                to: :issue_gateway_credit,
@@ -594,7 +594,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "host app examples validate runtime-authored specs through a safe action registry" do
-    spec = %Squidie.Workflow.Spec{
+    spec = %Jizoku.Workflow.Spec{
       workflow: MinimalHostApp.RuntimeAuthoredPaymentRecovery,
       triggers: [
         %{
@@ -630,10 +630,10 @@ defmodule MinimalHostApp.WorkflowRunsTest do
       "payment.notify_customer" => Steps.NotifyCustomer
     }
 
-    assert :ok = Squidie.Workflow.validate_spec(spec, action_registry: registry)
+    assert :ok = Jizoku.Workflow.validate_spec(spec, action_registry: registry)
 
     assert {:ok, resolved} =
-             Squidie.Workflow.resolve_spec_actions(spec, action_registry: registry)
+             Jizoku.Workflow.resolve_spec_actions(spec, action_registry: registry)
 
     assert Enum.map(resolved.steps, &{&1.name, &1.module, &1.metadata.action}) == [
              {:load_invoice, Steps.LoadInvoice, "payment.load_invoice"},
@@ -656,7 +656,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, completed_run} = MinimalHostApp.RuntimeHarness.await_terminal_run(run.run_id)
     assert completed_run.status == :completed
 
-    assert {:ok, graph} = Squidie.inspect_run_graph(run.run_id)
+    assert {:ok, graph} = Jizoku.inspect_run_graph(run.run_id)
     assert Enum.map(graph.nodes, & &1.id) == ["record_digest_delivery"]
   end
 
@@ -667,7 +667,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              WorkflowRuns.start_recurring_cursor(%{cursor: 0}, queue: queue)
 
     assert {:ok, successor} =
-             Squidie.execute_next(
+             Jizoku.execute_next(
                queue: queue,
                owner_id: "minimal-host-continuation-worker-1"
              )
@@ -677,7 +677,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert successor.continuation.continued_from.run_id == predecessor.run_id
 
     assert {:ok, completed_successor} =
-             Squidie.execute_next(
+             Jizoku.execute_next(
                queue: queue,
                owner_id: "minimal-host-continuation-worker-2"
              )
@@ -702,17 +702,17 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "host app examples round-trip workflow specs through the editor JSON contract" do
-    assert {:ok, spec} = Squidie.Workflow.to_spec(PaymentRecovery)
+    assert {:ok, spec} = Jizoku.Workflow.to_spec(PaymentRecovery)
 
     round_tripped =
       spec
-      |> Squidie.Workflow.EditorSpec.to_map()
+      |> Jizoku.Workflow.EditorSpec.to_map()
       |> Jason.encode!()
       |> Jason.decode!()
 
-    assert :ok = Squidie.Workflow.EditorSpec.validate_map(round_tripped)
+    assert :ok = Jizoku.Workflow.EditorSpec.validate_map(round_tripped)
 
-    assert {:ok, graph} = Squidie.Workflow.EditorSpec.preview_graph(round_tripped)
+    assert {:ok, graph} = Jizoku.Workflow.EditorSpec.preview_graph(round_tripped)
 
     assert Enum.map(graph["nodes"], & &1["id"]) == [
              "load_invoice",
@@ -759,7 +759,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert [%{step: "load_invoice", status: :available}] = run.visible_attempts
 
     assert {:ok, advanced_run} =
-             Squidie.execute_next(owner_id: "minimal-host-app-sla-contract-test")
+             Jizoku.execute_next(owner_id: "minimal-host-app-sla-contract-test")
 
     assert advanced_run.run_id == run.run_id
 
@@ -772,7 +772,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            ] = advanced_run.visible_attempts
 
     assert {:ok, [listed_run]} =
-             Squidie.list_runs([workflow: MinimalHostApp.Workflows.PaymentRecovery],
+             Jizoku.list_runs([workflow: MinimalHostApp.Workflows.PaymentRecovery],
                now: DateTime.utc_now()
              )
 
@@ -780,8 +780,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert listed_run.deadline.status == :on_time
     assert listed_run.deadline.step == "check_gateway_status"
 
-    assert {:ok, graph} = Squidie.inspect_run_graph(run.run_id)
-    graph_nodes = Map.new(Squidie.Runs.GraphInspection.to_map(graph).nodes, &{&1.id, &1})
+    assert {:ok, graph} = Jizoku.inspect_run_graph(run.run_id)
+    graph_nodes = Map.new(Jizoku.Runs.GraphInspection.to_map(graph).nodes, &{&1.id, &1})
 
     assert graph_nodes["check_gateway_status"].deadline.status == :on_time
     assert graph_nodes["check_gateway_status"].deadline.escalation == %{outcome: :diagnostic}
@@ -915,7 +915,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert [%{step: "start_nested_invite", status: :available}] = run.visible_attempts
 
     assert {:ok, retried_parent} =
-             Squidie.execute_next(owner_id: "minimal-host-app-nested-parent-test")
+             Jizoku.execute_next(owner_id: "minimal-host-app-nested-parent-test")
 
     assert retried_parent.status == :running
 
@@ -928,9 +928,9 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              }
            ] = retried_parent.child_runs
 
-    assert {:ok, parent_graph} = Squidie.inspect_run_graph(run.run_id)
+    assert {:ok, parent_graph} = Jizoku.inspect_run_graph(run.run_id)
 
-    parent_graph_map = Squidie.Runs.GraphInspection.to_map(parent_graph)
+    parent_graph_map = Jizoku.Runs.GraphInspection.to_map(parent_graph)
 
     assert [
              %{
@@ -956,17 +956,17 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert [%{step: "deliver_invite", status: :available}] =
              child_before_parent_retry.visible_attempts
 
-    Repo.delete_all("squidie_journal_checkpoints")
+    Repo.delete_all("jizoku_journal_checkpoints")
 
     assert {:ok, reconstructed_retried_parent} = WorkflowRuns.inspect_run(run.run_id)
 
     assert {:ok, reconstructed_waiting_child} =
              WorkflowRuns.inspect_run(child_run_id, queue: child_queue)
 
-    assert {:ok, reconstructed_parent_graph} = Squidie.inspect_run_graph(run.run_id)
+    assert {:ok, reconstructed_parent_graph} = Jizoku.inspect_run_graph(run.run_id)
 
     reconstructed_parent_graph_map =
-      Squidie.Runs.GraphInspection.to_map(reconstructed_parent_graph)
+      Jizoku.Runs.GraphInspection.to_map(reconstructed_parent_graph)
 
     assert [%{from: "start_nested_invite", to: ^child_run_id, type: :child_run}] =
              reconstructed_parent_graph_map.child_links
@@ -976,7 +976,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert reconstructed_waiting_child.status == :running
 
     assert {:ok, completed_parent} =
-             Squidie.execute_next(owner_id: "minimal-host-app-nested-parent-test")
+             Jizoku.execute_next(owner_id: "minimal-host-app-nested-parent-test")
 
     assert completed_parent.status == :completed
 
@@ -984,7 +984,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert child_still_running.status == :running
 
     assert {:ok, child_retrying} =
-             Squidie.execute_next(
+             Jizoku.execute_next(
                owner_id: "minimal-host-app-nested-child-test",
                queue: child_queue
              )
@@ -994,7 +994,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert [%{step: "deliver_invite", status: :retry_scheduled, attempt_number: 2}] =
              child_retrying.visible_attempts
 
-    Repo.delete_all("squidie_journal_checkpoints")
+    Repo.delete_all("jizoku_journal_checkpoints")
 
     assert {:ok, reconstructed_retrying_child} =
              WorkflowRuns.inspect_run(child_run_id, queue: child_queue)
@@ -1003,7 +1003,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert reconstructed_retrying_child.parent_run == child_before_parent_retry.parent_run
 
     assert {:ok, completed_child} =
-             Squidie.execute_next(
+             Jizoku.execute_next(
                owner_id: "minimal-host-app-nested-child-test",
                queue: child_queue
              )
@@ -1052,7 +1052,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              metadata: %{guest_id: "guest_456"}
            }
 
-    Repo.delete_all("squidie_journal_checkpoints")
+    Repo.delete_all("jizoku_journal_checkpoints")
 
     assert {:ok, reconstructed_parent} = WorkflowRuns.inspect_run(run.run_id)
     assert {:ok, reconstructed_child} = WorkflowRuns.inspect_run(child_run_id, queue: child_queue)
@@ -1065,20 +1065,20 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert replayed_parent.child_runs == []
 
     assert {:ok, replayed_after_first_attempt} =
-             Squidie.execute_next(owner_id: "minimal-host-app-nested-replay-test")
+             Jizoku.execute_next(owner_id: "minimal-host-app-nested-replay-test")
 
     assert [%{child_run_id: replayed_child_run_id}] = replayed_after_first_attempt.child_runs
     refute replayed_child_run_id == child_run_id
 
     assert {:ok, replayed_completed_parent} =
-             Squidie.execute_next(owner_id: "minimal-host-app-nested-replay-test")
+             Jizoku.execute_next(owner_id: "minimal-host-app-nested-replay-test")
 
     assert replayed_completed_parent.status == :completed
     assert replayed_completed_parent.context.invite_child.run_id == replayed_child_run_id
     assert replayed_completed_parent.context.invite_child.reused_after_retry? == true
 
     assert {:ok, replayed_retrying_child} =
-             Squidie.execute_next(
+             Jizoku.execute_next(
                owner_id: "minimal-host-app-nested-replay-child-test",
                queue: child_queue
              )
@@ -1086,7 +1086,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert replayed_retrying_child.status == :running
 
     assert {:ok, replayed_completed_child} =
-             Squidie.execute_next(
+             Jizoku.execute_next(
                owner_id: "minimal-host-app-nested-replay-child-test",
                queue: child_queue
              )
@@ -1140,16 +1140,16 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   test "executes a dependency workflow through inferred Ecto journal defaults" do
     queue = "minimal-host-app-default-journal-#{System.unique_integer([:positive])}"
 
-    with_squidie_env(
+    with_jizoku_env(
       [
         repo: Repo,
         queue: queue
       ],
       fn ->
-        assert {:ok, config} = Squidie.config()
+        assert {:ok, config} = Jizoku.config()
         assert config.runtime == :journal
         assert config.read_model == :read_model
-        assert config.journal_storage.adapter == Squidie.Runtime.Journal.Storage.Ecto
+        assert config.journal_storage.adapter == Jizoku.Runtime.Journal.Storage.Ecto
         assert config.journal_storage.opts == [repo: Repo]
 
         attrs = %{
@@ -1216,7 +1216,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   test "cancels a dependency workflow through inferred Ecto journal defaults" do
     queue = "minimal-host-app-default-journal-cancel-#{System.unique_integer([:positive])}"
 
-    with_squidie_env(
+    with_jizoku_env(
       [
         repo: Repo,
         queue: queue
@@ -1257,7 +1257,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
         assert inspected_run.queue == queue
 
         assert {:ok, :none} =
-                 Squidie.execute_next(owner_id: "minimal-host-app-default-journal-cancel-test")
+                 Jizoku.execute_next(owner_id: "minimal-host-app-default-journal-cancel-test")
       end
     )
   end
@@ -1265,7 +1265,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   test "replays a dependency workflow through inferred Ecto journal defaults" do
     queue = "minimal-host-app-default-journal-replay-#{System.unique_integer([:positive])}"
 
-    with_squidie_env(
+    with_jizoku_env(
       [
         repo: Repo,
         queue: queue
@@ -1335,7 +1335,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, run} = WorkflowRuns.start_manual_approval(%{account_id: "acct_approval_123"})
 
     assert {:ok, %Snapshot{status: :paused}} =
-             Squidie.execute_next(owner_id: "minimal-host-app-approval-test")
+             Jizoku.execute_next(owner_id: "minimal-host-app-approval-test")
 
     assert {:ok, paused_run} = WorkflowRuns.inspect_run(run.run_id, include_history: true)
 
@@ -1388,7 +1388,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, run} = WorkflowRuns.start_manual_pause(%{account_id: "acct_pause_123"})
 
     assert {:ok, %Snapshot{status: :paused}} =
-             Squidie.execute_next(owner_id: "minimal-host-app-resume-test")
+             Jizoku.execute_next(owner_id: "minimal-host-app-resume-test")
 
     assert {:ok, paused_run} = WorkflowRuns.inspect_run(run.run_id, include_history: true)
 
@@ -1455,7 +1455,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
       }
     }
 
-    assert :ok = MinimalHostApp.Workers.SquidieWorker.perform(job)
+    assert :ok = MinimalHostApp.Workers.JizokuWorker.perform(job)
 
     assert {:ok, runs} = WorkflowRuns.list_daily_digest_runs()
     run = Enum.find(runs, fn run -> not MapSet.member?(existing_run_ids, run.run_id) end)
@@ -1472,8 +1472,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "the host worker forwards non-cron payload errors from the runtime" do
-    assert {:error, {:invalid_squidie_payload, %{"kind" => "step", "run_id" => _run_id}}} =
-             SquidieWorker.perform(%Job{
+    assert {:error, {:invalid_jizoku_payload, %{"kind" => "step", "run_id" => _run_id}}} =
+             JizokuWorker.perform(%Job{
                args: %{
                  "kind" => "step",
                  "run_id" => Ecto.UUID.generate(),
@@ -1484,16 +1484,16 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
   test "the cron delivery adapter reports adapter metadata" do
     assert {:ok, metadata} =
-             MinimalHostApp.SquidieDeliveryAdapter.enqueue_cron(
+             MinimalHostApp.JizokuDeliveryAdapter.enqueue_cron(
                %{},
                DailyDigest,
                :daily_digest,
                signal_id: "minimal-host-app:metadata-test"
              )
 
-    assert metadata.adapter == MinimalHostApp.SquidieDeliveryAdapter
-    assert metadata.queue == :squidie
-    assert metadata.worker == "MinimalHostApp.Workers.SquidieWorker"
+    assert metadata.adapter == MinimalHostApp.JizokuDeliveryAdapter
+    assert metadata.queue == :jizoku
+    assert metadata.worker == "MinimalHostApp.Workers.JizokuWorker"
   end
 
   test "generates a new reboot signal id for each cron plugin boot" do
@@ -1519,8 +1519,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
       "signal_id" => signal_id
     }
 
-    assert :ok = SquidieWorker.perform(%Job{args: payload})
-    assert :ok = SquidieWorker.perform(%Job{args: payload})
+    assert :ok = JizokuWorker.perform(%Job{args: payload})
+    assert :ok = JizokuWorker.perform(%Job{args: payload})
     assert :ok = MinimalHostApp.RuntimeHarness.wait_for_execution()
 
     assert {:ok, runs} = WorkflowRuns.list_daily_digest_runs()
@@ -1548,7 +1548,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, run} = WorkflowRuns.start_manual_approval(%{account_id: "acct_review_123"})
 
     assert {:ok, %Snapshot{status: :paused}} =
-             Squidie.execute_next(owner_id: "minimal-host-app-rejection-test")
+             Jizoku.execute_next(owner_id: "minimal-host-app-rejection-test")
 
     assert {:ok, paused_run} = WorkflowRuns.inspect_run(run.run_id, include_history: true)
 
@@ -1586,7 +1586,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert rejected_run_id == run.run_id
   end
 
-  test "applies inbound Jido command signals to real runs through Squidie signals" do
+  test "applies inbound Jido command signals to real runs through Jizoku signals" do
     assert {:ok, run} = WorkflowRuns.start_cancellable_wait(%{account_id: "acct_jido_cancel"})
 
     assert [%{step: "wait_for_cancellation", status: :available}] = run.visible_attempts
@@ -1622,8 +1622,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            ] = cancelled_run.command_history
 
     assert {:ok, invalid_jido_signal} =
-             Jido.Signal.new("squidie.runtime.command.cancel_run", %{},
-               source: "/squidie/runtime/commands",
+             Jido.Signal.new("jizoku.runtime.command.cancel_run", %{},
+               source: "/jizoku/runtime/commands",
                subject: run.run_id
              )
 
@@ -1670,7 +1670,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert completed.context.notification.account_id == "acct_jido_domain"
   end
 
-  test "applies native Squidie command signals through the host signal boundary" do
+  test "applies native Jizoku command signals through the host signal boundary" do
     assert {:ok, run} =
              WorkflowRuns.start_cancellable_wait(%{account_id: "acct_native_signal_cancel"})
 
@@ -1783,11 +1783,11 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert replay_source_run_id == journal_replay.replayed_from_run_id
 
     assert %{
-             start: %Squidie.ReadModel.Inspection.Snapshot{
+             start: %Jizoku.ReadModel.Inspection.Snapshot{
                status: :completed,
                command_history: [%{signal_type: "start_run"}]
              },
-             replay: %Squidie.ReadModel.Inspection.Snapshot{
+             replay: %Jizoku.ReadModel.Inspection.Snapshot{
                status: :completed,
                command_history: [%{signal_type: "replay_run"}]
              }
@@ -1802,16 +1802,16 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert [%{signal_type: "start_cron"}] = journal_cron_digest.command_history
 
     assert %{
-             start_run: %Squidie.Runtime.Signal{type: :start_run},
-             start_cron: %Squidie.Runtime.Signal{
+             start_run: %Jizoku.Runtime.Signal{type: :start_run},
+             start_cron: %Jizoku.Runtime.Signal{
                type: :start_cron,
                idempotency_key: "minimal-host-app:smoke:daily_digest:" <> _
              },
-             approve_run: %Squidie.Runtime.Signal{type: :approve_run},
-             reject_run: %Squidie.Runtime.Signal{type: :reject_run},
-             resume_run: %Squidie.Runtime.Signal{type: :resume_run},
-             cancel_run: %Squidie.Runtime.Signal{type: :cancel_run},
-             replay_run: %Squidie.Runtime.Signal{
+             approve_run: %Jizoku.Runtime.Signal{type: :approve_run},
+             reject_run: %Jizoku.Runtime.Signal{type: :reject_run},
+             resume_run: %Jizoku.Runtime.Signal{type: :resume_run},
+             cancel_run: %Jizoku.Runtime.Signal{type: :cancel_run},
+             replay_run: %Jizoku.Runtime.Signal{
                type: :replay_run,
                payload: %{allow_irreversible: true}
              }
@@ -1819,25 +1819,25 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     assert %{
              start_run: %Jido.Signal{
-               type: "squidie.runtime.command.start_run",
-               source: "/squidie/runtime/commands"
+               type: "jizoku.runtime.command.start_run",
+               source: "/jizoku/runtime/commands"
              },
              start_cron: %Jido.Signal{
-               type: "squidie.runtime.command.start_cron",
-               source: "/squidie/runtime/commands"
+               type: "jizoku.runtime.command.start_cron",
+               source: "/jizoku/runtime/commands"
              },
-             approve_run: %Jido.Signal{type: "squidie.runtime.command.approve_run"},
-             reject_run: %Jido.Signal{type: "squidie.runtime.command.reject_run"},
-             resume_run: %Jido.Signal{type: "squidie.runtime.command.resume_run"},
-             cancel_run: %Jido.Signal{type: "squidie.runtime.command.cancel_run"},
-             replay_run: %Jido.Signal{type: "squidie.runtime.command.replay_run"}
+             approve_run: %Jido.Signal{type: "jizoku.runtime.command.approve_run"},
+             reject_run: %Jido.Signal{type: "jizoku.runtime.command.reject_run"},
+             resume_run: %Jido.Signal{type: "jizoku.runtime.command.resume_run"},
+             cancel_run: %Jido.Signal{type: "jizoku.runtime.command.cancel_run"},
+             replay_run: %Jido.Signal{type: "jizoku.runtime.command.replay_run"}
            } = jido_command_signals
 
     assert Enum.all?(jido_command_signals, fn
              {_name,
               %Jido.Signal{
-                source: "/squidie/runtime/commands",
-                datacontenttype: "application/vnd.squidie.runtime-signal+json"
+                source: "/jizoku/runtime/commands",
+                datacontenttype: "application/vnd.jizoku.runtime-signal+json"
               }} ->
                true
 
@@ -1875,10 +1875,10 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
   test "smoke run clears stale journal rows before starting" do
     now = DateTime.utc_now(:microsecond)
-    thread_id = "squidie:dispatch:stale-smoke-#{System.unique_integer([:positive])}"
-    unknown_atom_name = "squidie_unknown_atom_#{System.unique_integer([:positive])}"
+    thread_id = "jizoku:dispatch:stale-smoke-#{System.unique_integer([:positive])}"
+    unknown_atom_name = "jizoku_unknown_atom_#{System.unique_integer([:positive])}"
 
-    Repo.insert_all("squidie_journal_threads", [
+    Repo.insert_all("jizoku_journal_threads", [
       %{
         id: thread_id,
         rev: 1,
@@ -1890,12 +1890,12 @@ defmodule MinimalHostApp.WorkflowRunsTest do
       }
     ])
 
-    Repo.insert_all("squidie_journal_entries", [
+    Repo.insert_all("jizoku_journal_entries", [
       %{
         id: Ecto.UUID.dump!(Ecto.UUID.generate()),
         thread_id: thread_id,
         seq: 0,
-        entry: :erlang.term_to_binary({:squidie_ecto_term_v1, {:atom, unknown_atom_name}}),
+        entry: :erlang.term_to_binary({:jizoku_ecto_term_v1, {:atom, unknown_atom_name}}),
         inserted_at: now,
         updated_at: now
       }
@@ -1906,7 +1906,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the journal run smoke path" do
-    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_run!()
+    assert %Jizoku.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_run!()
 
     assert run.status == :completed
     assert run.workflow == "Elixir.MinimalHostApp.Workflows.DependencyRecovery"
@@ -1951,7 +1951,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "recovers the journal run smoke path from persisted entries" do
-    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_recovery!()
+    assert %Jizoku.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_recovery!()
 
     assert run.status == :completed
     assert run.workflow == "Elixir.MinimalHostApp.Workflows.DependencyRecovery"
@@ -1959,7 +1959,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the journal cancellation smoke path" do
-    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_cancellation!()
+    assert %Jizoku.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_cancellation!()
 
     assert run.status == :cancelled
     assert run.terminal?
@@ -1968,7 +1968,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the journal replay smoke path" do
-    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_replay!()
+    assert %Jizoku.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_replay!()
 
     assert run.status == :completed
     assert run.replayed_from_run_id
@@ -2006,7 +2006,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the journal cron smoke path" do
-    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_cron_digest!()
+    assert %Jizoku.ReadModel.Inspection.Snapshot{} = run = Smoke.run_journal_cron_digest!()
 
     assert run.status == :completed
     assert run.trigger == "daily_digest"
@@ -2015,7 +2015,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the journal cron duplicate smoke path" do
-    assert %Squidie.ReadModel.Inspection.Snapshot{} =
+    assert %Jizoku.ReadModel.Inspection.Snapshot{} =
              run = Smoke.run_journal_cron_duplicate_digest!()
 
     assert run.status == :completed
@@ -2024,7 +2024,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   end
 
   test "runs the cancellation smoke path" do
-    assert %Squidie.ReadModel.Inspection.Snapshot{} = run = Smoke.run_cancellation!()
+    assert %Jizoku.ReadModel.Inspection.Snapshot{} = run = Smoke.run_cancellation!()
     assert run.status == :cancelled
   end
 
@@ -2041,7 +2041,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              CronPlugin.init(conf: oban_config(), workflows: [DailyDigest])
 
     %{start: {Oban.Plugins.Cron, :start_link, [opts]}} = child_spec
-    [{"@reboot", SquidieWorker, entry_opts}] = Keyword.fetch!(opts, :crontab)
+    [{"@reboot", JizokuWorker, entry_opts}] = Keyword.fetch!(opts, :crontab)
     payload = Keyword.fetch!(entry_opts, :args)
     Map.fetch!(payload, "signal_id")
   end
@@ -2070,26 +2070,26 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     )
   end
 
-  defp with_squidie_env(config, fun) when is_list(config) and is_function(fun, 0) do
-    original_config = Application.get_all_env(:squidie)
+  defp with_jizoku_env(config, fun) when is_list(config) and is_function(fun, 0) do
+    original_config = Application.get_all_env(:jizoku)
 
     try do
-      :squidie
+      :jizoku
       |> Application.get_all_env()
       |> Keyword.keys()
-      |> Enum.each(&Application.delete_env(:squidie, &1))
+      |> Enum.each(&Application.delete_env(:jizoku, &1))
 
-      Enum.each(config, fn {key, value} -> Application.put_env(:squidie, key, value) end)
+      Enum.each(config, fn {key, value} -> Application.put_env(:jizoku, key, value) end)
 
       fun.()
     after
-      :squidie
+      :jizoku
       |> Application.get_all_env()
       |> Keyword.keys()
-      |> Enum.each(&Application.delete_env(:squidie, &1))
+      |> Enum.each(&Application.delete_env(:jizoku, &1))
 
       Enum.each(original_config, fn {key, value} ->
-        Application.put_env(:squidie, key, value)
+        Application.put_env(:jizoku, key, value)
       end)
     end
   end
@@ -2115,12 +2115,12 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   defp drain_default_journal_run(_run_id, _queue, 0), do: {:error, :timeout}
 
   defp drain_default_journal_run(run_id, queue, attempts_remaining) when attempts_remaining > 0 do
-    case Squidie.inspect_run(run_id) do
+    case Jizoku.inspect_run(run_id) do
       {:ok, %Snapshot{terminal?: true} = run} ->
         {:ok, run}
 
       {:ok, %Snapshot{}} ->
-        case Squidie.execute_next(
+        case Jizoku.execute_next(
                owner_id: "minimal-host-app-default-journal-test",
                queue: queue
              ) do
