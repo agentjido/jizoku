@@ -114,6 +114,20 @@ defmodule BedrockMinimalHostApp.BedrockMultiNodeConsumerTest do
     assert stored_lease(queue, meta.item_id) == nil
   end
 
+  test "ExAws remains compatible with the security-patched Hackney override" do
+    bypass = Bypass.open()
+
+    Bypass.expect_once(bypass, "GET", "/health", fn conn ->
+      Plug.Conn.resp(conn, 200, "ok")
+    end)
+
+    assert {:ok, %{status_code: 200, body: "ok"}} =
+             ExAws.Request.Hackney.request(
+               :get,
+               "http://localhost:#{bypass.port}/health"
+             )
+  end
+
   defp start_manager(node_name, suffix, lease_duration) do
     pool_name = {:global, {__MODULE__, :pool, node_name, suffix}}
     manager_name = {:global, {__MODULE__, :manager, node_name, suffix}}

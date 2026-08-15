@@ -28,6 +28,7 @@ defmodule BedrockMinimalHostApp.MixProject do
       {:bypass, "~> 2.1", only: :test},
       {:bedrock, "~> 0.5.2"},
       {:bedrock_job_queue, "~> 0.3.0"},
+      {:hackney, "~> 4.7.4", override: true},
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22.2"},
       {:squidie, path: "../.."},
