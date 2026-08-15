@@ -17,6 +17,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.Jido.Directives
   alias Squidie.Runtime.Jido.EffectsActivation
+  alias Squidie.Runtime.Jido.Outbox
   alias Squidie.Runtime.Jido.ResultEnvelope
   alias Squidie.Runtime.Jido.RunInstruction
   alias Squidie.Runtime.Journal
@@ -521,13 +522,10 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp complete_run_instruction(
-         %RuntimeContext{storage: storage, queue: queue, now: now} = runtime,
+         %RuntimeContext{queue: queue, now: now} = runtime,
          %ClaimContext{
-           dispatch_agent: dispatch_agent,
            workflow_agent: workflow_agent,
-           attempt: %ActionAttempt{} = attempt,
-           claim_id: claim_id,
-           claim_token: claim_token
+           attempt: %ActionAttempt{} = attempt
          } = claim,
          definition,
          step_name,
@@ -552,33 +550,91 @@ defmodule Squidie.Runtime.Journal.Executor do
       envelope = ResultEnvelope.wrap_run_instruction(result, plan)
       completion_encoding = ResultEnvelope.completion_encoding()
 
-      case complete_current_claim(
-             storage,
-             dispatch_agent,
-             attempt.runnable_key,
-             claim_id,
-             claim_token,
-             envelope,
-             now: now,
-             completion_encoding: completion_encoding,
-             execution_opts: [],
-             guardrails: guardrails
-           ) do
-        {:ok, %{agent: dispatch_agent, attempt: %ActionAttempt{} = completed_attempt}} ->
-          append_completed_attempt_progression(
-            runtime,
-            %{claim | dispatch_agent: dispatch_agent, attempt: completed_attempt},
-            definition,
-            step_name,
-            result,
-            []
-          )
-
-        {:error, _reason} = error ->
-          error
-      end
+      complete_native_effect_claim(
+        runtime,
+        claim,
+        definition,
+        step_name,
+        result,
+        envelope,
+        completion_encoding,
+        guardrails
+      )
     else
       {:error, reason} -> {:error, {:native_jido_effect_rejected, reason}}
+    end
+  end
+
+  defp complete_emit(
+         %RuntimeContext{} = runtime,
+         %ClaimContext{attempt: %ActionAttempt{} = attempt} = claim,
+         definition,
+         step_name,
+         output,
+         directive,
+         guardrails
+       ) do
+    with :ok <- EffectsActivation.ensure_emit_enabled(),
+         {:ok, result} <- apply_step_output_mapping(definition, step_name, output),
+         {:ok, intent} <- Outbox.prepare_directive(directive, attempt) do
+      encoded_intent = Outbox.encode_intent(intent)
+      envelope = ResultEnvelope.wrap_emit(result, encoded_intent)
+      completion_encoding = ResultEnvelope.emit_completion_encoding()
+
+      complete_native_effect_claim(
+        runtime,
+        claim,
+        definition,
+        step_name,
+        result,
+        envelope,
+        completion_encoding,
+        guardrails
+      )
+    else
+      {:error, reason} -> {:error, {:native_jido_effect_rejected, reason}}
+    end
+  end
+
+  defp complete_native_effect_claim(
+         %RuntimeContext{storage: storage, now: now} = runtime,
+         %ClaimContext{
+           dispatch_agent: dispatch_agent,
+           attempt: %ActionAttempt{} = attempt,
+           claim_id: claim_id,
+           claim_token: claim_token
+         } = claim,
+         definition,
+         step_name,
+         result,
+         envelope,
+         completion_encoding,
+         guardrails
+       ) do
+    case complete_current_claim(
+           storage,
+           dispatch_agent,
+           attempt.runnable_key,
+           claim_id,
+           claim_token,
+           envelope,
+           now: now,
+           completion_encoding: completion_encoding,
+           execution_opts: [],
+           guardrails: guardrails
+         ) do
+      {:ok, %{agent: dispatch_agent, attempt: %ActionAttempt{} = completed_attempt}} ->
+        append_completed_attempt_progression(
+          runtime,
+          %{claim | dispatch_agent: dispatch_agent, attempt: completed_attempt},
+          definition,
+          step_name,
+          result,
+          []
+        )
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -802,6 +858,14 @@ defmodule Squidie.Runtime.Journal.Executor do
        )
        when retries_left > 0 do
     case success.decoded_result do
+      {:emit, _output, intent} ->
+        if source_applied?(workflow_agent, attempt) and
+             Outbox.recorded?(intent, attempt, workflow_agent) do
+          {:ok, workflow_agent}
+        else
+          append_recomputed_success_progression(runtime, workflow_agent, success, retries_left)
+        end
+
       {:run_instruction, _output, plan} ->
         if RunInstruction.recorded?(plan, workflow_agent, attempt, success.definition) do
           {:ok, workflow_agent}
@@ -841,6 +905,18 @@ defmodule Squidie.Runtime.Journal.Executor do
           retries_left
         )
 
+      {:emit, result, intent} ->
+        append_recomputed_emit(
+          runtime,
+          workflow_agent,
+          success,
+          result,
+          intent,
+          execution_opts,
+          schedule_base_at,
+          retries_left
+        )
+
       {:run_instruction, result, plan} ->
         append_recomputed_run_instruction(
           runtime,
@@ -853,6 +929,94 @@ defmodule Squidie.Runtime.Journal.Executor do
           retries_left
         )
     end
+  end
+
+  defp append_recomputed_emit(
+         %{queue: queue, now: now} = runtime,
+         workflow_agent,
+         %{
+           attempt: %ActionAttempt{} = attempt,
+           definition: definition,
+           step_name: step_name
+         } = success,
+         result,
+         intent,
+         execution_opts,
+         schedule_base_at,
+         retries_left
+       ) do
+    progression = progression_context(execution_opts, queue, schedule_base_at, now)
+    source_applied? = source_applied?(workflow_agent, attempt)
+
+    with {:ok, transition, progression_entries} <-
+           emit_source_progression(
+             source_applied?,
+             workflow_agent,
+             attempt,
+             definition,
+             step_name,
+             result,
+             progression
+           ),
+         {:ok, outbox_entries} <- Outbox.durable_entries(intent, attempt, workflow_agent, now) do
+      source_entries =
+        if source_applied? do
+          []
+        else
+          [
+            runnable_applied_entry!(
+              attempt,
+              result,
+              transition,
+              now,
+              execution_opts,
+              schedule_base_at
+            )
+          ]
+        end
+
+      {terminal_entries, progression_entries} =
+        Enum.split_with(progression_entries, &completed_terminal_entry?/1)
+
+      entries = source_entries ++ outbox_entries ++ progression_entries ++ terminal_entries
+
+      append_success_entries(runtime, workflow_agent, success, entries, retries_left)
+    end
+  end
+
+  defp emit_source_progression(
+         true,
+         _workflow_agent,
+         _attempt,
+         _definition,
+         _step_name,
+         _result,
+         _progression
+       ) do
+    {:ok, nil, []}
+  end
+
+  defp emit_source_progression(
+         false,
+         workflow_agent,
+         attempt,
+         definition,
+         step_name,
+         result,
+         progression
+       ) do
+    success_progression_entries(
+      workflow_agent,
+      attempt,
+      definition,
+      step_name,
+      result,
+      progression
+    )
+  end
+
+  defp completed_terminal_entry?(entry) do
+    entry.type == :run_terminal and Map.get(entry.data, :status) == :completed
   end
 
   defp append_recomputed_ordinary_success(
@@ -3250,6 +3414,49 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp record_step_result(
+         {:emit, output, directive, guardrails},
+         %{
+           runtime: runtime,
+           claim: %ClaimContext{} = claim,
+           workflow: workflow,
+           definition: definition,
+           step_name: step_name,
+           opts: opts
+         },
+         mark_finishing
+       ) do
+    mark_finishing.()
+
+    with :ok <- run_test_before_completion_hook(opts, claim.attempt) do
+      case complete_emit(
+             runtime,
+             claim,
+             definition,
+             step_name,
+             output,
+             directive,
+             guardrails
+           ) do
+        {:ok, snapshot} ->
+          {:ok, snapshot}
+
+        {:error, {:native_jido_effect_rejected, reason}} ->
+          fail_attempt(
+            runtime,
+            claim,
+            workflow,
+            definition,
+            step_name,
+            native_jido_effect_error(reason)
+          )
+
+        {:error, _reason} = error ->
+          error
+      end
+    end
+  end
+
+  defp record_step_result(
          {:run_instruction, output, directive, guardrails},
          %{
            runtime: runtime,
@@ -3538,6 +3745,12 @@ defmodule Squidie.Runtime.Journal.Executor do
     end
   end
 
+  defp evaluate_step_output({:emit, output, directive}, execution, guardrails) do
+    with {:ok, output_guardrails} <- evaluate_runtime_guardrails(execution, :output, output) do
+      {:emit, output, directive, guardrails ++ output_guardrails}
+    end
+  end
+
   defp evaluate_step_output({:continue_as_new, request}, _execution, guardrails) do
     {:continue_as_new, request, guardrails}
   end
@@ -3562,7 +3775,8 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp native_effect_progression_error?(%ActionAttempt{} = attempt, reason) do
     ResultEnvelope.supported_native_effect?(ActionAttempt.completion_encoding(attempt)) and
       (reason == :malformed_jido_result_envelope or
-         match?({:invalid_jido_run_instruction, _detail}, reason))
+         match?({:invalid_jido_run_instruction, _detail}, reason) or
+         match?({:invalid_jido_emit, _detail}, reason))
   end
 
   defp non_retryable_error(code, message) do
@@ -3738,6 +3952,7 @@ defmodule Squidie.Runtime.Journal.Executor do
   defp normalize_action_extras(output, extras) when is_map(output) do
     case Directives.normalize(extras) do
       {:ok, []} -> normalize_action_output(output)
+      {:emit, directive} -> {:emit, output, directive}
       {:run_instruction, directive} -> {:run_instruction, output, directive}
       {:error, _reason} = error -> error
     end
