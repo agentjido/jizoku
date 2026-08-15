@@ -116,6 +116,13 @@ boundary. It accepts inbound `Jido.Signal` envelopes, converts them with
 `Squidie.Runtime.Signal.JidoAdapter`, and applies the resulting Squidie
 runtime command.
 
+`BedrockMinimalHostApp.Workflows.RawJidoWorkflow` is the corresponding action
+example. Its workflow step is a raw `Jido.Action` that returns an ordinary
+result with an empty directive list, and the sample test executes it through
+the same journal runtime used by native Squidie steps. Durable Jido
+RunInstruction and Emit examples live in the minimal host app, where their
+fleet activation and external dispatch boundaries can be exercised directly.
+
 The example intentionally does not include another job backend. That keeps the
 adapter boundary clear while the spike evaluates Bedrock as the host-owned
 delivery and leasing layer for Jido-native Squidie execution.

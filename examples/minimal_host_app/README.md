@@ -16,6 +16,7 @@ This example shows how an application can:
 - exercise raw Jido actions through Squidie's explicit directive compatibility
   boundary
 - schedule allowlisted raw `Jido.Instruction` values as durable dynamic work
+- enqueue and deliver raw Jido `Emit` directives through a durable outbox
 
 ## Setup
 
@@ -117,18 +118,26 @@ The smoke task:
 - activates the same digest workflow through the host app's cron plugin
 - verifies both digest triggers complete through the same workflow graph
 
-The sample enables `config :squidie, continuation_fences: :enabled` and
-`config :squidie, jido_effects: :enabled` only in development and test because
-those smoke paths run one coherent application version. Its production
-configuration remains default-off. Production hosts must first upgrade and
-drain every worker that can read the affected queues; each flag is a host
-readiness assertion, not automatic cluster-version discovery.
+The sample enables `config :squidie, continuation_fences: :enabled`,
+`jido_effects: :enabled`, and `jido_emit_effects: :enabled` only in development
+and test because those smoke paths run one coherent application version. Its
+production configuration remains default-off. Production hosts must first
+upgrade and drain every worker that can read the affected queues; each flag is
+a host readiness assertion, not automatic cluster-version discovery.
 
 The test suite also runs
 `MinimalHostApp.Workflows.JidoDirectiveBoundary`, whose raw `Jido.Action`
-returns an `Emit` directive. The current interoperability boundary rejects the
-directive as a redaction-safe, non-retryable failure and proves the action
-output is not applied.
+returns a custom directive. The interoperability boundary rejects the directive
+as a redaction-safe, non-retryable failure and proves the action output is not
+applied.
+
+`MinimalHostApp.Workflows.JidoEmitWorkflow` demonstrates the supported Emit
+boundary. The raw action creates a real `Jido.Signal`; Squidie records its
+completion and outbox enqueue before dispatch, delivers it through a host-owned
+route, and appends the acknowledgement after delivery. The test suite exercises
+the same workflow through the isolated in-memory runtime and the Ecto journal,
+then verifies the redacted snapshot, timeline, explanation, and stable signal
+ID used for at-least-once deduplication.
 
 `MinimalHostApp.Workflows.JidoInstructionWorkflow` demonstrates the supported
 instruction boundary. Host code supplies an already applied runnable as the

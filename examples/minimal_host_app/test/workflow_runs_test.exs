@@ -10,6 +10,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias MinimalHostApp.Workflows.DailyDigest
   alias MinimalHostApp.Workflows.DependencyRecovery
   alias MinimalHostApp.Workflows.JidoDirectiveBoundary
+  alias MinimalHostApp.Workflows.JidoEmitWorkflow
   alias MinimalHostApp.Workflows.JidoErrorRecovery
   alias MinimalHostApp.Workflows.JidoInstructionWorkflow
   alias MinimalHostApp.Workflows.JidoRunInstructionWorkflow
@@ -120,6 +121,86 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            }
 
     refute inspect(failed) =~ "sample-secret"
+  end
+
+  test "raw Jido Emit directives deliver and expose redacted durable diagnostics" do
+    now = ~U[2026-08-10 12:00:00Z]
+
+    assert {:ok, runtime} =
+             Squidie.Test.start_runtime(
+               workflow: JidoEmitWorkflow,
+               now: now,
+               jido_dispatch_routes: jido_routes(self())
+             )
+
+    on_exit(fn -> Squidie.Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Squidie.Test.start(runtime, %{order_id: "order-test-runtime"})
+    assert {:completed, completed} = Squidie.Test.drain(runtime, run)
+
+    assert_receive {:signal,
+                    %Jido.Signal{
+                      type: "minimal_host.order.prepared",
+                      id: signal_id,
+                      data: %{"order_id" => "order-test-runtime"}
+                    }}
+
+    assert signal_id == "#{run.run_id}:order-prepared"
+    refute_receive {:signal, %Jido.Signal{id: ^signal_id}}
+    assert completed.context.jido_signal_prepared == true
+    assert completed.jido_signals.pending_count == 0
+    assert completed.jido_signals.delivered_count == 1
+
+    assert {:ok, timeline} = Squidie.Test.timeline(runtime, completed)
+
+    assert Enum.map(
+             Enum.filter(
+               timeline.events,
+               &(&1.type in [:jido_signal_enqueued, :run_terminal, :jido_signal_delivered])
+             ),
+             & &1.type
+           ) == [:jido_signal_enqueued, :run_terminal, :jido_signal_delivered]
+
+    refute inspect(completed.jido_signals) =~ "order-test-runtime"
+    refute inspect(timeline) =~ "order-test-runtime"
+  end
+
+  test "raw Jido Emit directives cross the Ecto journal and acknowledge delivery" do
+    queue = "jido-emit-#{System.unique_integer([:positive])}"
+
+    assert {:ok, started} =
+             Squidie.start(
+               JidoEmitWorkflow,
+               :manual,
+               %{order_id: "order-ecto"},
+               queue: queue
+             )
+
+    assert {:ok, completed} =
+             Squidie.execute_next(
+               queue: queue,
+               owner_id: "minimal-host-jido-emit",
+               jido_dispatch_routes: jido_routes(self())
+             )
+
+    assert completed.run_id == started.run_id
+    assert completed.status == :completed
+    assert completed.jido_signals.pending_count == 0
+    assert completed.jido_signals.delivered_count == 1
+
+    assert_receive {:signal,
+                    %Jido.Signal{
+                      id: signal_id,
+                      data: %{"order_id" => "order-ecto"}
+                    }}
+
+    assert signal_id == "#{started.run_id}:order-prepared"
+    refute_receive {:signal, %Jido.Signal{id: ^signal_id}}
+
+    assert {:ok, explanation} = Squidie.explain_run(started.run_id, queue: queue)
+    assert explanation.details.jido_signal_delivery.delivered_count == 1
+    refute :deliver_jido_signals in explanation.next_actions
+    refute inspect(explanation.details.jido_signal_delivery) =~ "order-ecto"
   end
 
   test "raw Jido error directives use durable workflow error transitions" do
@@ -1973,6 +2054,10 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     |> Keyword.put(:queues, false)
     |> Keyword.put(:peer, {Oban.Peers.Isolated, [leader?: true]})
     |> Oban.Config.new()
+  end
+
+  defp jido_routes(target) do
+    %{"default" => {:pid, target: target, delivery_mode: :async}}
   end
 
   defp local_ledger_entries(run_id) do
