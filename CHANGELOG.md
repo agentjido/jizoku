@@ -5,6 +5,8 @@ All notable changes to Jizoku will be documented in this file.
 The format is based on Keep a Changelog and the project follows Semantic
 Versioning.
 
+## [Unreleased]
+
 ## [0.4.0] - 2026-08-15
 
 ### Added
