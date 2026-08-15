@@ -702,12 +702,34 @@ Raw actions may return `{:ok, output}` or `{:ok, output, []}`. A lone Jido
 is not applied, its payload is excluded from the durable error, and normal
 workflow error transitions may handle the failed outcome.
 
-Other non-empty directive lists remain explicit, non-retryable compatibility
-failures instead of successful attempt completions. Malformed extras fail at
-the same boundary. This fail-closed contract prevents `Emit`, `RunInstruction`,
+A lone standard `Jido.Agent.Directive.run_instruction/1` directive is also
+supported when `config :squidie, jido_effects: :enabled` and the executor has a
+host-owned `:action_registry`. Squidie atomically records the source completion,
+then atomically applies its output and plans the instruction as durable dynamic
+work. The instruction ID is the stable effect identity; retries, checkpoint
+loss, worker restarts, and unknown append outcomes converge without rerunning a
+durably completed source action. The instruction result enters workflow context
+like other dynamic action output. Squidie records the effect using a dedicated
+completion encoding rather than overloading step execution options. The
+`__squidie_jido_result__` output key remains reserved for Squidie's internal raw
+Jido action envelope.
+
+Squidie does not own a Jido AgentServer or its `cmd/2` state, so custom
+`RunInstruction.result_action` callbacks and non-empty directive metadata are
+rejected. Other non-empty directive lists remain explicit, non-retryable
+compatibility failures instead of successful attempt completions. Malformed
+extras fail at the same boundary. This fail-closed contract prevents `Emit`,
 custom directives, mixed directive lists, and other action effects from being
 silently discarded while their durable translations are added in focused
 interoperability slices.
+
+`jido_effects` is default-off. Enable it only after every executor and recovery
+reader for the affected queues runs a release that understands durable Jido
+effect envelopes. Once an effect has been emitted, keep compatible workers in
+service for as long as emission remains enabled. Before restoring an older
+reader, disable new emission and drain or repair every encoded completion on the
+affected queues. Disabling the flag blocks new effects but does not block
+recovery of already persisted effects.
 
 ### Deferred Continuation
 

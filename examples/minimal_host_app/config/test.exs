@@ -28,6 +28,7 @@ config :squidie,
   repo: MinimalHostApp.Repo,
   runtime: :journal,
   read_model: :read_model,
-  continuation_fences: :enabled
+  continuation_fences: :enabled,
+  jido_effects: :enabled
 
 config :logger, level: :warning
