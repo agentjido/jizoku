@@ -1,4 +1,4 @@
-defmodule Squidie.Test.TelemetryCapture do
+defmodule Jizoku.Test.TelemetryCapture do
   @moduledoc false
 
   @spec attach([:telemetry.event_name()], pid()) :: term()

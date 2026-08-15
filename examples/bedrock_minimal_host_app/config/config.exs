@@ -13,11 +13,11 @@ config :bedrock_minimal_host_app, BedrockMinimalHostApp.Repo,
   show_sensitive_data_on_connection_error: true,
   stacktrace: true
 
-config :bedrock_minimal_host_app, BedrockMinimalHostApp.SquidieDeliveryAdapter,
+config :bedrock_minimal_host_app, BedrockMinimalHostApp.JizokuDeliveryAdapter,
   queue_id: "tenant_a",
-  topic: "squidie:payload"
+  topic: "jizoku:payload"
 
-config :squidie,
+config :jizoku,
   repo: BedrockMinimalHostApp.Repo
 
 import_config "#{config_env()}.exs"

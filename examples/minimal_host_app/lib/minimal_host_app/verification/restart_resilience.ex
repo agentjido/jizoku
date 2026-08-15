@@ -2,7 +2,7 @@ defmodule MinimalHostApp.Verification.RestartResilience do
   @moduledoc """
   Repeatable restart and deploy resilience checks for the example host app.
 
-  This harness focuses on the runtime guarantees Squidie claims today:
+  This harness focuses on the runtime guarantees Jizoku claims today:
   queued work, delayed work, and retrying work should resume correctly after
   Oban restarts because durable run state and step jobs live in Postgres.
   """
@@ -13,10 +13,10 @@ defmodule MinimalHostApp.Verification.RestartResilience do
   @poll_attempts 60
 
   @spec run!() :: %{
-          queued_run: Squidie.ReadModel.Inspection.Snapshot.t(),
-          delayed_run: Squidie.ReadModel.Inspection.Snapshot.t(),
-          retry_run: Squidie.ReadModel.Inspection.Snapshot.t(),
-          paused_run: Squidie.ReadModel.Inspection.Snapshot.t()
+          queued_run: Jizoku.ReadModel.Inspection.Snapshot.t(),
+          delayed_run: Jizoku.ReadModel.Inspection.Snapshot.t(),
+          retry_run: Jizoku.ReadModel.Inspection.Snapshot.t(),
+          paused_run: Jizoku.ReadModel.Inspection.Snapshot.t()
         }
   def run! do
     RuntimeHarness.ensure_runtime_started()
@@ -29,7 +29,7 @@ defmodule MinimalHostApp.Verification.RestartResilience do
     }
   end
 
-  @spec verify_queued_run_restart!() :: Squidie.ReadModel.Inspection.Snapshot.t()
+  @spec verify_queued_run_restart!() :: Jizoku.ReadModel.Inspection.Snapshot.t()
   defp verify_queued_run_restart! do
     {gateway_pid, port} =
       RuntimeHarness.start_gateway_server(
@@ -63,7 +63,7 @@ defmodule MinimalHostApp.Verification.RestartResilience do
     end
   end
 
-  @spec verify_delayed_run_restart!() :: Squidie.ReadModel.Inspection.Snapshot.t()
+  @spec verify_delayed_run_restart!() :: Jizoku.ReadModel.Inspection.Snapshot.t()
   defp verify_delayed_run_restart! do
     {:ok, run} = WorkflowRuns.start_cancellable_wait(%{account_id: "acct_resilience_delay"})
 
@@ -88,7 +88,7 @@ defmodule MinimalHostApp.Verification.RestartResilience do
     completed_run
   end
 
-  @spec verify_retry_run_restart!() :: Squidie.ReadModel.Inspection.Snapshot.t()
+  @spec verify_retry_run_restart!() :: Jizoku.ReadModel.Inspection.Snapshot.t()
   defp verify_retry_run_restart! do
     {:ok, run} =
       WorkflowRuns.start_retry_verification(%{
@@ -119,7 +119,7 @@ defmodule MinimalHostApp.Verification.RestartResilience do
     completed_run
   end
 
-  @spec verify_paused_run_restart!() :: Squidie.ReadModel.Inspection.Snapshot.t()
+  @spec verify_paused_run_restart!() :: Jizoku.ReadModel.Inspection.Snapshot.t()
   defp verify_paused_run_restart! do
     {:ok, run} = WorkflowRuns.start_manual_approval(%{account_id: "acct_resilience_pause"})
     :ok = RuntimeHarness.perform_scheduled_step!(run.run_id, "wait_for_approval")

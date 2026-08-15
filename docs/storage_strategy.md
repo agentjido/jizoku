@@ -1,20 +1,20 @@
 # Storage Strategy and Adapter Contract
 
-Squidie is storage-adapter agnostic at the journal runtime boundary. That
+Jizoku is storage-adapter agnostic at the journal runtime boundary. That
 does not mean every database is automatically a correct runtime store. A storage
 backend is portable only when its adapter provides the durability and ordering
 semantics the runtime depends on.
 
 The bundled production relational path is
-`Squidie.Runtime.Journal.Storage.Ecto` with a Postgres-compatible Ecto repo.
-When `journal_storage` is omitted, Squidie infers:
+`Jizoku.Runtime.Journal.Storage.Ecto` with a Postgres-compatible Ecto repo.
+When `journal_storage` is omitted, Jizoku infers:
 
 ```elixir
-{Squidie.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}
+{Jizoku.Runtime.Journal.Storage.Ecto, repo: MyApp.Repo}
 ```
 
 That adapter persists Jido journal threads, entries, and checkpoints in the
-host application's database through Squidie's installed migrations. It keeps
+host application's database through Jizoku's installed migrations. It keeps
 workflow history, dispatch state, checkpoints, and host data inside the same
 database boundary while still leaving the runtime behind an adapter-shaped
 contract.
@@ -23,30 +23,30 @@ contract.
 
 Workflow authors should not depend on storage APIs. Workflows declare triggers,
 payloads, steps, transitions, retries, waits, and manual controls. Host code
-starts runs, inspects runs, and provides workers through public Squidie APIs.
+starts runs, inspects runs, and provides workers through public Jizoku APIs.
 
 Storage adapters are for the runtime boundary:
 
-- `Squidie.Runtime.Journal.Storage` normalizes trusted host configuration.
-- The configured adapter implements the Jido storage callbacks Squidie uses
+- `Jizoku.Runtime.Journal.Storage` normalizes trusted host configuration.
+- The configured adapter implements the Jido storage callbacks Jizoku uses
   for journal threads and checkpoints.
 - Runtime modules append durable facts and rebuild projections through that
   boundary.
 
-An optional trusted `:partition` scopes Squidie's logical runtime identities
+An optional trusted `:partition` scopes Jizoku's logical runtime identities
 before they reach the adapter. With no partition, physical keys remain exactly
-the legacy `squidie:run:*`, `squidie:dispatch:*`, `squidie:run_index:*`, and
-`squidie:run_catalog:all` forms. With a partition, each is rooted under
-`squidie:partition:<partition>:` and checkpoints use the same scoped thread
+the legacy `jizoku:run:*`, `jizoku:dispatch:*`, `jizoku:run_index:*`, and
+`jizoku:run_catalog:all` forms. With a partition, each is rooted under
+`jizoku:partition:<partition>:` and checkpoints use the same scoped thread
 identity. Adapters need no schema change, but must treat the full supplied key
-as opaque. Squidie never falls back to an unpartitioned or different-partition
+as opaque. Jizoku never falls back to an unpartitioned or different-partition
 key after a miss.
 
 Changing the configured partition is therefore a runtime routing cutover.
-Squidie does not copy or merge existing histories, catalogs, indexes, or
+Jizoku does not copy or merge existing histories, catalogs, indexes, or
 checkpoints. Hosts must keep workers and control/read traffic on the same
 partition during rollout, drain prior namespaces deliberately, and avoid
-rolling back to a Squidie version that cannot address partitioned keys while
+rolling back to a Jizoku version that cannot address partitioned keys while
 partitioned runs are still active.
 
 Keep storage adapters separate from executor, queue, and lease adapters. A
@@ -57,7 +57,7 @@ stay separate.
 
 ```mermaid
 flowchart LR
-    workflow["Workflow modules"] --> api["Squidie public APIs"]
+    workflow["Workflow modules"] --> api["Jizoku public APIs"]
     api --> runtime["Journal runtime"]
     runtime --> storage["Storage adapter<br/>threads, entries, checkpoints"]
     runtime --> queue["Queue / delivery adapter<br/>cron and backend delivery"]
@@ -85,7 +85,7 @@ flowchart LR
 The Ecto adapter is the recommended starting point for production hosts that
 use Postgres or a Postgres-compatible Ecto adapter. It:
 
-- stores journal threads in Squidie's journal thread table
+- stores journal threads in Jizoku's journal thread table
 - stores normalized entries in the journal entry table
 - stores checkpoints in the checkpoint table
 - serializes appends through row-level locking
@@ -119,6 +119,6 @@ and it should not merge storage concerns with Bedrock queue, delivery, lease,
 heartbeat, retry requeue, or dead-letter adapters.
 
 The current Bedrock example app demonstrates backend-owned delivery and lease
-behavior while still using the configured Squidie journal storage boundary
+behavior while still using the configured Jizoku journal storage boundary
 for workflow and attempt state. A future Bedrock storage adapter can become a
 first-class option without changing workflow authoring or public runtime APIs.

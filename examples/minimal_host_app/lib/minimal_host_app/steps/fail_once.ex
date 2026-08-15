@@ -2,12 +2,12 @@ defmodule MinimalHostApp.Steps.FailOnce do
   @moduledoc """
   Example step that fails once per run and succeeds on the next attempt.
 
-  The production-readiness harness uses this step to verify Squidie retry
+  The production-readiness harness uses this step to verify Jizoku retry
   semantics without depending on transport-level retry behavior in external
   clients.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :fail_once,
     description: "Fails once per run and then succeeds",
     input_schema: [
@@ -18,8 +18,8 @@ defmodule MinimalHostApp.Steps.FailOnce do
     ]
 
   @impl true
-  @spec run(map(), Squidie.Step.Context.t()) :: {:ok, map()} | {:retry, map()}
-  def run(%{attempt_id: attempt_id}, %Squidie.Step.Context{run_id: run_id})
+  @spec run(map(), Jizoku.Step.Context.t()) :: {:ok, map()} | {:retry, map()}
+  def run(%{attempt_id: attempt_id}, %Jizoku.Step.Context{run_id: run_id})
       when is_binary(run_id) do
     key = {__MODULE__, run_id}
 

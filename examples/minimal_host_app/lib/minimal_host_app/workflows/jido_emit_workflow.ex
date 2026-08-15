@@ -1,9 +1,9 @@
 defmodule MinimalHostApp.Workflows.JidoEmitWorkflow do
   @moduledoc """
-  Battle-tests a raw Jido Emit directive through Squidie's durable outbox.
+  Battle-tests a raw Jido Emit directive through Jizoku's durable outbox.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   defmodule Publish do
     use Jido.Action,

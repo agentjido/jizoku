@@ -1,5 +1,5 @@
 # Used by "mix format"
 [
-  import_deps: [:squidie],
+  import_deps: [:jizoku],
   inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"]
 ]

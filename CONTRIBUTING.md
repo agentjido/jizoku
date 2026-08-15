@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to Squidie.
+Thanks for contributing to Jizoku.
 
 ## Development Setup
 

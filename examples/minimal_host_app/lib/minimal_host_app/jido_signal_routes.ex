@@ -1,15 +1,15 @@
 defmodule MinimalHostApp.JidoSignalRoutes do
   @moduledoc """
-  Allowlisted domain-signal routes into Squidie lifecycle commands.
+  Allowlisted domain-signal routes into Jizoku lifecycle commands.
 
   The resolver matches trusted signal types and chooses compiled workflow
   modules. Signal data can supply workflow input, but never module names or
   runtime routing options.
   """
 
-  @behaviour Squidie.Jido.SignalResolver
+  @behaviour Jizoku.Jido.SignalResolver
 
-  @impl Squidie.Jido.SignalResolver
+  @impl Jizoku.Jido.SignalResolver
   def resolve(%Jido.Signal{
         type: "minimal_host.dependency_recovery.requested",
         data: %{

@@ -6,7 +6,7 @@ defmodule BedrockMinimalHostApp.Steps.VoidPaymentAuthorization do
   rather than a same-step fallback.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :void_payment_authorization,
     description: "Voids a previous payment authorization",
     input_schema: [

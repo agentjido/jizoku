@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Workflows.RetryVerification do
   Example workflow used by the production-readiness harness to verify retries.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :retry_verification do

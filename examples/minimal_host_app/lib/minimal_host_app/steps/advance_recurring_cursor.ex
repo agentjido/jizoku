@@ -3,12 +3,12 @@ defmodule MinimalHostApp.Steps.AdvanceRecurringCursor do
   Advances one recurring cursor by continuing into a fresh workflow run.
   """
 
-  use Squidie.Step,
+  use Jizoku.Step,
     name: :advance_recurring_cursor,
     description: "Continues the first cursor page and completes the successor"
 
-  @impl Squidie.Step
-  @spec run(map(), Squidie.Step.Context.t()) :: Squidie.Step.result()
+  @impl Jizoku.Step
+  @spec run(map(), Jizoku.Step.Context.t()) :: Jizoku.Step.result()
   def run(%{cursor: 0}, _context) do
     {:continue_as_new, %{cursor: 1}, key: "cursor-1", definition: :current}
   end

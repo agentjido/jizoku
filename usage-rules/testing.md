@@ -1,4 +1,4 @@
-# Squidie Testing Usage Rules
+# Jizoku Testing Usage Rules
 
 ## Test Scope
 

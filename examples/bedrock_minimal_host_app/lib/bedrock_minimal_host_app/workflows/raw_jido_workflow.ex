@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Workflows.RawJidoWorkflow do
   Demonstrates an ordinary raw Jido action on the journal executor path.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   defmodule Normalize do
     use Jido.Action,

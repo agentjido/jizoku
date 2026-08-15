@@ -1,28 +1,28 @@
 # Tool Adapters
 
-Squidie exposes a small tool boundary for workflow steps that need to talk
+Jizoku exposes a small tool boundary for workflow steps that need to talk
 to external systems.
 
 ## Contract
 
-Tool adapters implement `Squidie.Tools.Adapter` and are invoked through
-`Squidie.Tools.invoke/4`.
+Tool adapters implement `Jizoku.Tools.Adapter` and are invoked through
+`Jizoku.Tools.invoke/4`.
 
 ```elixir
 {:ok, result} =
-  Squidie.Tools.invoke(MyApp.Tools.SomeAdapter, request, context)
+  Jizoku.Tools.invoke(MyApp.Tools.SomeAdapter, request, context)
 ```
 
 The shared contract is:
 
 - request: a map owned by the adapter
 - context: a workflow or step context map
-- success: `{:ok, %Squidie.Tools.Result{}}`
-- failure: `{:error, %Squidie.Tools.Error{}}`
+- success: `{:ok, %Jizoku.Tools.Result{}}`
+- failure: `{:error, %Jizoku.Tools.Error{}}`
 
 ## Normalized Result
 
-`Squidie.Tools.Result` contains:
+`Jizoku.Tools.Result` contains:
 
 - `adapter`: the adapter module
 - `payload`: the normalized adapter response
@@ -30,7 +30,7 @@ The shared contract is:
 
 ## Normalized Error
 
-`Squidie.Tools.Error` contains:
+`Jizoku.Tools.Error` contains:
 
 - `adapter`: the adapter module
 - `kind`: normalized error kind
@@ -39,12 +39,12 @@ The shared contract is:
 - `retryable?`: whether the failure is a reasonable candidate for workflow retry
 
 Steps can convert tool errors into plain maps with
-`Squidie.Tools.Error.to_map/1` before returning them as workflow step
+`Jizoku.Tools.Error.to_map/1` before returning them as workflow step
 failures.
 
 ## HTTP Adapter
 
-`Squidie.Tools.HTTP` is the first concrete adapter.
+`Jizoku.Tools.HTTP` is the first concrete adapter.
 
 Supported request shape:
 
@@ -64,18 +64,18 @@ Successful responses are normalized to:
 - `body`
 
 HTTP responses with status `>= 400`, transport failures, and timeouts are
-normalized into `Squidie.Tools.Error`.
+normalized into `Jizoku.Tools.Error`.
 
 ## HTTP Runtime Action
 
-`Squidie.Step.HTTP` wraps the HTTP adapter as a native workflow step for
+`Jizoku.Step.HTTP` wraps the HTTP adapter as a native workflow step for
 runtime-authored specs. Hosts expose it through the action registry under a
 stable key:
 
 ```elixir
 registry = %{
   "http.request" => [
-    module: Squidie.Step.HTTP,
+    module: Jizoku.Step.HTTP,
     category: "HTTP",
     action_opts: [allowed_hosts: ["api.example.test"]],
     credential_requirements: [%{name: "billing_api", required?: true}]
@@ -89,7 +89,7 @@ The step expects a `request` map with `method` plus either `url` or
 query string; use `query_params` for query data. `url_template` placeholders
 use `{{ name }}` syntax and are expanded from the `bindings` map.
 
-Use `Squidie.Step.HTTP.validate_request/1` to validate structural request
+Use `Jizoku.Step.HTTP.validate_request/1` to validate structural request
 configuration without policy. Use `validate_request/2` or
 `validate_action_input/2` with the same host-owned `action_opts` before
 starting a runtime-authored run. The runtime also invokes `validate_action_input/2`
@@ -112,14 +112,14 @@ disabled at the shared HTTP adapter boundary.
 
 ## Elixir Runtime Action
 
-`Squidie.Step.Elixir` invokes host-approved Elixir adapters from
+`Jizoku.Step.Elixir` invokes host-approved Elixir adapters from
 runtime-authored specs. Hosts expose the step through the action registry and
 provide executable adapter definitions in registry-owned `action_opts`:
 
 ```elixir
 registry = %{
   "elixir.run" => [
-    module: Squidie.Step.Elixir,
+    module: Jizoku.Step.Elixir,
     category: "Elixir",
     input_contract: %{
       adapter: %{type: :string, required?: true, enum: ["billing.load_invoice"]},
@@ -148,7 +148,7 @@ The reusable action never loads modules, creates atoms, or selects functions
 from runtime-authored text. Start-time validation uses the registry action
 options, but persisted runtime specs store only safe adapter metadata. Workers
 that execute Elixir runtime actions should pass the same host-owned
-`action_registry:` to `Squidie.execute_next/1` so current adapter policy is
+`action_registry:` to `Jizoku.execute_next/1` so current adapter policy is
 resolved at execution.
 
 Hosts should override `input_contract` when they want editor catalogs to show
@@ -166,7 +166,7 @@ That keeps retry policy in one place:
 
 - adapters report the first failure
 - workflow steps declare retry policy
-- Squidie appends the next journal dispatch attempt with the resolved retry
+- Jizoku appends the next journal dispatch attempt with the resolved retry
   visibility time
 
 This keeps transport behavior predictable and avoids stacking HTTP-client

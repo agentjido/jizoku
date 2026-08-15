@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.SagaCheckout do
   Example saga workflow that rolls back completed steps after downstream failure.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :saga_checkout do

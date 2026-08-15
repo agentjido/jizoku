@@ -1,4 +1,4 @@
-defmodule Squidie.DataCase do
+defmodule Jizoku.DataCase do
   @moduledoc false
 
   use ExUnit.CaseTemplate
@@ -7,18 +7,18 @@ defmodule Squidie.DataCase do
 
   using do
     quote do
-      alias Squidie.Test.Repo
+      alias Jizoku.Test.Repo
 
       import ExUnit.Assertions
       import Ecto
       import Ecto.Changeset
       import Ecto.Query
-      import Squidie.DataCase
+      import Jizoku.DataCase
     end
   end
 
   setup tags do
-    pid = Sandbox.start_owner!(Squidie.Test.Repo, shared: not tags[:async])
+    pid = Sandbox.start_owner!(Jizoku.Test.Repo, shared: not tags[:async])
     on_exit(fn -> Sandbox.stop_owner(pid) end)
     :ok
   end

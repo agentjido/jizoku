@@ -44,7 +44,7 @@ defmodule MinimalHostApp.Verification.Soak do
     end
   end
 
-  @spec run_success_batch!() :: {[Squidie.ReadModel.Inspection.Snapshot.t()], pid()}
+  @spec run_success_batch!() :: {[Jizoku.ReadModel.Inspection.Snapshot.t()], pid()}
   defp run_success_batch! do
     {gateway_pid, port} =
       RuntimeHarness.start_gateway_server(
@@ -87,8 +87,8 @@ defmodule MinimalHostApp.Verification.Soak do
     {completed_runs, gateway_pid}
   end
 
-  @spec run_replays!([Squidie.ReadModel.Inspection.Snapshot.t()]) :: [
-          Squidie.ReadModel.Inspection.Snapshot.t()
+  @spec run_replays!([Jizoku.ReadModel.Inspection.Snapshot.t()]) :: [
+          Jizoku.ReadModel.Inspection.Snapshot.t()
         ]
   defp run_replays!(successful_runs) do
     successful_runs
@@ -109,7 +109,7 @@ defmodule MinimalHostApp.Verification.Soak do
     end)
   end
 
-  @spec run_retry_batch!() :: [Squidie.ReadModel.Inspection.Snapshot.t()]
+  @spec run_retry_batch!() :: [Jizoku.ReadModel.Inspection.Snapshot.t()]
   defp run_retry_batch! do
     1..@retry_run_count
     |> Enum.map(fn index ->
@@ -117,7 +117,7 @@ defmodule MinimalHostApp.Verification.Soak do
     end)
   end
 
-  @spec run_retry_scenario!(String.t()) :: Squidie.ReadModel.Inspection.Snapshot.t()
+  @spec run_retry_scenario!(String.t()) :: Jizoku.ReadModel.Inspection.Snapshot.t()
   defp run_retry_scenario!(attempt_id) do
     {:ok, run} = WorkflowRuns.start_retry_verification(%{attempt_id: attempt_id})
 
@@ -134,7 +134,7 @@ defmodule MinimalHostApp.Verification.Soak do
     completed_run
   end
 
-  @spec run_cancellation_batch!() :: [Squidie.ReadModel.Inspection.Snapshot.t()]
+  @spec run_cancellation_batch!() :: [Jizoku.ReadModel.Inspection.Snapshot.t()]
   defp run_cancellation_batch! do
     1..@cancellation_run_count
     |> Enum.map(fn index ->

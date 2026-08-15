@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.PaymentRecovery do
   Example workflow used by the host app harness.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :payment_recovery do

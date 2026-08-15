@@ -1,5 +1,5 @@
-defmodule Squidie.Test.Repo do
+defmodule Jizoku.Test.Repo do
   @moduledoc false
 
-  use Ecto.Repo, otp_app: :squidie, adapter: Ecto.Adapters.Postgres
+  use Ecto.Repo, otp_app: :jizoku, adapter: Ecto.Adapters.Postgres
 end

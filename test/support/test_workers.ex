@@ -1,7 +1,7 @@
-defmodule Squidie.Test.StepWorker do
+defmodule Jizoku.Test.StepWorker do
   @moduledoc false
 
-  alias Squidie.Runtime.Runner
+  alias Jizoku.Runtime.Runner
 
   @spec perform(%{args: map()}) :: term()
   def perform(%{args: %{"kind" => _kind} = args}) do
@@ -13,10 +13,10 @@ defmodule Squidie.Test.StepWorker do
   end
 end
 
-defmodule Squidie.Test.CronTriggerWorker do
+defmodule Jizoku.Test.CronTriggerWorker do
   @moduledoc false
 
-  alias Squidie.Runtime.Runner
+  alias Jizoku.Runtime.Runner
 
   @spec perform(%{args: map()}) :: term()
   def perform(%{args: %{"kind" => "cron"} = args}) do

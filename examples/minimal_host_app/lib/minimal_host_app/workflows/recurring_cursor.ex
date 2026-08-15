@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.RecurringCursor do
   Example recurring workflow that continues with fresh bounded run history.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     version "2026-08-09.recurring-cursor"

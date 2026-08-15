@@ -18,14 +18,14 @@ defmodule MinimalHostApp.DataCase do
   end
 
   setup tags do
-    original_queue = Application.get_env(:squidie, :queue)
+    original_queue = Application.get_env(:jizoku, :queue)
     queue = "minimal-host-app-test-#{System.unique_integer([:positive])}"
-    Application.put_env(:squidie, :queue, queue)
+    Application.put_env(:jizoku, :queue, queue)
 
     on_exit(fn ->
       case original_queue do
-        nil -> Application.delete_env(:squidie, :queue)
-        queue -> Application.put_env(:squidie, :queue, queue)
+        nil -> Application.delete_env(:jizoku, :queue)
+        queue -> Application.put_env(:jizoku, :queue, queue)
       end
     end)
 
@@ -36,9 +36,9 @@ defmodule MinimalHostApp.DataCase do
   end
 
   defp cleanup_runtime_state do
-    MinimalHostApp.Repo.delete_all("squidie_journal_entries")
-    MinimalHostApp.Repo.delete_all("squidie_journal_checkpoints")
-    MinimalHostApp.Repo.delete_all("squidie_journal_threads")
+    MinimalHostApp.Repo.delete_all("jizoku_journal_entries")
+    MinimalHostApp.Repo.delete_all("jizoku_journal_checkpoints")
+    MinimalHostApp.Repo.delete_all("jizoku_journal_threads")
     MinimalHostApp.Repo.delete_all("local_ledger_entries")
   end
 end

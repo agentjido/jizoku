@@ -3,7 +3,7 @@ defmodule BedrockMinimalHostApp.Workflows.ManualPause do
   Example workflow that waits for an explicit operator resume.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :manual_pause do

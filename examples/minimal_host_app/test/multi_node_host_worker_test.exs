@@ -1,17 +1,17 @@
 defmodule MinimalHostApp.MultiNodeHostWorkerTest do
   use MinimalHostApp.DataCase, async: false
 
-  alias Squidie.ReadModel.Explanation.Diagnostic
-  alias Squidie.ReadModel.Inspection.Snapshot
-  alias Squidie.Runtime.Journal
-  alias Squidie.Runtime.Journal.Storage.Ecto, as: JournalStorage
+  alias Jizoku.ReadModel.Explanation.Diagnostic
+  alias Jizoku.ReadModel.Inspection.Snapshot
+  alias Jizoku.Runtime.Journal
+  alias Jizoku.Runtime.Journal.Storage.Ecto, as: JournalStorage
 
   @moduletag timeout: 20_000
 
   @controller_registry __MODULE__.ControllerRegistry
 
   defmodule Workflow do
-    use Squidie.Workflow
+    use Jizoku.Workflow
 
     workflow do
       trigger :probe do
@@ -28,11 +28,11 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
   end
 
   defmodule Probe do
-    use Squidie.Step,
+    use Jizoku.Step,
       name: "multi_node_host_worker_probe",
       input_schema: [probe_id: [type: :string, required: true]]
 
-    @impl Squidie.Step
+    @impl Jizoku.Step
     def run(%{probe_id: probe_id}, context) do
       claim_id = context.claim_id
 
@@ -95,7 +95,7 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
     refute_receive {:probe_started, _pid, _claim_id, "concurrent-claim"}, 50
 
     assert {:ok, %Snapshot{status: :completed, terminal?: true}} =
-             Squidie.inspect_run(run.run_id)
+             Jizoku.inspect_run(run.run_id)
 
     dispatch_entries = dispatch_entries!()
     assert count_entries(dispatch_entries, :attempt_claimed) == 1
@@ -126,7 +126,7 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
     after_original_lease = DateTime.add(claimed.data.lease_until, 1, :millisecond)
 
     assert {:ok, :none} =
-             Squidie.execute_next(owner_id: "node-b", now: after_original_lease)
+             Jizoku.execute_next(owner_id: "node-b", now: after_original_lease)
 
     assert {:ok,
             %Snapshot{
@@ -135,7 +135,7 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
               attempts: [
                 %{status: :claimed, owner_id: "node-a", claim_id: ^node_a_claim_id}
               ]
-            }} = Squidie.inspect_run(run.run_id, now: after_original_lease)
+            }} = Jizoku.inspect_run(run.run_id, now: after_original_lease)
 
     finish_probe(node_a_pid, node_a_claim_id, success("heartbeat"))
 
@@ -234,19 +234,19 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
     assert_receive {:probe_started, node_a_pid, node_a_claim_id, "cancellation"}, 1_000
 
     assert {:ok, %Snapshot{status: :cancelled, terminal?: true}} =
-             Squidie.cancel(run.run_id)
+             Jizoku.cancel(run.run_id)
 
     finish_probe(node_a_pid, node_a_claim_id, success("cancellation"))
     assert {:error, :terminal_run} = Task.await(node_a, 5_000)
 
-    assert {:ok, :none} = Squidie.execute_next(owner_id: "node-b")
+    assert {:ok, :none} = Jizoku.execute_next(owner_id: "node-b")
 
     assert {:ok,
             %Diagnostic{
               reason: :terminal,
               next_actions: [:inspect_terminal_run],
               evidence: %{terminal_status: :cancelled}
-            }} = Squidie.explain_run(run.run_id)
+            }} = Jizoku.explain_run(run.run_id)
 
     entries = dispatch_entries!()
     assert count_entries(entries, :attempt_completed) == 0
@@ -264,19 +264,19 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
     node_a = execute_async(task_supervisor, "node-a", lease_for: 30)
 
     assert_receive {:probe_started, node_a_pid, node_a_claim_id, "terminal-failure"}, 1_000
-    assert {:ok, :none} = Squidie.execute_next(owner_id: "node-b")
+    assert {:ok, :none} = Jizoku.execute_next(owner_id: "node-b")
 
     finish_probe(node_a_pid, node_a_claim_id, failure("terminal-failure"))
 
     assert {:ok, %Snapshot{status: :failed, terminal?: true}} = Task.await(node_a, 5_000)
-    assert {:ok, :none} = Squidie.execute_next(owner_id: "node-b")
+    assert {:ok, :none} = Jizoku.execute_next(owner_id: "node-b")
 
     assert {:ok,
             %Diagnostic{
               reason: :terminal,
               next_actions: [:inspect_terminal_run],
               evidence: %{terminal_status: :failed}
-            }} = Squidie.explain_run(run.run_id)
+            }} = Jizoku.explain_run(run.run_id)
 
     entries = dispatch_entries!()
     assert count_entries(entries, :attempt_claimed) == 1
@@ -285,14 +285,14 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
   end
 
   defp start_probe_run!(probe_id) do
-    assert {:ok, %Snapshot{} = run} = Squidie.start(Workflow, %{probe_id: probe_id})
+    assert {:ok, %Snapshot{} = run} = Jizoku.start(Workflow, %{probe_id: probe_id})
     assert {:ok, _owner} = Registry.register(@controller_registry, run.run_id, nil)
     run
   end
 
   defp execute_async(task_supervisor, owner_id, opts) do
     Task.Supervisor.async_nolink(task_supervisor, fn ->
-      Squidie.execute_next(Keyword.put(opts, :owner_id, owner_id))
+      Jizoku.execute_next(Keyword.put(opts, :owner_id, owner_id))
     end)
   end
 
@@ -303,7 +303,7 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
       send(parent, {:worker_ready, self()})
 
       receive do
-        :drain -> Squidie.execute_next(Keyword.put(opts, :owner_id, owner_id))
+        :drain -> Jizoku.execute_next(Keyword.put(opts, :owner_id, owner_id))
       end
     end)
   end
@@ -325,14 +325,14 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
               expired_claims: [
                 %{status: :claimed, owner_id: "node-a", claim_id: ^claim_id}
               ]
-            }} = Squidie.inspect_run(run_id, now: takeover_at)
+            }} = Jizoku.inspect_run(run_id, now: takeover_at)
 
     assert {:ok,
             %Diagnostic{
               reason: :expired_claim,
               next_actions: [:recover_expired_claim],
               details: %{expired_claim_count: 1, oldest_lease_until: %DateTime{}}
-            }} = Squidie.explain_run(run_id, now: takeover_at)
+            }} = Jizoku.explain_run(run_id, now: takeover_at)
   end
 
   defp assert_current_owner(run_id, claim_id, at) do
@@ -341,7 +341,7 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
               reason: :attempt_claimed,
               expired_claims: [],
               attempts: [%{status: :claimed, owner_id: "node-b", claim_id: ^claim_id}]
-            }} = Squidie.inspect_run(run_id, now: at)
+            }} = Jizoku.inspect_run(run_id, now: at)
   end
 
   defp await_dispatch_entry(type, attempts_left \\ 100)
@@ -365,7 +365,7 @@ defmodule MinimalHostApp.MultiNodeHostWorkerTest do
 
   defp dispatch_entries! do
     storage = {JournalStorage, repo: Repo}
-    queue = Application.fetch_env!(:squidie, :queue)
+    queue = Application.fetch_env!(:jizoku, :queue)
     assert {:ok, entries} = Journal.load_entries(storage, {:dispatch, queue})
     entries
   end

@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a new feature for Squidie
+about: Suggest a new feature for Jizoku
 labels: enhancement
 ---
 

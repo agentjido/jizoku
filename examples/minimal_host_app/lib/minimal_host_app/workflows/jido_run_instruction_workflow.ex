@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.JidoRunInstructionWorkflow do
   Battle-tests a raw Jido `RunInstruction` directive through durable recovery.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   alias MinimalHostApp.Workflows.JidoInstructionWorkflow
 

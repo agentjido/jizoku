@@ -8,7 +8,7 @@ It uses in-memory ETS journal storage so you can run it without a host app.
 
 ```elixir
 Mix.install([
-  {:squidie, "~> 0.3.7"}
+  {:jizoku, "~> 0.3.7"}
 ])
 ```
 
@@ -17,13 +17,13 @@ Mix.install([
 The runtime options below keep all durable facts inside this Livebook session.
 
 ```elixir
-storage = {Jido.Storage.ETS, table: :squidie_workflow_authoring_livebook}
+storage = {Jido.Storage.ETS, table: :jizoku_workflow_authoring_livebook}
 
-defmodule SquidieAuthoringLivebook.Repo do
+defmodule JizokuAuthoringLivebook.Repo do
 end
 
-Application.put_env(:squidie, :repo, SquidieAuthoringLivebook.Repo)
-Application.put_env(:squidie, :queue, "workflow-authoring")
+Application.put_env(:jizoku, :repo, JizokuAuthoringLivebook.Repo)
+Application.put_env(:jizoku, :queue, "workflow-authoring")
 
 opts = [
   runtime: :journal,
@@ -31,7 +31,7 @@ opts = [
   queue: "workflow-authoring"
 ]
 
-defmodule SquidieAuthoringLivebook.Output do
+defmodule JizokuAuthoringLivebook.Output do
   def step(step), do: Map.take(step, [:name, :module, :opts])
 
   def attempt(attempt) do
@@ -55,12 +55,12 @@ end
 
 ## Define Step Modules
 
-Prefer native `Squidie.Step` modules for application steps. The workflow DSL
+Prefer native `Jizoku.Step` modules for application steps. The workflow DSL
 stays readable, while each step keeps its own input and output contract.
 
 ```elixir
-defmodule SquidieAuthoringLivebook.ScoutWestRoad do
-  use Squidie.Step,
+defmodule JizokuAuthoringLivebook.ScoutWestRoad do
+  use Jizoku.Step,
     name: :scout_west_road,
     description: "Scouts the western road",
     input_schema: [
@@ -72,10 +72,10 @@ defmodule SquidieAuthoringLivebook.ScoutWestRoad do
       west_road: [type: :map, required: true]
     ]
 
-  @impl Squidie.Step
+  @impl Jizoku.Step
   def run(
         %{bearer: bearer, west_mark: west_mark, mountain_mark: mountain_mark},
-        %Squidie.Step.Context{}
+        %Jizoku.Step.Context{}
       ) do
     {:ok,
      %{
@@ -90,8 +90,8 @@ defmodule SquidieAuthoringLivebook.ScoutWestRoad do
   end
 end
 
-defmodule SquidieAuthoringLivebook.ScoutMountainPass do
-  use Squidie.Step,
+defmodule JizokuAuthoringLivebook.ScoutMountainPass do
+  use Jizoku.Step,
     name: :scout_mountain_pass,
     description: "Scouts the mountain pass",
     input_schema: [
@@ -102,8 +102,8 @@ defmodule SquidieAuthoringLivebook.ScoutMountainPass do
       mountain_pass: [type: :map, required: true]
     ]
 
-  @impl Squidie.Step
-  def run(%{bearer: bearer, mark: mark}, %Squidie.Step.Context{}) do
+  @impl Jizoku.Step
+  def run(%{bearer: bearer, mark: mark}, %Jizoku.Step.Context{}) do
     {:ok,
      %{
        mountain_pass: %{
@@ -116,8 +116,8 @@ defmodule SquidieAuthoringLivebook.ScoutMountainPass do
   end
 end
 
-defmodule SquidieAuthoringLivebook.ChooseRoute do
-  use Squidie.Step,
+defmodule JizokuAuthoringLivebook.ChooseRoute do
+  use Jizoku.Step,
     name: :choose_route,
     description: "Chooses a route from joined scouting reports",
     input_schema: [
@@ -131,8 +131,8 @@ defmodule SquidieAuthoringLivebook.ChooseRoute do
       route_plan: [type: :map, required: true]
     ]
 
-  @impl Squidie.Step
-  def run(input, %Squidie.Step.Context{}) do
+  @impl Jizoku.Step
+  def run(input, %Jizoku.Step.Context{}) do
     {:ok,
      %{
        route_plan: %{
@@ -163,8 +163,8 @@ This workflow has one root step, one dependent scout, and one join step:
   input shape it needs
 
 ```elixir
-defmodule SquidieAuthoringLivebook.RoutePlanningWorkflow do
-  use Squidie.Workflow
+defmodule JizokuAuthoringLivebook.RoutePlanningWorkflow do
+  use Jizoku.Workflow
 
   workflow do
     trigger :plan_errand do
@@ -177,21 +177,21 @@ defmodule SquidieAuthoringLivebook.RoutePlanningWorkflow do
       end
     end
 
-    step :scout_west_road, SquidieAuthoringLivebook.ScoutWestRoad,
+    step :scout_west_road, JizokuAuthoringLivebook.ScoutWestRoad,
       input: [
         bearer: [:bearer],
         west_mark: [:map_marks, :west_road],
         mountain_mark: [:map_marks, :mountain_pass]
       ]
 
-    step :scout_mountain_pass, SquidieAuthoringLivebook.ScoutMountainPass,
+    step :scout_mountain_pass, JizokuAuthoringLivebook.ScoutMountainPass,
       after: [:scout_west_road],
       input: [
         bearer: [:west_road, :bearer],
         mark: [:west_road, :mountain_mark]
       ]
 
-    step :choose_route, SquidieAuthoringLivebook.ChooseRoute,
+    step :choose_route, JizokuAuthoringLivebook.ChooseRoute,
       after: [:scout_west_road, :scout_mountain_pass],
       input: [
         bearer: [:west_road, :bearer],
@@ -211,14 +211,14 @@ without parsing source code.
 
 ```elixir
 {:ok, spec} =
-  Squidie.Workflow.to_spec(SquidieAuthoringLivebook.RoutePlanningWorkflow)
+  Jizoku.Workflow.to_spec(JizokuAuthoringLivebook.RoutePlanningWorkflow)
 
 %{
   workflow: spec.workflow,
   triggers: Enum.map(spec.triggers, &Map.take(&1, [:name, :type, :payload])),
   payload: spec.payload,
   entry_steps: spec.entry_steps,
-  steps: Enum.map(spec.steps, &SquidieAuthoringLivebook.Output.step/1),
+  steps: Enum.map(spec.steps, &JizokuAuthoringLivebook.Output.step/1),
   transitions: spec.transitions
 }
 ```
@@ -232,13 +232,13 @@ inspect or preview a draft workflow without starting it:
 ```elixir
 editor_map =
   spec
-  |> Squidie.Workflow.EditorSpec.to_map()
+  |> Jizoku.Workflow.EditorSpec.to_map()
   |> Jason.encode!()
   |> Jason.decode!()
 
-:ok = Squidie.Workflow.EditorSpec.validate_map(editor_map)
-{:ok, draft_graph} = Squidie.Workflow.EditorSpec.preview_graph(editor_map)
-{:ok, draft_diff} = Squidie.Workflow.EditorSpec.diff(spec, editor_map)
+:ok = Jizoku.Workflow.EditorSpec.validate_map(editor_map)
+{:ok, draft_graph} = Jizoku.Workflow.EditorSpec.preview_graph(editor_map)
+{:ok, draft_diff} = Jizoku.Workflow.EditorSpec.diff(spec, editor_map)
 
 Map.take(draft_graph, ["source", "status", "workflow"])
 ```
@@ -248,7 +248,7 @@ registry to `validate_map/2` and `preview_graph/2` before accepting the draft
 graph. Use `diff/2` or `diff/3` when a service needs to inspect what changed
 between a source spec and an edited draft.
 
-Use `Squidie.preview_spec/3` when an editor needs execution-style node output
+Use `Jizoku.preview_spec/3` when an editor needs execution-style node output
 for a sample payload before publishing or starting a run. Preview execution is
 read-only: it resolves action keys through the host registry, calls only entries
 that opt into `dry_run` behavior, returns per-node outputs or unsupported
@@ -261,7 +261,7 @@ registry = %{
 }
 
 {:ok, preview} =
-  Squidie.preview_spec(editor_map, %{invoice_id: "inv_123"},
+  Jizoku.preview_spec(editor_map, %{invoice_id: "inv_123"},
     action_registry: registry
   )
 
@@ -269,18 +269,18 @@ Enum.map(preview.nodes, &Map.take(&1, [:id, :status, :output, :error]))
 ```
 
 Registry entries without `dry_run: true` or an explicit `dry_run: {Module,
-:function}` callback are reported with `status: :unsupported`; Squidie never
+:function}` callback are reported with `status: :unsupported`; Jizoku never
 falls back to the durable action `run/2` callback during preview.
 
 ## Start A Run
 
-Manual triggers can start through `Squidie.start/3` when the workflow has
+Manual triggers can start through `Jizoku.start/3` when the workflow has
 one trigger.
 
 ```elixir
 {:ok, started} =
-  Squidie.start(
-    SquidieAuthoringLivebook.RoutePlanningWorkflow,
+  Jizoku.start(
+    JizokuAuthoringLivebook.RoutePlanningWorkflow,
     %{
       bearer: "Frodo",
       map_marks: %{west_road: "watched", mountain_pass: "snow"}
@@ -292,7 +292,7 @@ one trigger.
   run_id: started.run_id,
   status: started.status,
   reason: started.reason,
-  visible_attempts: Enum.map(started.visible_attempts, &SquidieAuthoringLivebook.Output.attempt/1),
+  visible_attempts: Enum.map(started.visible_attempts, &JizokuAuthoringLivebook.Output.attempt/1),
   planned_runnable_keys: started.planned_runnable_keys
 }
 ```
@@ -302,16 +302,16 @@ become visible only after their prerequisites complete.
 
 ## Drain Visible Work
 
-Each call to `Squidie.execute_next/1` claims one visible attempt, executes the
+Each call to `Jizoku.execute_next/1` claims one visible attempt, executes the
 step, records the result, and returns the updated snapshot.
 
 ```elixir
 worker_opts = Keyword.put(opts, :owner_id, "authoring-livebook-worker")
 
-{:ok, first_scout} = Squidie.execute_next(worker_opts)
-{:ok, second_scout} = Squidie.execute_next(worker_opts)
-{:ok, completed} = Squidie.execute_next(worker_opts)
-{:ok, :none} = Squidie.execute_next(worker_opts)
+{:ok, first_scout} = Jizoku.execute_next(worker_opts)
+{:ok, second_scout} = Jizoku.execute_next(worker_opts)
+{:ok, completed} = Jizoku.execute_next(worker_opts)
+{:ok, :none} = Jizoku.execute_next(worker_opts)
 
 %{
   first_step: List.last(first_scout.applied_runnable_keys),
@@ -319,7 +319,7 @@ worker_opts = Keyword.put(opts, :owner_id, "authoring-livebook-worker")
   final_status: completed.status,
   final_reason: completed.reason,
   context: completed.context,
-  attempts: Enum.map(completed.attempts, &SquidieAuthoringLivebook.Output.attempt/1)
+  attempts: Enum.map(completed.attempts, &JizokuAuthoringLivebook.Output.attempt/1)
 }
 ```
 
@@ -332,8 +332,8 @@ Inspection answers what durable state exists. Explanation answers why the run is
 in its current state and which action would make progress.
 
 ```elixir
-{:ok, inspected} = Squidie.inspect_run(started.run_id, opts)
-{:ok, explanation} = Squidie.explain_run(started.run_id, opts)
+{:ok, inspected} = Jizoku.inspect_run(started.run_id, opts)
+{:ok, explanation} = Jizoku.explain_run(started.run_id, opts)
 
 %{
   inspected_status: inspected.status,
@@ -350,14 +350,14 @@ Graph inspection turns the same durable state into node and edge output for
 host UIs.
 
 ```elixir
-{:ok, graph} = Squidie.inspect_run_graph(started.run_id, opts)
-payload = Squidie.Runs.GraphInspection.to_map(graph)
+{:ok, graph} = Jizoku.inspect_run_graph(started.run_id, opts)
+payload = Jizoku.Runs.GraphInspection.to_map(graph)
 
 %{
   status: payload.status,
   current_node_ids: payload.current_node_ids,
-  nodes: Enum.map(payload.nodes, &SquidieAuthoringLivebook.Output.node/1),
-  edges: Enum.map(payload.edges, &SquidieAuthoringLivebook.Output.edge/1),
+  nodes: Enum.map(payload.nodes, &JizokuAuthoringLivebook.Output.node/1),
+  edges: Enum.map(payload.edges, &JizokuAuthoringLivebook.Output.edge/1),
   child_links: payload.child_links
 }
 ```

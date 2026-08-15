@@ -1,6 +1,6 @@
 # Supported Baseline
 
-This page defines the currently supported baseline for Squidie.
+This page defines the currently supported baseline for Jizoku.
 
 ## Supported Baseline
 
@@ -27,16 +27,16 @@ Supported host apps are expected to provide:
 
 - an Ecto `Repo`
 - Postgres for durable state
-- a supervised worker that calls `Squidie.execute_next/1`
-- a scheduler that can deliver cron payloads to `Squidie.Runtime.Runner.perform/2`, if the app uses cron triggers
-- step modules that conform to the current Squidie action contract
+- a supervised worker that calls `Jizoku.execute_next/1`
+- a scheduler that can deliver cron payloads to `Jizoku.Runtime.Runner.perform/2`, if the app uses cron triggers
+- step modules that conform to the current Jizoku action contract
 - a host-selected telemetry reporter or exporter only when runtime metrics or
   traces should leave the BEAM
 
 ## Storage Compatibility
 
 The currently supported bundled production relational storage path is
-`Squidie.Runtime.Journal.Storage.Ecto` with a Postgres-compatible Ecto repo.
+`Jizoku.Runtime.Journal.Storage.Ecto` with a Postgres-compatible Ecto repo.
 Other durable stores may be valid when they are exposed through a journal
 storage adapter that provides the same ordered append, optimistic conflict,
 checkpoint, rebuild, and error-shape guarantees. See [Storage

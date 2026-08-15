@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.DailyDigest do
   Example workflow with manual and cron triggers sharing one graph.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   workflow do
     trigger :manual_digest do

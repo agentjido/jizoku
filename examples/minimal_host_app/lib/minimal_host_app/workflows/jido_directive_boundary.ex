@@ -3,7 +3,7 @@ defmodule MinimalHostApp.Workflows.JidoDirectiveBoundary do
   Battle-tests fail-closed handling for raw Jido action directives.
   """
 
-  use Squidie.Workflow
+  use Jizoku.Workflow
 
   alias MinimalHostApp.Steps.UnsupportedJidoDirective
 
