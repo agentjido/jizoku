@@ -651,10 +651,10 @@ defmodule Squidie.Jido.DirectivesTest do
     assert [retained] = Outbox.pending(Projection.jido_outbox(agent.state.projection))
     assert retained["signal"]["data"] == %{"order_id" => "changed"}
 
-    assert Enum.count(
+    refute Enum.any?(
              Projection.anomalies(agent.state.projection),
              &(Map.get(&1, :component) == :jido_outbox)
-           ) == 0
+           )
   end
 
   test "run instruction emission is fail-closed until the fleet activation is enabled" do

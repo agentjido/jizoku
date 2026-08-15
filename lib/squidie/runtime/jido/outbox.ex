@@ -81,7 +81,7 @@ defmodule Squidie.Runtime.Jido.Outbox do
   end
 
   def prepare_directive(%Directive.Emit{dispatch: dispatch}, %ActionAttempt{})
-      when not is_nil(dispatch) do
+      when dispatch != nil do
     invalid(:dispatch)
   end
 
