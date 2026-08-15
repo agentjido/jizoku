@@ -9,11 +9,11 @@ defmodule BedrockMinimalHostApp.BedrockCluster do
     otp_app: :bedrock_minimal_host_app,
     name: "bedrock_minimal_host_app",
     config: [
-      capabilities: [:coordination, :log, :storage],
+      capabilities: [:coordination, :log, :materializer],
       durability_mode: :relaxed,
       trace: [],
       coordinator: [path: Path.join(System.tmp_dir!(), "bedrock_minimal_host_app")],
-      storage: [path: Path.join(System.tmp_dir!(), "bedrock_minimal_host_app")],
+      materializer: [path: Path.join(System.tmp_dir!(), "bedrock_minimal_host_app")],
       log: [path: Path.join(System.tmp_dir!(), "bedrock_minimal_host_app")]
     ]
 end
