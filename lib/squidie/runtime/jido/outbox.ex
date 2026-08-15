@@ -2,12 +2,12 @@
 defmodule Squidie.Runtime.Jido.Outbox do
   @moduledoc false
 
+  alias Jido.Agent
   alias Jido.Agent.Directive
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.Journal.Options
-  alias Squidie.Runtime.WorkflowAgent
   alias Squidie.Runtime.WorkflowAgent.Projection
 
   @items_key "items"
@@ -137,7 +137,7 @@ defmodule Squidie.Runtime.Jido.Outbox do
   end
 
   @doc false
-  @spec durable_entries(map(), ActionAttempt.t(), WorkflowAgent.t(), DateTime.t()) ::
+  @spec durable_entries(map(), ActionAttempt.t(), Agent.t(), DateTime.t()) ::
           {:ok, [Entry.t()]} | {:error, {:invalid_jido_emit, atom()}}
   def durable_entries(
         encoded_intent,
@@ -157,7 +157,7 @@ defmodule Squidie.Runtime.Jido.Outbox do
   end
 
   @doc false
-  @spec recorded?(map(), ActionAttempt.t(), WorkflowAgent.t()) :: boolean()
+  @spec recorded?(map(), ActionAttempt.t(), Agent.t()) :: boolean()
   def recorded?(encoded_intent, %ActionAttempt{} = attempt, workflow_agent) do
     with {:ok, intent} <- decode_intent(encoded_intent),
          %{"enqueued_at" => %DateTime{} = enqueued_at} <-

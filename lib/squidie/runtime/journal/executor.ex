@@ -522,13 +522,10 @@ defmodule Squidie.Runtime.Journal.Executor do
   end
 
   defp complete_run_instruction(
-         %RuntimeContext{storage: storage, queue: queue, now: now} = runtime,
+         %RuntimeContext{queue: queue, now: now} = runtime,
          %ClaimContext{
-           dispatch_agent: dispatch_agent,
            workflow_agent: workflow_agent,
-           attempt: %ActionAttempt{} = attempt,
-           claim_id: claim_id,
-           claim_token: claim_token
+           attempt: %ActionAttempt{} = attempt
          } = claim,
          definition,
          step_name,
@@ -553,44 +550,24 @@ defmodule Squidie.Runtime.Journal.Executor do
       envelope = ResultEnvelope.wrap_run_instruction(result, plan)
       completion_encoding = ResultEnvelope.completion_encoding()
 
-      case complete_current_claim(
-             storage,
-             dispatch_agent,
-             attempt.runnable_key,
-             claim_id,
-             claim_token,
-             envelope,
-             now: now,
-             completion_encoding: completion_encoding,
-             execution_opts: [],
-             guardrails: guardrails
-           ) do
-        {:ok, %{agent: dispatch_agent, attempt: %ActionAttempt{} = completed_attempt}} ->
-          append_completed_attempt_progression(
-            runtime,
-            %{claim | dispatch_agent: dispatch_agent, attempt: completed_attempt},
-            definition,
-            step_name,
-            result,
-            []
-          )
-
-        {:error, _reason} = error ->
-          error
-      end
+      complete_native_effect_claim(
+        runtime,
+        claim,
+        definition,
+        step_name,
+        result,
+        envelope,
+        completion_encoding,
+        guardrails
+      )
     else
       {:error, reason} -> {:error, {:native_jido_effect_rejected, reason}}
     end
   end
 
   defp complete_emit(
-         %RuntimeContext{storage: storage, now: now} = runtime,
-         %ClaimContext{
-           dispatch_agent: dispatch_agent,
-           attempt: %ActionAttempt{} = attempt,
-           claim_id: claim_id,
-           claim_token: claim_token
-         } = claim,
+         %RuntimeContext{} = runtime,
+         %ClaimContext{attempt: %ActionAttempt{} = attempt} = claim,
          definition,
          step_name,
          output,
@@ -604,33 +581,60 @@ defmodule Squidie.Runtime.Journal.Executor do
       envelope = ResultEnvelope.wrap_emit(result, encoded_intent)
       completion_encoding = ResultEnvelope.emit_completion_encoding()
 
-      case complete_current_claim(
-             storage,
-             dispatch_agent,
-             attempt.runnable_key,
-             claim_id,
-             claim_token,
-             envelope,
-             now: now,
-             completion_encoding: completion_encoding,
-             execution_opts: [],
-             guardrails: guardrails
-           ) do
-        {:ok, %{agent: dispatch_agent, attempt: %ActionAttempt{} = completed_attempt}} ->
-          append_completed_attempt_progression(
-            runtime,
-            %{claim | dispatch_agent: dispatch_agent, attempt: completed_attempt},
-            definition,
-            step_name,
-            result,
-            []
-          )
-
-        {:error, _reason} = error ->
-          error
-      end
+      complete_native_effect_claim(
+        runtime,
+        claim,
+        definition,
+        step_name,
+        result,
+        envelope,
+        completion_encoding,
+        guardrails
+      )
     else
       {:error, reason} -> {:error, {:native_jido_effect_rejected, reason}}
+    end
+  end
+
+  defp complete_native_effect_claim(
+         %RuntimeContext{storage: storage, now: now} = runtime,
+         %ClaimContext{
+           dispatch_agent: dispatch_agent,
+           attempt: %ActionAttempt{} = attempt,
+           claim_id: claim_id,
+           claim_token: claim_token
+         } = claim,
+         definition,
+         step_name,
+         result,
+         envelope,
+         completion_encoding,
+         guardrails
+       ) do
+    case complete_current_claim(
+           storage,
+           dispatch_agent,
+           attempt.runnable_key,
+           claim_id,
+           claim_token,
+           envelope,
+           now: now,
+           completion_encoding: completion_encoding,
+           execution_opts: [],
+           guardrails: guardrails
+         ) do
+      {:ok, %{agent: dispatch_agent, attempt: %ActionAttempt{} = completed_attempt}} ->
+        append_completed_attempt_progression(
+          runtime,
+          %{claim | dispatch_agent: dispatch_agent, attempt: completed_attempt},
+          definition,
+          step_name,
+          result,
+          []
+        )
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
