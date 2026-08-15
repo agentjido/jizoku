@@ -50,17 +50,20 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   alias Squidie.GraphMutation.Operation
   alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.DynamicEdge
+  alias Squidie.Runtime.Jido.Outbox
   alias Squidie.Runtime.Trace
   alias Squidie.Runtime.WorkflowAgent.Projection.GraphState
 
-  @checkpoint_version 1
+  @checkpoint_version 2
   @checkpoint_version_key "squidie.workflow_projection.checkpoint_version"
   @command_history_count_key "squidie.workflow_projection.command_history_count"
+  @jido_outbox_key "squidie.workflow_projection.jido_outbox"
 
   @type anomaly :: %{
           required(:reason) => atom(),
           required(:entry_type) => atom(),
           optional(:child_run_id) => String.t(),
+          optional(:component) => :jido_outbox,
           optional(:mutation_id) => String.t(),
           optional(:node_id) => String.t(),
           optional(:runnable_key) => String.t(),
@@ -150,6 +153,7 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     %__MODULE__{applied_runnable_keys: MapSet.new()}
     |> Map.put(@checkpoint_version_key, @checkpoint_version)
     |> Map.put(@command_history_count_key, 0)
+    |> Map.put(@jido_outbox_key, Outbox.new_projection())
   end
 
   @doc false
@@ -412,6 +416,12 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   @doc false
+  @spec jido_outbox(t()) :: map()
+  def jido_outbox(%__MODULE__{} = projection) do
+    Map.get(projection, @jido_outbox_key, Outbox.new_projection())
+  end
+
+  @doc false
   @spec checkpoint_compatible?(term()) :: boolean()
   def checkpoint_compatible?(%__MODULE__{} = projection) do
     checkpoint_schema_compatible?(projection) and
@@ -483,6 +493,14 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
+  end
+
+  defp apply_entry(
+         %Entry{type: :jido_signal_delivery_acknowledged} = entry,
+         %__MODULE__{terminal_status: terminal_status} = projection
+       )
+       when terminal_status != nil do
+    apply_outbox_entry(projection, entry)
   end
 
   defp apply_entry(
@@ -630,6 +648,14 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
     end
   end
 
+  defp apply_entry(
+         %Entry{type: type} = entry,
+         %__MODULE__{} = projection
+       )
+       when type in [:jido_signal_enqueued, :jido_signal_delivery_acknowledged] do
+    apply_outbox_entry(projection, entry)
+  end
+
   defp apply_entry(%Entry{type: :run_terminal, data: data} = entry, %__MODULE__{} = projection) do
     if required_present?(data, [:run_id, :status]) do
       status = Map.fetch!(data, :status)
@@ -672,19 +698,34 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   defp checkpoint_schema_compatible?(projection) do
-    current_checkpoint_schema?(projection) or
-      legacy_checkpoint_without_command_history?(projection)
+    current_checkpoint_schema?(projection)
   end
 
   defp current_checkpoint_schema?(projection) do
     Map.get(projection, @checkpoint_version_key) == @checkpoint_version and
-      valid_command_history_count?(projection)
+      valid_command_history_count?(projection) and
+      Outbox.valid_projection?(Map.get(projection, @jido_outbox_key)) and
+      outbox_anomalies_consistent?(projection)
   end
 
-  defp legacy_checkpoint_without_command_history?(projection) do
-    not Map.has_key?(projection, @checkpoint_version_key) and
-      not Map.has_key?(projection, @command_history_count_key) and
-      Map.get(projection, :command_history) == []
+  defp outbox_anomalies_consistent?(%{anomalies: anomalies} = projection)
+       when is_list(anomalies) do
+    outbox = Map.get(projection, @jido_outbox_key)
+
+    if Enum.all?(anomalies, &is_map/1) do
+      projected_anomalies =
+        anomalies
+        |> Enum.reverse()
+        |> Enum.filter(&(Map.get(&1, :component) == :jido_outbox))
+
+      projected_anomalies == Outbox.projection_anomalies(outbox)
+    else
+      false
+    end
+  end
+
+  defp outbox_anomalies_consistent?(_projection) do
+    false
   end
 
   defp valid_command_history_count?(projection) do
@@ -1489,6 +1530,20 @@ defmodule Squidie.Runtime.WorkflowAgent.Projection do
   end
 
   defp manual_resolution_data?(_data), do: false
+
+  defp apply_outbox_entry(%__MODULE__{} = projection, %Entry{} = entry) do
+    {outbox, anomaly} =
+      projection
+      |> jido_outbox()
+      |> Outbox.apply_entry_observed(entry)
+
+    projection = Map.put(projection, @jido_outbox_key, outbox)
+
+    case anomaly do
+      nil -> projection
+      anomaly -> %{projection | anomalies: [anomaly | projection.anomalies]}
+    end
+  end
 
   defp add_anomaly(%__MODULE__{} = projection, %Entry{} = entry, reason) do
     data = data_map(entry)

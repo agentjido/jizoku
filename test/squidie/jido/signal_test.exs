@@ -129,7 +129,7 @@ defmodule Squidie.Jido.SignalTest do
       Map.put(source_less_projection, @command_history_count_key, 0)
     ]
 
-    assert Map.get(agent.state.projection, @checkpoint_version_key) == 1
+    assert Map.get(agent.state.projection, @checkpoint_version_key) == 2
     refute Map.has_key?(agent.state.projection, :checkpoint_version)
     refute Map.has_key?(agent.state.projection, :command_history_count)
 

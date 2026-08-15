@@ -4,6 +4,7 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
   alias Squidie.Runtime.DispatchAgent
   alias Squidie.Runtime.DispatchProtocol
   alias Squidie.Runtime.DispatchProtocol.Entry
+  alias Squidie.Runtime.Jido.Outbox
   alias Squidie.Runtime.Jido.ResultEnvelope
   alias Squidie.Runtime.Journal
   alias Squidie.Runtime.Journal.CommandReceipt
@@ -95,6 +96,229 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
     assert command.signal_id == "signal-123"
     assert command.trace == @trace
     refute_receive {:telemetry_event, _, _, _}
+  end
+
+  test "rebuilds the durable Jido outbox and rejects a full-revision v1 checkpoint" do
+    assert {:ok, started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, signal} =
+             Jido.Signal.new("billing.captured", %{"payment_id" => "pay-1"},
+               id: "signal-1",
+               source: "/billing",
+               time: DateTime.to_iso8601(@completed_at)
+             )
+
+    assert {:ok, intent} = Outbox.prepare(signal, @run_id, @runnable_key)
+    assert {:ok, enqueued} = Outbox.enqueue_entry(intent, @completed_at)
+    assert {:ok, %{rev: 2}} = Journal.append_entries(@storage, [started, enqueued])
+
+    assert {:ok, agent} = WorkflowAgent.rebuild(@storage, @run_id)
+    assert [pending] = Outbox.pending(Projection.jido_outbox(agent.state.projection))
+    assert pending["signal_id"] == "signal-1"
+
+    v1_projection =
+      agent.state.projection
+      |> Map.put("squidie.workflow_projection.checkpoint_version", 1)
+      |> Map.delete("squidie.workflow_projection.jido_outbox")
+
+    refute Projection.checkpoint_compatible?(v1_projection)
+
+    assert :ok =
+             Journal.put_checkpoint(
+               @storage,
+               {:run, @run_id},
+               v1_projection,
+               agent.state.thread_rev,
+               updated_at: @completed_at
+             )
+
+    assert {:ok, rebuilt} = WorkflowAgent.rebuild(@storage, @run_id)
+    assert rebuilt.state.thread_rev == 2
+    assert [replayed] = Outbox.pending(Projection.jido_outbox(rebuilt.state.projection))
+    assert replayed == pending
+
+    outbox = Projection.jido_outbox(agent.state.projection)
+
+    tampered_outbox =
+      put_in(
+        outbox,
+        ["items", intent.outbox_id, "signal", "data", "payment_id"],
+        "forged"
+      )
+
+    tampered_projection =
+      Map.put(
+        agent.state.projection,
+        "squidie.workflow_projection.jido_outbox",
+        tampered_outbox
+      )
+
+    refute Projection.checkpoint_compatible?(tampered_projection)
+
+    assert :ok =
+             Journal.put_checkpoint(
+               @storage,
+               {:run, @run_id},
+               tampered_projection,
+               agent.state.thread_rev,
+               updated_at: @completed_at
+             )
+
+    assert {:ok, rebuilt_from_tampered} = WorkflowAgent.rebuild(@storage, @run_id)
+
+    assert [replayed_after_tamper] =
+             Outbox.pending(Projection.jido_outbox(rebuilt_from_tampered.state.projection))
+
+    assert replayed_after_tamper == pending
+
+    impossible_delivered_outbox =
+      outbox
+      |> put_in(["items", intent.outbox_id, "status"], "delivered")
+      |> put_in(
+        ["items", intent.outbox_id, "delivered_at"],
+        DateTime.add(@completed_at, -1, :second)
+      )
+
+    impossible_delivered_projection =
+      Map.put(
+        agent.state.projection,
+        "squidie.workflow_projection.jido_outbox",
+        impossible_delivered_outbox
+      )
+
+    refute Projection.checkpoint_compatible?(impossible_delivered_projection)
+
+    assert :ok =
+             Journal.put_checkpoint(
+               @storage,
+               {:run, @run_id},
+               impossible_delivered_projection,
+               agent.state.thread_rev,
+               updated_at: @completed_at
+             )
+
+    assert {:ok, rebuilt_from_impossible_delivery} =
+             WorkflowAgent.rebuild(@storage, @run_id)
+
+    assert [replayed_after_impossible_delivery] =
+             Outbox.pending(
+               Projection.jido_outbox(rebuilt_from_impossible_delivery.state.projection)
+             )
+
+    assert replayed_after_impossible_delivery == pending
+  end
+
+  test "acknowledges a durable Jido outbox item after terminal state" do
+    assert {:ok, started} =
+             DispatchProtocol.new_entry(:run_started, %{
+               run_id: @run_id,
+               workflow: @workflow,
+               occurred_at: @started_at
+             })
+
+    assert {:ok, signal} =
+             Jido.Signal.new("billing.captured", %{"payment_id" => "pay-1"},
+               id: "signal-1",
+               source: "/billing",
+               time: DateTime.to_iso8601(@completed_at)
+             )
+
+    assert {:ok, intent} = Outbox.prepare(signal, @run_id, @runnable_key)
+    assert {:ok, enqueued} = Outbox.enqueue_entry(intent, @completed_at)
+
+    assert {:ok, terminal} =
+             DispatchProtocol.new_entry(:run_terminal, %{
+               run_id: @run_id,
+               status: :completed,
+               occurred_at: DateTime.add(@completed_at, 1, :second)
+             })
+
+    acknowledged_at = DateTime.add(@completed_at, 2, :second)
+    assert {:ok, %Entry{} = acknowledged} = Outbox.acknowledge_entry(intent, acknowledged_at)
+
+    projection = Projection.rebuild([started, enqueued, terminal, acknowledged, acknowledged])
+    assert projection.terminal_status == :completed
+    assert Outbox.pending(Projection.jido_outbox(projection)) == []
+    assert [delivered] = Outbox.items(Projection.jido_outbox(projection))
+    assert delivered["delivered_at"] == acknowledged_at
+    assert Projection.anomalies(projection) == []
+
+    malformed_ack =
+      %Entry{
+        acknowledged
+        | data: Map.put(acknowledged.data, "signal_fingerprint", "wrong")
+      }
+
+    pending_projection = Projection.rebuild([started, enqueued, terminal, malformed_ack])
+    assert [_pending] = Outbox.pending(Projection.jido_outbox(pending_projection))
+
+    assert [%{"reason" => "invalid_acknowledgement"}] =
+             Outbox.anomalies(Projection.jido_outbox(pending_projection))
+
+    assert [
+             %{
+               component: :jido_outbox,
+               entry_type: :jido_signal_delivery_acknowledged,
+               reason: :invalid_jido_signal_delivery_acknowledgement
+             }
+           ] = Projection.anomalies(pending_projection)
+
+    assert {:ok, %{rev: 4}} =
+             Journal.append_entries(@storage, [started, enqueued, terminal, acknowledged])
+
+    assert {:ok, rebuilt} = WorkflowAgent.rebuild(@storage, @run_id)
+    assert :ok = WorkflowAgent.put_checkpoint(@storage, rebuilt, updated_at: acknowledged_at)
+    assert {:ok, from_checkpoint} = WorkflowAgent.rebuild(@storage, @run_id)
+
+    assert Projection.jido_outbox(from_checkpoint.state.projection) ==
+             Projection.jido_outbox(rebuilt.state.projection)
+  end
+
+  test "reports workflow and outbox anomalies in durable replay order" do
+    invalid_acknowledgement = %Entry{
+      type: :jido_signal_delivery_acknowledged,
+      thread: {:run, @run_id},
+      data: %{
+        "outbox_id" => "untrusted-value",
+        "signal_fingerprint" => "wrong",
+        run_id: @run_id,
+        signal_id: "signal-1",
+        occurred_at: @completed_at
+      },
+      occurred_at: @completed_at
+    }
+
+    malformed_manual_pause = %Entry{
+      type: :manual_step_paused,
+      thread: {:run, @run_id},
+      data: %{run_id: @run_id, occurred_at: @completed_at},
+      occurred_at: @completed_at
+    }
+
+    projection = Projection.rebuild([invalid_acknowledgement, malformed_manual_pause])
+
+    assert Enum.map(Projection.anomalies(projection), &{&1.entry_type, &1.reason}) == [
+             {:jido_signal_delivery_acknowledged, :invalid_jido_signal_delivery_acknowledgement},
+             {:manual_step_paused, :malformed_entry}
+           ]
+
+    refute inspect(Projection.anomalies(projection)) =~ "untrusted-value"
+
+    assert Projection.checkpoint_compatible?(projection)
+
+    missing_outbox_diagnostic =
+      Map.update!(projection, :anomalies, fn anomalies ->
+        Enum.reject(anomalies, &(Map.get(&1, :component) == :jido_outbox))
+      end)
+
+    refute Projection.checkpoint_compatible?(missing_outbox_diagnostic)
+    refute Projection.checkpoint_compatible?(%Projection{projection | anomalies: :corrupt})
+    refute Projection.checkpoint_compatible?(%Projection{projection | anomalies: [nil]})
   end
 
   test "partitioned workflow agents have isolated collision-safe identities" do
@@ -359,12 +583,16 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
 
     assert {:ok, thread} = Journal.append_entries(@storage, [run_started])
 
-    checkpoint_projection = %Projection{
-      run_id: @run_id,
-      workflow: @workflow,
-      status: :running,
-      planned_runnables: %{@runnable_key => %{runnable_key: @runnable_key}}
-    }
+    checkpoint_projection =
+      Map.merge(
+        Projection.new(),
+        %{
+          run_id: @run_id,
+          workflow: @workflow,
+          status: :running,
+          planned_runnables: %{@runnable_key => %{runnable_key: @runnable_key}}
+        }
+      )
 
     assert :ok =
              Journal.put_checkpoint(@storage, {:run, @run_id}, checkpoint_projection, thread.rev,
@@ -532,12 +760,18 @@ defmodule Squidie.Runtime.WorkflowAgentTest do
 
     assert {:ok, thread} = Journal.append_entries(@storage, [run_started])
 
-    checkpoint_projection = %Projection{
-      run_id: @run_id,
-      workflow: @workflow,
-      status: :running,
-      planned_runnables: %{checkpoint_runnable_key => %{runnable_key: checkpoint_runnable_key}}
-    }
+    checkpoint_projection =
+      Map.merge(
+        Projection.new(),
+        %{
+          run_id: @run_id,
+          workflow: @workflow,
+          status: :running,
+          planned_runnables: %{
+            checkpoint_runnable_key => %{runnable_key: checkpoint_runnable_key}
+          }
+        }
+      )
 
     assert :ok =
              Journal.put_checkpoint(@storage, {:run, @run_id}, checkpoint_projection, thread.rev,
