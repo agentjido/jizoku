@@ -14,7 +14,10 @@ defmodule Squidie.Runtime.Jido.Directives do
         }
 
   @doc false
-  @spec normalize(term()) :: {:ok, []} | {:error, compatibility_error()}
+  @spec normalize(term()) ::
+          {:ok, []}
+          | {:run_instruction, Directive.RunInstruction.t()}
+          | {:error, compatibility_error()}
   def normalize([]) do
     {:ok, []}
   end
@@ -25,6 +28,10 @@ defmodule Squidie.Runtime.Jido.Directives do
       "Jido action returned an error directive",
       [:error]
     )
+  end
+
+  def normalize([%Directive.RunInstruction{} = directive]) do
+    {:run_instruction, directive}
   end
 
   def normalize(extras) when is_list(extras) do

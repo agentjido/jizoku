@@ -1,9 +1,26 @@
 defmodule Squidie.Jido.DirectivesTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Jido.Agent.Directive
   alias Squidie.Runtime.Jido.Directives
+  alias Squidie.Runtime.Jido.ResultEnvelope
   alias Squidie.Test
+
+  defmodule FollowupAction do
+    use Jido.Action,
+      name: "jido_directive_followup",
+      description: "Executes work requested by a RunInstruction directive",
+      schema: [value: [type: :string, required: true]]
+
+    @impl Jido.Action
+    def run(%{value: value}, context) do
+      {:ok,
+       %{
+         instruction_completed: value,
+         instruction_request_id: context.request_id
+       }}
+    end
+  end
 
   defmodule ExtrasAction do
     use Jido.Action,
@@ -12,6 +29,10 @@ defmodule Squidie.Jido.DirectivesTest do
       schema: [kind: [type: :string, required: true]]
 
     @impl Jido.Action
+    def run(%{kind: "reserved_output"}, _context) do
+      {:ok, %{"__squidie_jido_result__" => %{secret: "directive-secret"}}}
+    end
+
     def run(%{kind: kind}, context) do
       if test_pid = :persistent_term.get({__MODULE__, context.run_id}, nil) do
         send(test_pid, {:extras_action_ran, context.run_id})
@@ -25,13 +46,15 @@ defmodule Squidie.Jido.DirectivesTest do
     end
 
     defp extras("run_instruction") do
-      [
-        %Directive.RunInstruction{
-          instruction: %{secret: "directive-secret"},
-          result_action: :record_result,
-          meta: %{}
-        }
-      ]
+      [run_instruction()]
+    end
+
+    defp extras("run_instruction_custom_result") do
+      [%{run_instruction() | result_action: :custom_result}]
+    end
+
+    defp extras("run_instruction_meta") do
+      [%{run_instruction() | meta: %{secret: "directive-secret"}}]
     end
 
     defp extras("error") do
@@ -44,6 +67,18 @@ defmodule Squidie.Jido.DirectivesTest do
 
     defp extras("none") do
       []
+    end
+
+    defp run_instruction do
+      instruction =
+        Jido.Instruction.new!(
+          id: "directive-followup",
+          action: FollowupAction,
+          params: %{value: "from-directive"},
+          context: %{request_id: "req-directive"}
+        )
+
+      Directive.run_instruction(instruction)
     end
   end
 
@@ -65,6 +100,23 @@ defmodule Squidie.Jido.DirectivesTest do
     @impl Squidie.Step
     def run(_input, _context) do
       {:ok, %{recovered: true}}
+    end
+  end
+
+  defmodule DenyOutput do
+    @spec validate_guardrail(term(), map()) :: {:error, map()}
+    def validate_guardrail(_value, context) do
+      {:error, %{message: "blocked by output policy", placement: context.placement}}
+    end
+  end
+
+  defmodule ReservedKeyStep do
+    use Squidie.Step, name: :reserved_key_native_step
+
+    @impl Squidie.Step
+    def run(_input, _context) do
+      {:ok, %{"__squidie_jido_result__" => %{application: "ordinary"}},
+       jido: %{"effect" => "run_instruction", "version" => 1}}
     end
   end
 
@@ -118,7 +170,54 @@ defmodule Squidie.Jido.DirectivesTest do
     end
   end
 
+  defmodule ReservedKeyWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+      end
+
+      step :reserved_key, ReservedKeyStep
+      transition :reserved_key, on: :ok, to: :complete
+    end
+  end
+
+  defmodule GuardedInstructionWorkflow do
+    use Squidie.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+
+        payload do
+          field :kind, :string
+        end
+      end
+
+      step :jido_extras, ExtrasAction,
+        guardrails: [output: [[key: "jido.output", policy: :route_error]]]
+
+      step :recover, RecoveryStep
+
+      transition :jido_extras, on: :error, to: :recover
+      transition :recover, on: :ok, to: :complete
+    end
+  end
+
   @now ~U[2026-08-11 12:00:00.000000Z]
+
+  setup do
+    previous = Application.fetch_env(:squidie, :jido_effects)
+    Application.put_env(:squidie, :jido_effects, :enabled)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:squidie, :jido_effects, value)
+        :error -> Application.delete_env(:squidie, :jido_effects)
+      end
+    end)
+  end
 
   describe "normalize/1" do
     test "preserves the compatible empty extras result" do
@@ -137,6 +236,11 @@ defmodule Squidie.Jido.DirectivesTest do
               }} = Directives.normalize([directive])
 
       refute inspect(Directives.normalize([directive])) =~ "secret"
+    end
+
+    test "selects one run instruction for durable execution" do
+      assert {:run_instruction, %Directive.RunInstruction{}} =
+               Directives.normalize(extras_for("run_instruction"))
     end
 
     test "classifies unsupported and mixed directive types without exposing their contents" do
@@ -184,6 +288,237 @@ defmodule Squidie.Jido.DirectivesTest do
     assert completed.context.accepted == true
   end
 
+  test "the internal result envelope key is reserved from action output" do
+    assert ResultEnvelope.reserved_output?(%{
+             "__squidie_jido_result__" => %{secret: "directive-secret"}
+           })
+
+    refute ResultEnvelope.reserved_output?(%{accepted: true})
+  end
+
+  test "a raw Jido action cannot return the internal result envelope key" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: ExtrasWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{kind: "reserved_output"})
+    assert {:failed, failed} = Test.drain(runtime, run)
+
+    assert failed.terminal_error == %{
+             code: "reserved_jido_output_key",
+             message: "Jido action output uses a reserved runtime key",
+             retryable?: false
+           }
+
+    assert failed.context == %{}
+    refute inspect(failed) =~ "directive-secret"
+    refute Enum.any?(failed.attempts, &(&1.status == :completed))
+  end
+
+  test "the durable result envelope rejects changed output or plans" do
+    envelope =
+      ResultEnvelope.wrap_run_instruction(
+        %{accepted: true},
+        %{"dynamic_work" => %{dynamic_key: "one"}, "runnables" => [%{step: "one"}]}
+      )
+
+    completion_encoding = ResultEnvelope.completion_encoding()
+
+    assert {:ok, {:run_instruction, %{accepted: true}, _plan}} =
+             ResultEnvelope.decode(envelope, completion_encoding)
+
+    changed =
+      put_in(
+        envelope,
+        ["__squidie_jido_result__", "output"],
+        %{accepted: false, secret: "changed-secret"}
+      )
+
+    assert {:error, :malformed_jido_result_envelope} =
+             ResultEnvelope.decode(changed, completion_encoding)
+
+    assert ResultEnvelope.public_result(changed, completion_encoding) == nil
+
+    changed_plan =
+      put_in(
+        envelope,
+        ["__squidie_jido_result__", "plan", "runnables"],
+        [%{step: "changed-plan", secret: "changed-secret"}]
+      )
+
+    assert {:error, :malformed_jido_result_envelope} =
+             ResultEnvelope.decode(changed_plan, completion_encoding)
+
+    assert ResultEnvelope.public_result(changed_plan, completion_encoding) == nil
+
+    assert {:ok, {:ordinary, ^changed}} = ResultEnvelope.decode(changed, nil)
+    assert ResultEnvelope.public_result(changed, nil) == changed
+  end
+
+  test "native step output and options matching internal values remain ordinary" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: ReservedKeyWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    assert {:completed, completed} = Test.drain(runtime, run)
+
+    assert completed.context["__squidie_jido_result__"] == %{application: "ordinary"}
+
+    assert [%{result: %{"__squidie_jido_result__" => %{application: "ordinary"}}}] =
+             completed.attempts
+  end
+
+  test "a run instruction is durably planned and completed before a tail run terminates" do
+    assert {:ok, runtime} =
+             Test.start_runtime(
+               workflow: ExtrasWorkflow,
+               action_registry: %{"directive.followup" => FollowupAction},
+               now: @now
+             )
+
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{kind: "run_instruction"})
+    :persistent_term.put({ExtrasAction, run.run_id}, self())
+
+    on_exit(fn -> :persistent_term.erase({ExtrasAction, run.run_id}) end)
+
+    assert {:completed, completed} = Test.drain(runtime, run)
+    assert_receive {:extras_action_ran, run_id}
+    assert run_id == run.run_id
+    assert completed.context.accepted == true
+    assert completed.context.instruction_completed == "from-directive"
+    assert completed.context.instruction_request_id == "req-directive"
+
+    assert [dynamic_work] = completed.dynamic_work
+    assert dynamic_work.dynamic_key == "jido-instruction:directive-followup"
+
+    assert [dynamic_node] = dynamic_work.nodes
+
+    assert dynamic_node.metadata["jido_instruction"] == %{
+             "context" => %{request_id: "req-directive"},
+             "id" => "directive-followup"
+           }
+
+    assert Enum.count(completed.attempts, &(&1.step == "jido_extras")) == 1
+
+    assert Enum.count(
+             completed.attempts,
+             &(&1.step == "jido-instruction:directive-followup")
+           ) == 1
+
+    refute inspect(completed) =~ "__squidie_jido_result__"
+
+    before_loss = persistence_state(runtime)
+    assert map_size(before_loss.checkpoints) > 0
+    assert :ok = Test.delete_checkpoints(runtime)
+    after_loss = persistence_state(runtime)
+    assert after_loss == %{before_loss | checkpoints: %{}}
+
+    assert {:ok, restarted} = Test.restart_runtime(runtime)
+    on_exit(fn -> Test.stop_runtime(restarted) end)
+    assert persistence_state(restarted) == after_loss
+
+    assert {:completed, replayed} = Test.drain(restarted, run)
+    assert replayed.context == completed.context
+    assert persistence_state(restarted) == after_loss
+    refute_receive {:extras_action_ran, _run_id}
+  end
+
+  test "run instruction emission is fail-closed until the fleet activation is enabled" do
+    Application.delete_env(:squidie, :jido_effects)
+
+    assert {:ok, runtime} =
+             Test.start_runtime(
+               workflow: ExtrasWorkflow,
+               action_registry: %{"directive.followup" => FollowupAction},
+               now: @now
+             )
+
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{kind: "run_instruction"})
+    assert {:failed, failed} = Test.drain(runtime, run)
+
+    assert failed.terminal_error == %{
+             code: "jido_effect_rejected",
+             message: "native Jido effect was rejected",
+             retryable?: false
+           }
+
+    assert failed.dynamic_work == []
+    assert failed.applied_runnable_keys == []
+    assert Enum.count(failed.attempts, &(&1.step == "jido_extras")) == 1
+  end
+
+  test "output guardrails reject a run instruction before completion or effect planning" do
+    assert {:ok, runtime} =
+             Test.start_runtime(
+               workflow: GuardedInstructionWorkflow,
+               action_registry: %{"directive.followup" => FollowupAction},
+               guardrail_registry: %{"jido.output" => DenyOutput},
+               now: @now
+             )
+
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{kind: "run_instruction"})
+    assert {:completed, completed} = Test.drain(runtime, run)
+
+    assert completed.context.recovered == true
+    assert completed.dynamic_work == []
+
+    assert [%{status: :failed, error: %{code: "guardrail_failed"}} | _rest] =
+             completed.attempts
+
+    refute Enum.any?(completed.attempts, &(&1.step == "jido-instruction:directive-followup"))
+    refute inspect(completed) =~ "__squidie_jido_result__"
+  end
+
+  test "run instruction validation fails before completion without exposing directive data" do
+    assert {:ok, runtime} = Test.start_runtime(workflow: ExtrasWorkflow, now: @now)
+    on_exit(fn -> Test.stop_runtime(runtime) end)
+
+    assert {:ok, run} = Test.start(runtime, %{kind: "run_instruction"})
+    assert {:failed, failed} = Test.drain(runtime, run)
+
+    assert failed.terminal_error == %{
+             code: "jido_effect_rejected",
+             message: "native Jido effect was rejected",
+             retryable?: false
+           }
+
+    assert failed.dynamic_work == []
+    refute inspect(persistence_state(runtime)) =~ "req-directive"
+  end
+
+  for kind <- ["run_instruction_custom_result", "run_instruction_meta"] do
+    @invalid_run_instruction_kind kind
+
+    test "#{kind} is rejected because Squidie has no Jido agent callback state" do
+      assert {:ok, runtime} =
+               Test.start_runtime(
+                 workflow: ExtrasWorkflow,
+                 action_registry: %{"directive.followup" => FollowupAction},
+                 now: @now
+               )
+
+      on_exit(fn -> Test.stop_runtime(runtime) end)
+
+      assert {:ok, run} = Test.start(runtime, %{kind: @invalid_run_instruction_kind})
+      assert {:failed, failed} = Test.drain(runtime, run)
+
+      assert failed.terminal_error == %{
+               code: "jido_effect_rejected",
+               message: "native Jido effect was rejected",
+               retryable?: false
+             }
+
+      assert failed.dynamic_work == []
+      assert failed.applied_runnable_keys == []
+      refute inspect(persistence_state(runtime)) =~ "directive-secret"
+    end
+  end
+
   test "ordinary error transitions may recover a native error directive" do
     assert {:ok, runtime} =
              Test.start_runtime(workflow: ErrorTransitionWorkflow, now: @now)
@@ -207,8 +542,6 @@ defmodule Squidie.Jido.DirectivesTest do
 
   for {kind, directive_type, code, message} <- [
         {"emit", :emit, "unsupported_jido_directive", "Jido action directives are not supported"},
-        {"run_instruction", :run_instruction, "unsupported_jido_directive",
-         "Jido action directives are not supported"},
         {"error", :error, "jido_directive_error", "Jido action returned an error directive"},
         {"custom", :unsupported, "unsupported_jido_directive",
          "Jido action directives are not supported"}
@@ -305,13 +638,14 @@ defmodule Squidie.Jido.DirectivesTest do
   end
 
   defp extras_for("run_instruction") do
-    [
-      %Directive.RunInstruction{
-        instruction: %{},
-        result_action: :record_result,
-        meta: %{}
-      }
-    ]
+    instruction =
+      Jido.Instruction.new!(
+        id: "directive-followup",
+        action: FollowupAction,
+        params: %{value: "from-directive"}
+      )
+
+    [Directive.run_instruction(instruction)]
   end
 
   defp extras_for("error") do
