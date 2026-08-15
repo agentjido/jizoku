@@ -7,13 +7,37 @@ Versioning.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-15
+
+### Added
+
+- Added an isolated deterministic test runtime with bounded execution,
+  predicate waits, virtual time, manual controls, action stubs, restart and
+  checkpoint-loss simulation, append conflicts, invariant checks, golden
+  histories, and assertion diagnostics.
+- Added durable native continue-as-new execution with identity fencing,
+  recovery, cancellation, and multi-node worker coverage.
+- Added direct raw Jido lifecycle signals, durable domain-signal resolution,
+  Jido `Error`, `RunInstruction`, and `Emit` directives, and a durable signal
+  outbox with recovery-safe delivery.
+- Added shared conformance coverage for the in-memory and Ecto journal storage
+  adapters.
+
 ### Changed
 
 - Renamed the runtime, package, OTP application, module namespace, Mix tasks,
   telemetry, wire identifiers, examples, and documentation from Squidie to
   Jizoku.
+- Upgraded Jido to 2.3.3 and expanded the README and sample applications with
+  raw Jido and Jizoku DSL interoperability examples.
+
+### Breaking
+
 - Started a new `jizoku_journal_*` persistence schema. Upgrading is an explicit
   breaking cutover; Jizoku does not replay active Squidie runs.
+- Removed the Squidie namespace, application configuration, Mix tasks, wire
+  identifiers, and compatibility aliases. Applications must adopt the Jizoku
+  package and start new workflow runs after the cutover.
 
 ## [0.3.7] - 2026-07-29
 
