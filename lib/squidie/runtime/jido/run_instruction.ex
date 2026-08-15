@@ -2,8 +2,10 @@
 defmodule Squidie.Runtime.Jido.RunInstruction do
   @moduledoc false
 
+  alias Jido.Agent
   alias Jido.Agent.Directive
   alias Squidie.Runtime.DispatchProtocol.ActionAttempt
+  alias Squidie.Runtime.DispatchProtocol.Entry
   alias Squidie.Runtime.Jido.Instruction
   alias Squidie.Runtime.Journal.DynamicWork
   alias Squidie.Runtime.Journal.EntryBuilder
@@ -27,7 +29,7 @@ defmodule Squidie.Runtime.Jido.RunInstruction do
   @spec prepare(
           Directive.RunInstruction.t(),
           ActionAttempt.t(),
-          WorkflowAgent.t(),
+          Agent.t(),
           map(),
           String.t(),
           DateTime.t(),
@@ -57,7 +59,7 @@ defmodule Squidie.Runtime.Jido.RunInstruction do
     with :ok <- validate_result_action(result_action),
          :ok <- validate_meta(meta),
          {:ok, attrs} <- Instruction.dynamic_work(instruction, origin, registry),
-         {:ok, entry} <-
+         {:ok, %Entry{} = entry} <-
            dynamic_work_entry(attrs, attempt, workflow_agent, definition, registry, now),
          {:ok, runnable} <- dynamic_runnable(entry.data, attempt, queue, now, registry),
          {:ok, _planned_entry} <- EntryBuilder.runnables_planned(attempt.run_id, [runnable], now) do
@@ -78,7 +80,7 @@ defmodule Squidie.Runtime.Jido.RunInstruction do
   end
 
   @doc false
-  @spec durable_entries(map(), ActionAttempt.t(), WorkflowAgent.t(), map(), DateTime.t()) ::
+  @spec durable_entries(map(), ActionAttempt.t(), Agent.t(), map(), DateTime.t()) ::
           {:ok, [Squidie.Runtime.DispatchProtocol.Entry.t()]}
           | {:error, error() | term()}
   def durable_entries(

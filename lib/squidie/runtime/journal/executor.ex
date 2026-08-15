@@ -1290,7 +1290,7 @@ defmodule Squidie.Runtime.Journal.Executor do
            attempt,
            step_name,
            :pause,
-           %{output: result || %{}, target: serialize_manual_target(target)},
+           %{output: result, target: serialize_manual_target(target)},
            now,
            paused_at,
            deadline
@@ -1961,15 +1961,15 @@ defmodule Squidie.Runtime.Journal.Executor do
       applied_result_context(workflow_agent)
 
     applied_results
-    |> Map.merge(current_result || %{})
+    |> Map.merge(current_result)
     |> Map.merge(run_context(workflow_agent))
   end
 
   defp journal_context(workflow_agent, %ActionAttempt{input: input}, current_result) do
     workflow_agent
     |> applied_result_context()
-    |> Map.merge(input || %{})
-    |> Map.merge(current_result || %{})
+    |> Map.merge(input)
+    |> Map.merge(current_result)
     |> Map.merge(run_context(workflow_agent))
   end
 
