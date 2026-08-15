@@ -348,6 +348,48 @@ defmodule Squidie.Jido.OutboxDeliveryTest do
     assert Enum.count(entries, &(&1.type == :jido_signal_delivery_acknowledged)) == 1
   end
 
+  test "checkpoint replay and restart do not redispatch an acknowledged signal" do
+    assert {:ok, runtime} =
+             Test.start_runtime(
+               workflow: Workflow,
+               now: @now,
+               jido_dispatch_routes: routes(self())
+             )
+
+    assert {:ok, run} = Test.start(runtime, %{})
+    assert {:completed, delivered} = Test.drain(runtime, run)
+    assert delivered.jido_signals.delivered_count == 1
+    assert_receive {:signal, %Jido.Signal{id: "delivery-signal-1"}}
+    refute_receive {:signal, %Jido.Signal{id: "delivery-signal-1"}}
+
+    before_loss = persistence_state(runtime)
+    assert map_size(before_loss.checkpoints) > 0
+    assert :ok = Test.delete_checkpoints(runtime)
+    after_loss = persistence_state(runtime)
+    assert after_loss == %{before_loss | checkpoints: %{}}
+
+    assert {:ok, restarted} = Test.restart_runtime(runtime)
+    on_exit(fn -> Test.stop_runtime(restarted) end)
+    assert persistence_state(restarted) == after_loss
+
+    assert {:ok, :none} =
+             Squidie.execute_next(
+               runtime: :journal,
+               journal_storage: restarted.storage,
+               owner_id: "delivery-replay-worker",
+               now: @now,
+               jido_dispatch_routes: routes(self())
+             )
+
+    assert persistence_state(restarted) == after_loss
+    refute_receive {:signal, %Jido.Signal{id: "delivery-signal-1"}}
+
+    assert {:ok, replayed} = Test.inspect(restarted, run)
+    assert replayed.jido_signals.pending_count == 0
+    assert replayed.jido_signals.delivered_count == 1
+    assert persistence_state(restarted) == after_loss
+  end
+
   test "invalid or missing routes fail before journal mutation and redact adapter state" do
     assert {:ok, runtime} = Test.start_runtime(workflow: Workflow, now: @now)
     on_exit(fn -> Test.stop_runtime(runtime) end)
