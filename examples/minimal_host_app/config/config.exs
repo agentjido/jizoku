@@ -26,6 +26,10 @@ config :jizoku,
     MinimalHostApp.Workflows.VersionedRouting => %{
       "v1" => MinimalHostApp.Workflows.VersionedRouting.V1,
       "v2" => MinimalHostApp.Workflows.VersionedRouting
+    },
+    MinimalHostApp.Workflows.MigratedRouting => %{
+      "v1" => MinimalHostApp.Workflows.MigratedRouting.V1,
+      "v2" => MinimalHostApp.Workflows.MigratedRouting
     }
   }
 

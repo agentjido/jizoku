@@ -68,6 +68,8 @@ The stress test covers:
 - Jizoku cron payloads being mapped into Bedrock jobs
 - a Bedrock-leased drain executing a v1 run through its host-registered
   historical definition after the stable workflow module advances to v2
+- a paused v1 run migrating durably to v2 before its successor is drained under
+  a Bedrock lease
 - the `Jizoku.Executor.Leases` contract through a Bedrock-backed example
   adapter
 
