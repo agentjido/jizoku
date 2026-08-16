@@ -122,6 +122,61 @@ implementation deployed until every non-terminal run on that version has
 finished. A missing version or fingerprint mismatch fails closed with bounded
 version and fingerprint diagnostics; labels never override the execution fence.
 
+### Safe-point migration
+
+Use `Jizoku.migrate_run/2` only from an authenticated, authorized operator or
+deployment boundary. The migration module is host-owned code implementing
+`Jizoku.Workflow.Migration` with a unique key, explicit source and target
+versions, and a deterministic `migrate/1` callback:
+
+```elixir
+defmodule MyApp.Migrations.BillingV1ToV2 do
+  @behaviour Jizoku.Workflow.Migration
+
+  def key do
+    "billing-v1-to-v2"
+  end
+
+  def source_version do
+    "2026-05-v1"
+  end
+
+  def target_version do
+    "2026-08-v2"
+  end
+
+  def migrate(%{context: context}) do
+    {:ok, %{context: Map.put(context, :schema_version, 2), manual_step: :review}}
+  end
+end
+
+Jizoku.migrate_run(run_id,
+  to: "2026-08-v2",
+  migration: MyApp.Migrations.BillingV1ToV2
+)
+```
+
+The initial supported boundary is a quiescent manual pause: every planned
+runnable must already be applied, the run must have no dynamic graph or child
+state, and no continuation may be pending. These checks exclude claimed,
+retrying, visible, and completed-but-unapplied work without racing a separate
+dispatch thread. Runtime-authored specs require a separate explicit contract
+and are rejected by this command.
+
+The command appends its receipt and migration fact atomically with the current
+run revision. Exact duplicate delivery returns the existing migration;
+conflicting key reuse and stale source versions fail closed. The persisted fact
+contains source and target fingerprints, transformed context, and mapped manual
+state. Context is limited to storage-safe values and 64 KiB. Existing applied
+results remain immutable in history but are folded into the transformed
+snapshot rather than overlaid again after replay. Later results continue to
+accumulate normally.
+
+Migration callbacks may run again after an optimistic append conflict. Keep
+them deterministic and free of external side effects. Deploy and register both
+source and target implementations before migration. Roll back with another
+explicit migration contract; never relabel a persisted version or fingerprint.
+
 When a host uses partitions, it must route the same trusted `:partition`
 through start, worker, cron, signal, control, replay, and inspection calls.
 Run UUIDs and queue names may repeat across partitions. Jizoku does not search

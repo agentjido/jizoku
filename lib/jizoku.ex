@@ -21,6 +21,7 @@ defmodule Jizoku do
   alias Jizoku.Runtime.Journal.ChildStarter
   alias Jizoku.Runtime.Journal.Commands.Cancellation
   alias Jizoku.Runtime.Journal.Commands.ContinueAsNew
+  alias Jizoku.Runtime.Journal.Commands.Migration
   alias Jizoku.Runtime.Journal.Commands.Replay
   alias Jizoku.Runtime.Journal.Commands.SignalInterpreter
   alias Jizoku.Runtime.Journal.Commands.Starter
@@ -786,6 +787,35 @@ defmodule Jizoku do
     with {:ok, :journal} <- Routing.runtime(overrides) do
       cancel_run_with_runtime(:journal, run_id, overrides)
     end
+  end
+
+  @doc """
+  Migrates a quiescent paused run to one explicitly retained definition.
+
+  `:migration` must be a trusted module implementing
+  `Jizoku.Workflow.Migration`; `:to` must match that contract's target version.
+  The migration result is bounded and persisted before target code can resume.
+  Exact duplicate delivery returns the already migrated snapshot.
+  """
+  @spec migrate_run(Ecto.UUID.t(), keyword()) ::
+          {:ok, Jizoku.ReadModel.Inspection.Snapshot.t()} | {:error, term()}
+  def migrate_run(run_id, overrides \\ [])
+
+  def migrate_run(run_id, overrides) when is_list(overrides) do
+    {migration_opts, config_overrides} =
+      Keyword.split(overrides, [:to, :migration])
+
+    with {:ok, :journal} <- Routing.runtime(config_overrides) do
+      Migration.migrate(
+        run_id,
+        migration_opts,
+        Routing.journal_control_options(config_overrides)
+      )
+    end
+  end
+
+  def migrate_run(_run_id, _overrides) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
   end
 
   @doc """
