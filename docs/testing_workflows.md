@@ -266,6 +266,37 @@ identifiers. Treat `schema_version` changes as an explicit fixture migration,
 and review golden updates as compatibility changes rather than regenerating
 them automatically.
 
+### Deployment verification
+
+Keep sanitized golden histories with the exact durable definition identity that
+produced them, then verify every fixture before removing or changing historical
+workflow code:
+
+```elixir
+[
+  %{
+    workflow: MyApp.Workflows.Payment,
+    definition_version: "2026-05-v1",
+    definition_fingerprint: "checked-in-fingerprint",
+    golden_history: %{
+      schema_version: 1,
+      workflow: "Elixir.MyApp.Workflows.Payment",
+      events: [%{type: :run_started, offset_us: 0, run: "run-1", status: :running}]
+    }
+  }
+]
+```
+
+```sh
+mix jizoku.verify_histories test/fixtures/jizoku_histories.exs
+```
+
+The task resolves modules only from the trusted fixture and the host-owned
+`:workflow_versions` registry. It fails CI when an implementation is missing or
+its fingerprint no longer matches, and its report excludes golden event data.
+Use `--json` for a machine-readable structural report. Fixture files are Elixir
+code, so evaluate only checked-in, repository-owned files.
+
 ## Invariant checks
 
 Check one durable inspection snapshot for universal runtime invariants:

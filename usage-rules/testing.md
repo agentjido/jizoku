@@ -45,5 +45,7 @@
 - Run focused tests first, then `mix precommit` before finishing a code slice.
 - Run `MIX_ENV=test mix coveralls` when tests or coverage-sensitive runtime
   paths change; coverage gates live in `coveralls.json` and `codecov.yml`.
+- Run `mix jizoku.verify_histories <trusted-fixture.exs>` in host CI before
+  removing or changing registered historical workflow implementations.
 - For runtime, workflow, persistence, jobs, state-machine, or public API
   changes, run an end-to-end smoke path in the relevant example app.

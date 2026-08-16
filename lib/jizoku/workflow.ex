@@ -37,6 +37,7 @@ defmodule Jizoku.Workflow do
   alias Jizoku.Workflow.ActionRegistry
   alias Jizoku.Workflow.Compatibility
   alias Jizoku.Workflow.GuardrailRegistry
+  alias Jizoku.Workflow.HistoryVerification
   alias Jizoku.Workflow.Info
   alias Jizoku.Workflow.PayloadFieldSpec
   alias Jizoku.Workflow.PayloadSpec
@@ -101,6 +102,15 @@ defmodule Jizoku.Workflow do
           {:ok, Compatibility.Result.t()} | {:error, term()}
   def compatibility(old, new) do
     Compatibility.compare(old, new)
+  end
+
+  @doc """
+  Verifies sanitized golden histories against exact host-registered versions.
+  """
+  @spec verify_history_fixtures([HistoryVerification.fixture()], map()) ::
+          {:ok, map()} | {:error, map() | term()}
+  def verify_history_fixtures(fixtures, registry) do
+    HistoryVerification.verify(fixtures, registry)
   end
 
   @doc """
