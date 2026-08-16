@@ -348,12 +348,26 @@ defmodule Jizoku.Inspection.GraphInspection do
               latest_attempt_value(attempts, :transition)
             ),
           manual_state: detail(include_details?, snapshot_manual_state(snapshot, node_id)),
+          metadata: event_wait_node_metadata(snapshot.event_waits, node_id),
           attempts: detail(include_details?, Enum.map(attempts, &snapshot_attempt/1), [])
         }
       end)
 
     declared_nodes ++
       dynamic_nodes(snapshot, attempts_by_step, pending_dispatches_by_step, include_details?)
+  end
+
+  defp event_wait_node_metadata(event_waits, node_id) when is_list(event_waits) do
+    waits = Enum.filter(event_waits, &(map_value(&1, :step) == node_id))
+
+    case waits do
+      [] -> %{}
+      waits -> %{event_waits: waits}
+    end
+  end
+
+  defp event_wait_node_metadata(_event_waits, _node_id) do
+    %{}
   end
 
   defp dynamic_nodes(

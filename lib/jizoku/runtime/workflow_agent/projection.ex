@@ -55,9 +55,10 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   alias Jizoku.Runtime.Trace
   alias Jizoku.Runtime.WorkflowAgent.Projection.GraphState
 
-  @checkpoint_version 3
+  @checkpoint_version 4
   @checkpoint_version_key "jizoku.workflow_projection.checkpoint_version"
   @command_history_count_key "jizoku.workflow_projection.command_history_count"
+  @event_waits_key "jizoku.workflow_projection.event_waits"
   @jido_outbox_key "jizoku.workflow_projection.jido_outbox"
 
   @type anomaly :: %{
@@ -158,6 +159,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     %__MODULE__{applied_runnable_keys: MapSet.new()}
     |> Map.put(@checkpoint_version_key, @checkpoint_version)
     |> Map.put(@command_history_count_key, 0)
+    |> Map.put(@event_waits_key, %{})
     |> Map.put(@jido_outbox_key, Outbox.new_projection())
   end
 
@@ -197,6 +199,31 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   @doc false
   @spec manual_state(t()) :: manual_state() | nil
   def manual_state(%__MODULE__{manual_state: manual_state}), do: manual_state
+
+  @doc false
+  @spec event_waits(t()) :: [map()]
+  def event_waits(%__MODULE__{} = projection) do
+    projection
+    |> Map.get(@event_waits_key, %{})
+    |> Map.values()
+    |> Enum.sort_by(&Map.get(&1, :opened_at), DateTime)
+  end
+
+  @doc false
+  @spec active_event_wait(t()) :: map() | nil
+  def active_event_wait(%__MODULE__{} = projection) do
+    case projection.manual_state do
+      %{kind: "event_wait", metadata: metadata} when is_map(metadata) ->
+        wait_id = map_value(metadata, :wait_id)
+
+        projection
+        |> Map.get(@event_waits_key, %{})
+        |> Map.get(wait_id)
+
+      _not_waiting ->
+        nil
+    end
+  end
 
   @doc false
   @spec planned_runnable_keys(t()) :: [String.t()]
@@ -506,6 +533,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     |> Map.put_new(:continuation_origin, nil)
     |> Map.put_new(:definition_migrations, [])
     |> Map.put_new(:context_migrated_runnable_keys, MapSet.new())
+    |> Map.put_new(@event_waits_key, %{})
     |> Map.put(:dynamic_work, dynamic_work)
     |> Map.put(:graph, graph)
     |> Map.put_new(:terminal_error, nil)
@@ -695,7 +723,9 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
          %__MODULE__{} = projection
        ) do
     if event_wait_opened_data?(data) do
-      pause_manual_step(projection, entry, event_wait_manual_data(data))
+      projection
+      |> put_event_wait_opened(data)
+      |> pause_manual_step(entry, event_wait_manual_data(data))
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
@@ -706,7 +736,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
          %__MODULE__{} = projection
        ) do
     if event_received_data?(data) do
-      projection
+      put_event_wait_received(projection, data, entry)
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
@@ -717,7 +747,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
          %__MODULE__{} = projection
        ) do
     if event_wait_timeout_selected_data?(data) do
-      projection
+      put_event_wait_timeout_selected(projection, data)
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
@@ -728,7 +758,9 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
          %__MODULE__{} = projection
        ) do
     if event_wait_resolved_data?(data) do
-      resolve_manual_step(projection, entry, data)
+      projection
+      |> put_event_wait_resolved(data, entry)
+      |> resolve_manual_step(entry, data)
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
@@ -756,6 +788,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   defp apply_entry(%Entry{type: :run_terminal, data: data} = entry, %__MODULE__{} = projection) do
     if required_present?(data, [:run_id, :status]) do
       status = Map.fetch!(data, :status)
+      terminal_at = Map.get(data, :occurred_at, entry.occurred_at)
+      %__MODULE__{} = projection = terminate_active_event_wait(projection, status, terminal_at)
 
       %__MODULE__{
         projection
@@ -763,7 +797,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
           status: status,
           manual_state: nil,
           terminal_status: status,
-          terminal_at: Map.get(data, :occurred_at, entry.occurred_at),
+          terminal_at: terminal_at,
           terminal_error: terminal_error_from_data(data)
       }
     else
@@ -891,6 +925,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   defp current_checkpoint_schema?(projection) do
     Map.get(projection, @checkpoint_version_key) == @checkpoint_version and
       valid_command_history_count?(projection) and
+      valid_event_waits?(Map.get(projection, @event_waits_key)) and
       Outbox.valid_projection?(Map.get(projection, @jido_outbox_key)) and
       outbox_anomalies_consistent?(projection)
   end
@@ -920,6 +955,29 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     history = Map.get(projection, :command_history)
 
     is_integer(count) and count >= 0 and is_list(history) and count == length(history)
+  end
+
+  defp valid_event_waits?(event_waits) when is_map(event_waits) do
+    Enum.all?(event_waits, fn {wait_id, wait} ->
+      is_binary(wait_id) and valid_event_wait?(wait_id, wait)
+    end)
+  end
+
+  defp valid_event_waits?(_event_waits) do
+    false
+  end
+
+  defp valid_event_wait?(wait_id, wait) when is_map(wait) do
+    Map.get(wait, :wait_id) == wait_id and
+      non_empty_binary?(Map.get(wait, :step)) and
+      non_empty_binary?(Map.get(wait, :event)) and
+      is_map(Map.get(wait, :correlation_summary)) and
+      is_atom(Map.get(wait, :status)) and
+      match?(%DateTime{}, Map.get(wait, :opened_at))
+  end
+
+  defp valid_event_wait?(_wait_id, _wait) do
+    false
   end
 
   defp terminal_error_from_data(data) when is_map(data) do
@@ -1778,12 +1836,133 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     false
   end
 
+  defp put_event_wait_opened(projection, data) do
+    wait =
+      maybe_put(
+        %{
+          wait_id: data.wait_id,
+          step: data.step,
+          event: data.event,
+          correlation_summary: identity_summary(data.correlation),
+          status: :waiting,
+          opened_at: data.opened_at
+        },
+        :timeout,
+        event_wait_timeout_summary(Map.get(data, :timeout))
+      )
+
+    Map.update(
+      projection,
+      @event_waits_key,
+      %{data.wait_id => wait},
+      &Map.put(&1, data.wait_id, wait)
+    )
+  end
+
+  defp put_event_wait_received(projection, data, entry) do
+    update_event_wait(projection, data.wait_id, fn wait ->
+      wait
+      |> Map.put(:status, :received)
+      |> Map.put(:received_at, entry.occurred_at)
+      |> Map.put(:receipt_summary, identity_summary(data.idempotency_key))
+    end)
+  end
+
+  defp put_event_wait_timeout_selected(projection, data) do
+    update_event_wait(projection, data.wait_id, fn wait ->
+      wait
+      |> Map.put(:status, :timeout_selected)
+      |> Map.put(:timeout_selected_at, data.selected_at)
+      |> Map.put(:timeout_target, data.target)
+    end)
+  end
+
+  defp put_event_wait_resolved(projection, data, entry) do
+    update_event_wait(projection, data.wait_id, fn wait ->
+      wait
+      |> Map.put(:status, event_wait_resolution_status(data.action))
+      |> Map.put(:resolution, data.action)
+      |> Map.put(:resolved_at, entry.occurred_at)
+    end)
+  end
+
+  defp update_event_wait(projection, wait_id, update_fun) when is_function(update_fun, 1) do
+    waits = Map.get(projection, @event_waits_key, %{})
+
+    case Map.fetch(waits, wait_id) do
+      {:ok, wait} ->
+        Map.put(projection, @event_waits_key, Map.put(waits, wait_id, update_fun.(wait)))
+
+      :error ->
+        projection
+    end
+  end
+
+  defp terminate_active_event_wait(
+         %{manual_state: %{kind: "event_wait", metadata: metadata}} = projection,
+         status,
+         %DateTime{} = terminal_at
+       )
+       when is_map(metadata) do
+    wait_id = map_value(metadata, :wait_id)
+
+    update_event_wait(projection, wait_id, fn wait ->
+      wait
+      |> Map.put(:status, status)
+      |> Map.put(:resolution, Atom.to_string(status))
+      |> Map.put(:resolved_at, terminal_at)
+    end)
+  end
+
+  defp terminate_active_event_wait(projection, _status, _terminal_at) do
+    projection
+  end
+
+  defp event_wait_resolution_status("received") do
+    :resolved
+  end
+
+  defp event_wait_resolution_status("timed_out") do
+    :timed_out
+  end
+
+  defp event_wait_resolution_status(_action) do
+    :resolved
+  end
+
+  defp event_wait_timeout_summary(timeout) when is_map(timeout) do
+    %{
+      after_ms: map_value(timeout, :after),
+      due_at: map_value(timeout, :due_at),
+      target: map_value(timeout, :target)
+    }
+  end
+
+  defp event_wait_timeout_summary(_timeout) do
+    nil
+  end
+
+  defp identity_summary(value) when is_binary(value) do
+    digest = Base.url_encode64(:crypto.hash(:sha256, value), padding: false)
+
+    %{algorithm: :sha256, digest: digest, bytes: byte_size(value)}
+  end
+
+  defp identity_summary(_value) do
+    nil
+  end
+
   defp event_wait_manual_data(data) do
+    timeout = event_wait_timeout_summary(Map.get(data, :timeout))
+
     %{
       run_id: data.run_id,
       step: data.step,
       kind: "event_wait",
       paused_at: data.opened_at,
+      event: data.event,
+      correlation_summary: identity_summary(data.correlation),
+      timeout: timeout,
       metadata:
         maybe_put(
           %{

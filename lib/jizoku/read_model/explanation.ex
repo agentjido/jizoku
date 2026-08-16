@@ -226,6 +226,19 @@ defmodule Jizoku.ReadModel.Explanation do
     }
   end
 
+  defp explanation_parts(%Snapshot{
+         reason: :manual_intervention_required,
+         active_event_wait: active_event_wait
+       })
+       when is_map(active_event_wait) do
+    {
+      "The run is waiting for a matching external event.",
+      active_event_wait,
+      [:deliver_external_event, :inspect_event_wait_timeout],
+      item_value(active_event_wait, :step)
+    }
+  end
+
   defp explanation_parts(%Snapshot{reason: :manual_intervention_required} = snapshot) do
     manual_state = snapshot.manual_state || %{}
 
@@ -319,6 +332,8 @@ defmodule Jizoku.ReadModel.Explanation do
       dynamic_work: snapshot.dynamic_work,
       guardrails: snapshot.guardrails,
       deadline: snapshot.deadline,
+      active_event_wait: snapshot.active_event_wait,
+      event_waits: snapshot.event_waits,
       command_history: snapshot.command_history,
       command_counts: command_counts(snapshot.command_history),
       duplicate_commands: duplicate_commands(snapshot.command_history),

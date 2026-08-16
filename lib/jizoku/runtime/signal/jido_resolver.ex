@@ -103,6 +103,16 @@ defmodule Jizoku.Runtime.Signal.JidoResolver do
     )
   end
 
+  defp command_signal({:signal_run, run_id, event, payload, correlation}, envelope)
+       when is_binary(event) and is_map(payload) and is_binary(correlation) do
+    Signal.signal_run(
+      run_id,
+      event,
+      payload,
+      Keyword.put(envelope_options(envelope), :correlation, correlation)
+    )
+  end
+
   defp command_signal(_command, _envelope) do
     {:error, {:invalid_jido_signal_command, :unsupported}}
   end

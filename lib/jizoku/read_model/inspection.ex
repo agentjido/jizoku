@@ -218,6 +218,12 @@ defmodule Jizoku.ReadModel.Inspection do
             ])
         ),
       manual_state: normalized_manual_state,
+      active_event_wait:
+        if(terminal?,
+          do: nil,
+          else: WorkflowAgent.Projection.active_event_wait(workflow_projection)
+        ),
+      event_waits: WorkflowAgent.Projection.event_waits(workflow_projection),
       command_history: WorkflowAgent.Projection.command_history(workflow_projection),
       jido_signals:
         workflow_projection

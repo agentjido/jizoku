@@ -17,6 +17,8 @@ defmodule Jizoku.ReadModel.Explanation.Diagnostic do
           | :wait_until_attempt_visible
           | :wait_for_attempt_completion
           | :resolve_manual_step
+          | :deliver_external_event
+          | :inspect_event_wait_timeout
           | :inspect_continuation_successor
           | :inspect_terminal_run
           | :wait_for_new_runnables
@@ -25,6 +27,7 @@ defmodule Jizoku.ReadModel.Explanation.Diagnostic do
           | :restore_exact_workflow_definition
           | :verify_workflow_histories
           | :replay_run_after_restore
+          | :deliver_jido_signals
 
   @type t :: %__MODULE__{
           run_id: String.t(),

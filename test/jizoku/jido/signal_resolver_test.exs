@@ -96,6 +96,41 @@ defmodule Jizoku.Jido.SignalResolverTest do
     end
   end
 
+  defmodule RecordPaymentEvent do
+    use Jizoku.Step,
+      name: :record_resolved_payment,
+      input_schema: [event: [type: :map, required: true]]
+
+    @impl Jizoku.Step
+    def run(%{event: event}, _context) do
+      {:ok, %{resolved_payment_status: event.status}}
+    end
+  end
+
+  defmodule PaymentEventWorkflow do
+    use Jizoku.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+
+        payload do
+          field :payment_id, :string
+        end
+      end
+
+      step :await_payment, :await_event,
+        event: "payment.completed",
+        correlation: [:payment_id],
+        output: :event
+
+      step :record_payment, RecordPaymentEvent, input: [:event]
+
+      transition :await_payment, on: :ok, to: :record_payment
+      transition :record_payment, on: :ok, to: :complete
+    end
+  end
+
   defmodule Resolver do
     @behaviour Jizoku.Jido.SignalResolver
 
@@ -108,6 +143,13 @@ defmodule Jizoku.Jido.SignalResolverTest do
 
     def resolve(%Jido.Signal{type: "orders.cancelled", data: %{"run_id" => run_id}}) do
       {:ok, {:cancel_run, run_id}}
+    end
+
+    def resolve(%Jido.Signal{
+          type: "payments.completed",
+          data: %{"run_id" => run_id, "payment_id" => payment_id, "status" => status}
+        }) do
+      {:ok, {:signal_run, run_id, "payment.completed", %{status: status}, payment_id}}
     end
 
     def resolve(%Jido.Signal{}), do: {:error, :unrouted}
@@ -303,6 +345,57 @@ defmodule Jizoku.Jido.SignalResolverTest do
              Jizoku.apply_signal(signal, runtime_opts(storage, RaisingResolver))
 
     assert persistence_state(server) == persisted
+  end
+
+  test "routes a domain event into an active wait with envelope identity and trace", %{
+    server: server,
+    storage: storage
+  } do
+    assert {:ok, run} =
+             Jizoku.start(
+               PaymentEventWorkflow,
+               :manual,
+               %{payment_id: "pay_domain_123"},
+               runtime_opts(storage)
+             )
+
+    assert {:ok, %{status: :paused}} = Jizoku.execute_next(execution_opts(storage))
+
+    assert {:ok, signal} =
+             Jido.Signal.new(
+               "payments.completed",
+               %{
+                 "run_id" => run.run_id,
+                 "payment_id" => "pay_domain_123",
+                 "status" => "settled"
+               },
+               id: "domain-payment-123",
+               source: "/provider/payments",
+               subject: "payments/pay_domain_123",
+               time: DateTime.to_iso8601(@now)
+             )
+
+    signal = %{signal | extensions: %{"correlation" => @trace}}
+
+    assert {:ok, resolved} =
+             Jizoku.apply_signal(signal, runtime_opts(storage, Resolver))
+
+    receipt = Enum.find(resolved.command_history, &(&1.signal_type == "signal_run"))
+    assert receipt.signal_id == "domain-payment-123"
+    assert receipt.idempotency_key == jido_identity("/provider/payments", "domain-payment-123")
+    assert receipt.trace == Map.drop(@trace, [:parent_span_id, :tracestate])
+    assert receipt.metadata["jido"]["type"] == "payments.completed"
+
+    persisted = persistence_state(server)
+
+    assert {:ok, ^resolved} =
+             Jizoku.apply_signal(signal, runtime_opts(storage, RaisingResolver))
+
+    assert persistence_state(server) == persisted
+
+    assert {:ok, completed} = Jizoku.execute_next(execution_opts(storage))
+    assert completed.status == :completed
+    assert completed.context.resolved_payment_status == "settled"
   end
 
   test "treats source and id together as the partition-scoped event identity", %{

@@ -94,6 +94,8 @@ defmodule Jizoku.ReadModel.Inspection.Snapshot do
           terminal_error: map() | nil,
           deadline: map() | nil,
           manual_state: map() | nil,
+          active_event_wait: map() | nil,
+          event_waits: [map()],
           command_history: [map()],
           jido_signals: %{
             required(:pending_count) => non_neg_integer(),
@@ -158,6 +160,8 @@ defmodule Jizoku.ReadModel.Inspection.Snapshot do
     command_history: [],
     jido_signals: %{pending_count: 0, delivered_count: 0, items: []},
     manual_state: nil,
+    active_event_wait: nil,
+    event_waits: [],
     child_runs: [],
     dynamic_work: [],
     graph_version: 0,
