@@ -166,7 +166,14 @@ the inspection snapshot into:
   terminal run.
 - `evidence` - thread revisions, attempt counts, planned/applied runnable keys,
   manual state, command history, duplicate command evidence, next visibility
-  time, and anomalies.
+  time, workflow definition identity and resolution, migrations, and anomalies.
+
+Inspection resolves the exact persisted workflow version and fingerprint
+without executing the run. When retained history is missing or mismatched,
+`explain_run/2` reports the definition failure before worker execution and
+recommends restoring the required implementation and verifying checked-in
+history fixtures. A terminal run additionally requires an explicit replay;
+restoring the module does not rewrite terminal state.
 
 When command receipt facts are present, `details.latest_command` identifies the
 latest runtime command that led to the current state. `evidence.command_history`
@@ -199,6 +206,12 @@ edges. It is useful when a host UI needs to show:
 - selected transition edges
 - dependency edges and pending joins
 - manual-state detail when history is included
+
+The graph response includes the durable definition version, fingerprint,
+resolution result, and migration receipts. If exact definition resolution
+fails, it preserves durable attempt evidence but omits any fallback to the
+currently deployed workflow graph. The timeline exposes the same definition
+identity and emits `:workflow_definition_migrated` for durable migrations.
 
 For JSON or LiveView boundaries, call `Jizoku.Runs.GraphInspection.to_map/1`
 after applying the host app's authorization and redaction policy. See

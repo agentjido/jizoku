@@ -110,6 +110,19 @@ defmodule Jizoku.ReadModel.Explanation do
     []
   end
 
+  defp explanation_parts(
+         %Snapshot{definition_resolution: %{status: :unavailable, error: error}} = snapshot
+       ) do
+    resolution = snapshot.definition_resolution
+
+    {
+      definition_unavailable_summary(error),
+      %{definition_resolution: resolution},
+      definition_unavailable_actions(snapshot, error),
+      first_step(snapshot.attempts)
+    }
+  end
+
   defp explanation_parts(%Snapshot{reason: :planned_dispatch_pending_schedule} = snapshot) do
     runnables = snapshot.pending_dispatches
 
@@ -292,6 +305,9 @@ defmodule Jizoku.ReadModel.Explanation do
     %{
       snapshot_reason: snapshot.reason,
       definition_version: snapshot.definition_version,
+      definition_fingerprint: snapshot.definition_fingerprint,
+      definition_resolution: snapshot.definition_resolution,
+      definition_migrations: snapshot.definition_migrations,
       thread_revisions: snapshot.thread_revisions,
       terminal_status: snapshot.terminal_status,
       terminal_error: snapshot.terminal_error,
@@ -314,6 +330,36 @@ defmodule Jizoku.ReadModel.Explanation do
       anomaly_count: length(snapshot.anomalies),
       anomalies: snapshot.anomalies
     }
+  end
+
+  defp definition_unavailable_summary(error) do
+    case item_value(error, :code) do
+      "workflow_version_unavailable" ->
+        "The run requires a historical workflow version that is not registered."
+
+      "workflow_version_fingerprint_mismatch" ->
+        "The registered historical workflow version does not match the run fingerprint."
+
+      "incompatible_workflow_definition" ->
+        "The deployed workflow definition does not match the durable run."
+
+      _other ->
+        "The run's required workflow definition is unavailable."
+    end
+  end
+
+  defp definition_unavailable_actions(snapshot, error) do
+    restore_action =
+      case item_value(error, :code) do
+        "workflow_version_unavailable" -> :restore_historical_workflow_version
+        _other -> :restore_exact_workflow_definition
+      end
+
+    if snapshot.terminal? do
+      [restore_action, :verify_workflow_histories, :replay_run_after_restore]
+    else
+      [restore_action, :verify_workflow_histories]
+    end
   end
 
   defp continuation_details(%{continued_from: nil, continued_to: nil}) do

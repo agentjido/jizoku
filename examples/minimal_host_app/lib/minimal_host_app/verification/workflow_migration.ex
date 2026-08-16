@@ -4,6 +4,7 @@ defmodule MinimalHostApp.Verification.WorkflowMigration do
   alias Jizoku.Runtime.DispatchProtocol
   alias Jizoku.Runtime.Journal
   alias Jizoku.Runtime.Journal.Storage.Ecto, as: JournalStorage
+  alias Jizoku.Runs.GraphInspection
   alias Jizoku.Workflow.Definition
   alias MinimalHostApp.Migrations.RoutingV1ToV2
   alias MinimalHostApp.Repo
@@ -53,8 +54,39 @@ defmodule MinimalHostApp.Verification.WorkflowMigration do
            owner_id: "minimal-host-migration-worker",
            now: resumed_at
          ) do
-      {:ok, %{status: :completed} = snapshot} -> snapshot
+      {:ok, %{status: :completed} = snapshot} -> verify_diagnostics!(snapshot.run_id)
       other -> raise "workflow migration execution failed: #{inspect(other)}"
+    end
+  end
+
+  defp verify_diagnostics!(run_id) do
+    opts = [journal_storage: @storage, queue: @queue]
+    target_fingerprint = Definition.fingerprint(MigratedRouting.workflow_definition())
+
+    {:ok, inspected} = Jizoku.inspect_run(run_id, opts)
+    {:ok, graph} = Jizoku.inspect_run_graph(run_id, opts)
+    {:ok, timeline} = Jizoku.inspect_run_timeline(run_id, opts)
+    {:ok, explanation} = Jizoku.explain_run(run_id, opts)
+    graph = GraphInspection.to_map(graph)
+
+    migrated? =
+      Enum.any?(timeline.events, fn event ->
+        event.type == :workflow_definition_migrated and
+          event.details.migration_key == "minimal-host-routing-v1-to-v2"
+      end)
+
+    valid? =
+      inspected.definition_fingerprint == target_fingerprint and
+        inspected.definition_resolution.status == :resolved and
+        graph.definition_migrations == inspected.definition_migrations and
+        graph.definition_resolution == inspected.definition_resolution and
+        explanation.evidence.definition_resolution == inspected.definition_resolution and
+        migrated?
+
+    if valid? do
+      inspected
+    else
+      raise "workflow migration diagnostics did not retain exact definition evidence"
     end
   end
 

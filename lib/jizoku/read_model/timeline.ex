@@ -9,6 +9,7 @@ defmodule Jizoku.ReadModel.Timeline do
   @event_order %{
     command_received: 0,
     run_started: 1,
+    workflow_definition_migrated: 2,
     run_continued_from: 2,
     attempt_claimed: 2,
     attempt_completed: 3,
@@ -26,6 +27,9 @@ defmodule Jizoku.ReadModel.Timeline do
           run_id: String.t(),
           partition: String.t() | nil,
           workflow: String.t() | nil,
+          definition_version: String.t() | nil,
+          definition_fingerprint: String.t() | nil,
+          definition_resolution: map() | nil,
           queue: String.t(),
           status: atom(),
           terminal?: boolean(),
@@ -38,6 +42,9 @@ defmodule Jizoku.ReadModel.Timeline do
     :run_id,
     :partition,
     :workflow,
+    :definition_version,
+    :definition_fingerprint,
+    :definition_resolution,
     :queue,
     :status,
     :terminal?,
@@ -54,6 +61,9 @@ defmodule Jizoku.ReadModel.Timeline do
       run_id: snapshot.run_id,
       partition: snapshot.partition,
       workflow: snapshot.workflow,
+      definition_version: snapshot.definition_version,
+      definition_fingerprint: snapshot.definition_fingerprint,
+      definition_resolution: snapshot.definition_resolution,
       queue: snapshot.queue,
       status: snapshot.status,
       terminal?: snapshot.terminal?,
@@ -69,6 +79,7 @@ defmodule Jizoku.ReadModel.Timeline do
     snapshot
     |> command_events()
     |> Kernel.++(run_started_events(snapshot))
+    |> Kernel.++(migration_events(snapshot))
     |> Kernel.++(continuation_events(snapshot))
     |> Kernel.++(attempt_events(snapshot))
     |> Kernel.++(applied_events(snapshot))
@@ -143,6 +154,34 @@ defmodule Jizoku.ReadModel.Timeline do
   end
 
   defp run_started_events(%Snapshot{}), do: []
+
+  defp migration_events(%Snapshot{run_id: run_id, definition_migrations: migrations}) do
+    Enum.flat_map(migrations, fn migration ->
+      case value(migration, :occurred_at) do
+        %DateTime{} = occurred_at ->
+          [
+            event(:workflow_definition_migrated, occurred_at, run_id,
+              status: :migrated,
+              summary:
+                "workflow definition migrated from #{value(migration, :source_version)} to #{value(migration, :target_version)}",
+              details:
+                Map.take(migration, [
+                  :migration_key,
+                  :source_version,
+                  :source_fingerprint,
+                  :target_version,
+                  :target_fingerprint,
+                  :source_manual_step,
+                  :target_manual_step
+                ])
+            )
+          ]
+
+        _missing ->
+          []
+      end
+    end)
+  end
 
   defp continuation_events(%Snapshot{} = snapshot) do
     continuation = snapshot.continuation || %{}

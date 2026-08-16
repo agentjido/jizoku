@@ -169,6 +169,7 @@ defmodule Jizoku.ReadModel.Inspection do
       input: workflow_projection.input,
       started_at: workflow_projection.started_at,
       definition_version: workflow_projection.definition_version,
+      definition_fingerprint: workflow_projection.definition_fingerprint,
       definition_migrations: WorkflowAgent.Projection.definition_migrations(workflow_projection),
       continuation: WorkflowAgent.Projection.continuation(workflow_projection),
       history: HistoryPolicy.summary(run_thread_rev),

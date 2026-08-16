@@ -177,6 +177,21 @@ them deterministic and free of external side effects. Deploy and register both
 source and target implementations before migration. Roll back with another
 explicit migration contract; never relabel a persisted version or fingerprint.
 
+The public inspection surfaces expose the durable workflow identity and its
+availability. `Jizoku.inspect_run/2` returns `definition_version`,
+`definition_fingerprint`, `definition_resolution`, and the durable
+`definition_migrations`. `Jizoku.inspect_run_graph/2` carries the same evidence
+and does not substitute the currently deployed graph when the exact persisted
+definition is unavailable. `Jizoku.inspect_run_timeline/2` emits a
+`:workflow_definition_migrated` event for each migration receipt.
+
+Use `Jizoku.explain_run/2` before retrying a run when definition resolution is
+unavailable. Missing registered history recommends
+`:restore_historical_workflow_version` and `:verify_workflow_histories`;
+fingerprint mismatches recommend restoring the exact definition. Restoring code
+does not alter an already terminal run, so terminal diagnostics also recommend
+an explicit replay after the definition has been restored.
+
 When a host uses partitions, it must route the same trusted `:partition`
 through start, worker, cron, signal, control, replay, and inspection calls.
 Run UUIDs and queue names may repeat across partitions. Jizoku does not search

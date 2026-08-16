@@ -2,6 +2,7 @@ defmodule Jizoku.WorkflowMigrationTest do
   use ExUnit.Case, async: false
 
   alias Jido.Storage.ETS
+  alias Jizoku.Runs.GraphInspection
   alias Jizoku.Runtime.DispatchProtocol
   alias Jizoku.Runtime.Journal
   alias Jizoku.Runtime.Journal.WorkflowDefinitionLoader
@@ -236,6 +237,66 @@ defmodule Jizoku.WorkflowMigrationTest do
              )
 
     assert loaded_definition.definition_version == "v2"
+
+    target_fingerprint = Definition.fingerprint(loaded_definition)
+
+    assert {:ok, inspected} =
+             Jizoku.inspect_run(run_id,
+               journal_storage: @storage,
+               queue: @queue,
+               now: @paused_at
+             )
+
+    assert inspected.definition_fingerprint == target_fingerprint
+
+    assert inspected.definition_resolution == %{
+             status: :resolved,
+             definition_version: "v2",
+             definition_fingerprint: target_fingerprint
+           }
+
+    assert {:ok, graph} =
+             Jizoku.inspect_run_graph(run_id,
+               journal_storage: @storage,
+               queue: @queue,
+               now: @paused_at
+             )
+
+    graph = GraphInspection.to_map(graph)
+    assert graph.definition_fingerprint == target_fingerprint
+    assert graph.definition_resolution == inspected.definition_resolution
+    assert graph.definition_migrations == inspected.definition_migrations
+
+    assert {:ok, timeline} =
+             Jizoku.inspect_run_timeline(run_id,
+               journal_storage: @storage,
+               queue: @queue,
+               now: @paused_at
+             )
+
+    assert timeline.definition_fingerprint == target_fingerprint
+    assert timeline.definition_resolution == inspected.definition_resolution
+
+    assert %{
+             type: :workflow_definition_migrated,
+             status: :migrated,
+             details: %{
+               migration_key: "workflow-migration-v1-to-v2",
+               source_version: "v1",
+               target_version: "v2"
+             }
+           } = Enum.find(timeline.events, &(&1.type == :workflow_definition_migrated))
+
+    assert {:ok, explanation} =
+             Jizoku.explain_run(run_id,
+               journal_storage: @storage,
+               queue: @queue,
+               now: @paused_at
+             )
+
+    assert explanation.evidence.definition_fingerprint == target_fingerprint
+    assert explanation.evidence.definition_resolution == inspected.definition_resolution
+    assert explanation.evidence.definition_migrations == inspected.definition_migrations
 
     assert {:ok, %{status: :running}} =
              Jizoku.resume(
