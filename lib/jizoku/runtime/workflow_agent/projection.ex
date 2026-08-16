@@ -1,4 +1,5 @@
 # credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
+# credo:disable-for-this-file Credo.Check.Warning.StructFieldAmount
 defmodule Jizoku.Runtime.WorkflowAgent.Projection.GraphState do
   @moduledoc false
 
@@ -54,7 +55,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   alias Jizoku.Runtime.Trace
   alias Jizoku.Runtime.WorkflowAgent.Projection.GraphState
 
-  @checkpoint_version 2
+  @checkpoint_version 3
   @checkpoint_version_key "jizoku.workflow_projection.checkpoint_version"
   @command_history_count_key "jizoku.workflow_projection.command_history_count"
   @jido_outbox_key "jizoku.workflow_projection.jido_outbox"
@@ -92,6 +93,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
           replayed_from_run_id: String.t() | nil,
           definition_version: String.t() | nil,
           definition_fingerprint: String.t() | nil,
+          definition_migrations: [map()],
+          context_migrated_runnable_keys: string_set(),
           status: atom(),
           planned_runnables: %{optional(String.t()) => map()},
           applied_runnable_keys: string_set(),
@@ -125,6 +128,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
             replayed_from_run_id: nil,
             definition_version: nil,
             definition_fingerprint: nil,
+            definition_migrations: [],
+            context_migrated_runnable_keys: MapSet.new(),
             status: :new,
             planned_runnables: %{},
             applied_runnable_keys: MapSet.new(),
@@ -263,9 +268,34 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   end
 
   @doc false
+  @spec applied_result_context(t()) :: map()
+  def applied_result_context(%__MODULE__{} = projection) do
+    migrated_keys = Map.get(projection, :context_migrated_runnable_keys, MapSet.new())
+
+    projection
+    |> applied_results()
+    |> Enum.reject(fn {runnable_key, _value} ->
+      MapSet.member?(migrated_keys, runnable_key)
+    end)
+    |> Enum.sort_by(fn {runnable_key, _result} ->
+      {applied_result_sort_value(projection, runnable_key), runnable_key}
+    end)
+    |> Enum.filter(fn {_key, value} -> is_map(value) end)
+    |> Enum.map(fn {_key, value} -> value end)
+    |> Enum.reduce(%{}, &Map.merge(&2, &1))
+  end
+
+  @doc false
   @spec applied_result(t(), String.t()) :: {:ok, map() | nil} | :error
   def applied_result(%__MODULE__{} = projection, runnable_key) when is_binary(runnable_key) do
     Map.fetch(applied_results(projection), runnable_key)
+  end
+
+  defp applied_result_sort_value(%__MODULE__{} = projection, runnable_key) do
+    case applied_at(projection, runnable_key) do
+      %DateTime{} = applied_at -> DateTime.to_unix(applied_at, :microsecond)
+      _missing -> -1
+    end
   end
 
   defp dispatchable_runnable?(graph, runnable, ready_node_ids) do
@@ -416,6 +446,14 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   end
 
   @doc false
+  @spec definition_migrations(t()) :: [map()]
+  def definition_migrations(%__MODULE__{} = projection) do
+    projection
+    |> Map.get(:definition_migrations, [])
+    |> Enum.reverse()
+  end
+
+  @doc false
   @spec jido_outbox(t()) :: map()
   def jido_outbox(%__MODULE__{} = projection) do
     Map.get(projection, @jido_outbox_key, Outbox.new_projection())
@@ -433,7 +471,9 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
           :continued_to_run_id,
           :continued_to_key,
           :continuation_request,
-          :continuation_origin
+          :continuation_origin,
+          :definition_migrations,
+          :context_migrated_runnable_keys
         ],
         &Map.has_key?(projection, &1)
       ) and
@@ -464,6 +504,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     |> Map.put_new(:continued_to_key, nil)
     |> Map.put_new(:continuation_request, nil)
     |> Map.put_new(:continuation_origin, nil)
+    |> Map.put_new(:definition_migrations, [])
+    |> Map.put_new(:context_migrated_runnable_keys, MapSet.new())
     |> Map.put(:dynamic_work, dynamic_work)
     |> Map.put(:graph, graph)
     |> Map.put_new(:terminal_error, nil)
@@ -539,6 +581,17 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
         definition_metadata_value(data, :definition_fingerprint)
       )
       |> refresh_status()
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :run_definition_migrated, data: data} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if definition_migration_data?(data) do
+      put_definition_migration(projection, entry, data)
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
@@ -695,6 +748,96 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     |> Map.update(:command_history, [command], &[command | &1])
     |> Map.put(@checkpoint_version_key, @checkpoint_version)
     |> Map.update(@command_history_count_key, 1, &(&1 + 1))
+  end
+
+  defp definition_migration_data?(data) when is_map(data) do
+    required_present?(data, [
+      :run_id,
+      :migration_key,
+      :source_version,
+      :source_fingerprint,
+      :target_version,
+      :target_fingerprint,
+      :context,
+      :manual_state
+    ]) and
+      non_empty_binary?(Map.get(data, :run_id)) and
+      non_empty_binary?(Map.get(data, :migration_key)) and
+      non_empty_binary?(Map.get(data, :source_version)) and
+      non_empty_binary?(Map.get(data, :source_fingerprint)) and
+      non_empty_binary?(Map.get(data, :target_version)) and
+      non_empty_binary?(Map.get(data, :target_fingerprint)) and
+      is_map(Map.get(data, :context)) and
+      migration_manual_state?(Map.get(data, :manual_state))
+  end
+
+  defp definition_migration_data?(_data) do
+    false
+  end
+
+  defp migration_manual_state?(manual_state) when is_map(manual_state) do
+    non_empty_binary?(Map.get(manual_state, :step)) and
+      Map.get(manual_state, :kind) in ["pause", "approval"] and
+      match?(%DateTime{}, Map.get(manual_state, :paused_at)) and
+      is_map(Map.get(manual_state, :metadata))
+  end
+
+  defp migration_manual_state?(_manual_state) do
+    false
+  end
+
+  defp put_definition_migration(%__MODULE__{} = projection, entry, data) do
+    migration = definition_migration(data, entry)
+
+    case existing_definition_migration(projection, migration.migration_key) do
+      nil -> apply_definition_migration(projection, entry, data, migration)
+      ^migration -> projection
+      _conflict -> add_anomaly(projection, entry, :conflicting_definition_migration)
+    end
+  end
+
+  defp apply_definition_migration(projection, entry, data, migration) do
+    if current_migration_source?(projection, data) and projection.status == :paused do
+      projection
+      |> Map.put(:definition_version, data.target_version)
+      |> Map.put(:definition_fingerprint, data.target_fingerprint)
+      |> Map.put(:context, data.context)
+      |> Map.put(:manual_state, data.manual_state)
+      |> Map.update(
+        :context_migrated_runnable_keys,
+        projection.applied_runnable_keys,
+        &MapSet.union(&1, projection.applied_runnable_keys)
+      )
+      |> Map.update(:definition_migrations, [migration], &[migration | &1])
+      |> refresh_status()
+    else
+      add_anomaly(projection, entry, :stale_definition_migration)
+    end
+  end
+
+  defp current_migration_source?(projection, data) do
+    projection.run_id == data.run_id and
+      projection.definition_version == data.source_version and
+      projection.definition_fingerprint == data.source_fingerprint
+  end
+
+  defp existing_definition_migration(projection, migration_key) do
+    projection
+    |> Map.get(:definition_migrations, [])
+    |> Enum.find(&(Map.get(&1, :migration_key) == migration_key))
+  end
+
+  defp definition_migration(data, entry) do
+    %{
+      migration_key: data.migration_key,
+      source_version: data.source_version,
+      source_fingerprint: data.source_fingerprint,
+      target_version: data.target_version,
+      target_fingerprint: data.target_fingerprint,
+      source_manual_step: Map.get(data, :source_manual_step),
+      target_manual_step: Map.get(data, :target_manual_step),
+      occurred_at: Map.get(data, :occurred_at, entry.occurred_at)
+    }
   end
 
   defp checkpoint_schema_compatible?(projection) do

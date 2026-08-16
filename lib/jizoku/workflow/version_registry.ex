@@ -69,6 +69,27 @@ defmodule Jizoku.Workflow.VersionRegistry do
      }}
   end
 
+  @doc false
+  @spec fetch(module(), String.t(), term()) ::
+          {:ok, module(), Definition.t()} | {:error, term()}
+  def fetch(workflow, version, registry) when is_atom(workflow) and is_binary(version) do
+    with :ok <- validate(registry),
+         {:ok, versions} <- workflow_versions(registry, workflow),
+         {:ok, implementation} <- implementation(versions, workflow, version),
+         {:ok, definition} <- Definition.load(implementation) do
+      {:ok, workflow, definition}
+    end
+  end
+
+  def fetch(workflow, version, _registry) do
+    {:error,
+     %{
+       code: "invalid_workflow_version_request",
+       workflow: inspect(workflow),
+       requested_version: version
+     }}
+  end
+
   defp validate_workflow_versions(workflow, versions)
        when is_atom(workflow) and is_map(versions) do
     versions

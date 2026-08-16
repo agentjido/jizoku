@@ -767,6 +767,7 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
     context =
       workflow_agent
       |> applied_result_context()
+      |> Map.merge(projection_context(workflow_agent))
       |> Map.merge(input || %{})
       |> Map.merge(result)
 
@@ -879,11 +880,19 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
          agent_module: WorkflowAgent,
          state: %{projection: projection}
        }) do
-    projection
-    |> Projection.applied_results()
-    |> Enum.filter(fn {_key, value} -> is_map(value) end)
-    |> Enum.map(fn {_key, value} -> value end)
-    |> Enum.reduce(%{}, &Map.merge(&2, &1))
+    Projection.applied_result_context(projection)
+  end
+
+  defp projection_context(%Agent{
+         agent_module: WorkflowAgent,
+         state: %{projection: %Projection{context: context}}
+       })
+       when is_map(context) do
+    context
+  end
+
+  defp projection_context(_workflow_agent) do
+    %{}
   end
 
   defp manual_input(%{step: step}, %Projection{} = projection) do

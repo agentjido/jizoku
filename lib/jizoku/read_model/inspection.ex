@@ -169,6 +169,7 @@ defmodule Jizoku.ReadModel.Inspection do
       input: workflow_projection.input,
       started_at: workflow_projection.started_at,
       definition_version: workflow_projection.definition_version,
+      definition_migrations: WorkflowAgent.Projection.definition_migrations(workflow_projection),
       continuation: WorkflowAgent.Projection.continuation(workflow_projection),
       history: HistoryPolicy.summary(run_thread_rev),
       context: snapshot_context(workflow_projection),
@@ -297,7 +298,7 @@ defmodule Jizoku.ReadModel.Inspection do
 
   defp snapshot_context(%WorkflowAgent.Projection{} = projection) do
     projection
-    |> applied_result_context()
+    |> WorkflowAgent.Projection.applied_result_context()
     |> Map.merge(projection.context)
   end
 
@@ -344,24 +345,6 @@ defmodule Jizoku.ReadModel.Inspection do
     case Map.fetch(context, :parent) do
       {:ok, parent} -> parent
       :error -> Map.get(context, "parent")
-    end
-  end
-
-  defp applied_result_context(%WorkflowAgent.Projection{} = projection) do
-    projection
-    |> WorkflowAgent.Projection.applied_results()
-    |> Enum.sort_by(fn {runnable_key, _result} ->
-      {applied_result_sort_value(projection, runnable_key), runnable_key}
-    end)
-    |> Enum.map(fn {_runnable_key, result} -> result end)
-    |> Enum.filter(&is_map/1)
-    |> Enum.reduce(%{}, &Map.merge(&2, &1))
-  end
-
-  defp applied_result_sort_value(%WorkflowAgent.Projection{} = projection, runnable_key) do
-    case WorkflowAgent.Projection.applied_at(projection, runnable_key) do
-      %DateTime{} = applied_at -> DateTime.to_unix(applied_at, :microsecond)
-      _missing -> -1
     end
   end
 
