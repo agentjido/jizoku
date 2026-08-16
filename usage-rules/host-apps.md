@@ -34,6 +34,11 @@
 - Do not configure `:executor` for step execution.
 - Use explicit `journal_storage` only when replacing the default inferred Ecto
   storage boundary.
+- Define `:search_attribute_schema` in trusted host configuration. Keep it
+  small, stable, JSON-safe, and free of secrets or workflow payload fields.
+- Rebuild the optional Ecto run-search projection separately for the legacy
+  namespace and every configured partition after applying its migration. Do
+  not enumerate partitions from request input or ask Jizoku to scan them.
 
 ## Worker Loop
 

@@ -180,6 +180,12 @@ Use list APIs for dashboard indexes and inspection APIs for details:
 {:ok, graph} = Jizoku.inspect_run_graph(run.run_id)
 ```
 
+For bounded dashboards, configure a host-owned search-attribute schema and use
+`first:` plus the returned `next_cursor`. Existing calls without `first:` or
+`after:` continue returning a list. See
+[Host app integration](host_app_integration.md#search-attributes-and-cursor-pages)
+for attribute validation, visibility, migration, rebuild, and partition rules.
+
 This is the surface Kansoku and other tooling should build on: list runs by
 workflow or globally, then fetch one run's graph, history, and explanation by
 id.

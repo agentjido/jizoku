@@ -789,6 +789,23 @@ defmodule Jizoku do
   end
 
   @doc """
+  Rebuilds the optional Ecto run-search projection for one selected partition.
+
+  Journal facts remain authoritative. Hosts should run the additive migration
+  first, then call this operation once for the legacy namespace and once for
+  every explicitly configured partition they own.
+  """
+  @spec rebuild_run_search_projection(keyword()) ::
+          {:ok, Jizoku.ReadModel.RunSearch.Rebuilder.result()} | {:error, term()}
+  def rebuild_run_search_projection(overrides \\ []) do
+    with :ok <- Routing.public_run_search_rebuild_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides) do
+      Jizoku.ReadModel.RunSearch.Rebuilder.rebuild(storage)
+    end
+  end
+
+  @doc """
   Merges allowlisted operational search attributes into one durable run.
 
   Updates require a stable `:idempotency_key`. Exact retries return the

@@ -21,6 +21,7 @@ defmodule Jizoku.Runtime.Routing do
     :actor,
     :visibility_policy
   ]
+  @public_run_search_rebuild_options [:runtime, :repo, :journal_storage, :partition]
   @journal_start_options [
     :runtime,
     :journal_storage,
@@ -226,6 +227,12 @@ defmodule Jizoku.Runtime.Routing do
   @spec journal_list_options(keyword()) :: keyword()
   def journal_list_options(overrides) do
     configured_journal_options(overrides, @projection_list_options)
+  end
+
+  @doc "Validates options accepted by the run-search projection rebuild."
+  @spec public_run_search_rebuild_options(keyword() | term()) :: :ok | {:error, term()}
+  def public_run_search_rebuild_options(opts) do
+    validate_public_options(opts, @public_run_search_rebuild_options)
   end
 
   @doc """

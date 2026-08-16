@@ -21,7 +21,7 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
     {:ok, tmp_dir: tmp_dir}
   end
 
-  test "creates one current-schema migration", %{tmp_dir: tmp_dir} do
+  test "creates the current journal and run-search migrations", %{tmp_dir: tmp_dir} do
     output =
       File.cd!(tmp_dir, fn ->
         capture_io(fn ->
@@ -31,11 +31,20 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
 
     installed_migrations = File.ls!(Path.join(tmp_dir, "priv/repo/migrations"))
 
-    assert [migration] = installed_migrations
-    assert String.ends_with?(migration, "create_jizoku_schema.exs")
+    assert [_journal_migration, _search_migration] = installed_migrations
+    assert Enum.any?(installed_migrations, &String.ends_with?(&1, "create_jizoku_schema.exs"))
+
+    assert Enum.any?(
+             installed_migrations,
+             &String.ends_with?(&1, "add_jizoku_run_search_projection.exs")
+           )
+
     assert output =~ "creating"
 
-    migration_body = File.read!(Path.join([tmp_dir, "priv/repo/migrations", migration]))
+    migration_body =
+      Enum.map_join(installed_migrations, "\n", fn migration ->
+        File.read!(Path.join([tmp_dir, "priv/repo/migrations", migration]))
+      end)
 
     refute migration_body =~ "create table(:jizoku_runs"
     refute migration_body =~ "jizoku_runs_schedule_idempotency_index"
@@ -44,6 +53,7 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
     assert migration_body =~ "create table(:jizoku_journal_threads"
     assert migration_body =~ "create table(:jizoku_journal_entries"
     assert migration_body =~ "create table(:jizoku_journal_checkpoints"
+    assert migration_body =~ "create table(:jizoku_run_search"
 
     assert output =~ "runtime: :journal"
     assert output =~ "read_model: :read_model"
@@ -51,7 +61,7 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
     refute output =~ "Jizoku.Runtime.Runner.perform(payload)"
   end
 
-  test "creates the current schema when an older copied migration exists", %{tmp_dir: tmp_dir} do
+  test "creates current migrations when an unrelated older migration exists", %{tmp_dir: tmp_dir} do
     File.write!(
       Path.join(tmp_dir, "priv/repo/migrations/20260101000000_create_jizoku_schema.exs"),
       """
@@ -76,15 +86,20 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
 
     assert "20260101000000_create_jizoku_schema.exs" in installed_migrations
 
-    assert Enum.count(
+    assert [_existing_migration, _journal_migration, _search_migration] = installed_migrations
+
+    assert Enum.count(installed_migrations, &String.ends_with?(&1, "create_jizoku_schema.exs")) ==
+             2
+
+    assert Enum.any?(
              installed_migrations,
-             &String.ends_with?(&1, "create_jizoku_schema.exs")
-           ) == 2
+             &String.ends_with?(&1, "add_jizoku_run_search_projection.exs")
+           )
 
     assert output =~ "creating"
   end
 
-  test "skips the current-schema migration when it already exists", %{tmp_dir: tmp_dir} do
+  test "adds only run search when the journal baseline already exists", %{tmp_dir: tmp_dir} do
     File.write!(
       Path.join(tmp_dir, "priv/repo/migrations/20260101000000_create_jizoku_schema.exs"),
       """
@@ -107,10 +122,47 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
         end)
       end)
 
+    installed_migrations = File.ls!(Path.join(tmp_dir, "priv/repo/migrations"))
+
+    assert "20260101000000_create_jizoku_schema.exs" in installed_migrations
+    assert [_existing_migration, _search_migration] = installed_migrations
+
+    assert Enum.any?(
+             installed_migrations,
+             &String.ends_with?(&1, "add_jizoku_run_search_projection.exs")
+           )
+
+    assert output =~ "creating"
+  end
+
+  test "skips migrations when journal and run search are already represented", %{tmp_dir: tmp_dir} do
+    File.write!(
+      Path.join(tmp_dir, "priv/repo/migrations/20260101000000_create_jizoku_schema.exs"),
+      """
+      defmodule ExistingMigration do
+        use Ecto.Migration
+
+        def change do
+          create table(:jizoku_journal_threads)
+          create table(:jizoku_journal_entries)
+          create table(:jizoku_journal_checkpoints)
+          create table(:jizoku_run_search)
+        end
+      end
+      """
+    )
+
+    output =
+      File.cd!(tmp_dir, fn ->
+        capture_io(fn ->
+          Install.run([])
+        end)
+      end)
+
     assert File.ls!(Path.join(tmp_dir, "priv/repo/migrations")) == [
              "20260101000000_create_jizoku_schema.exs"
            ]
 
-    assert output =~ "skipping create_jizoku_schema.exs"
+    assert output =~ "skipping Jizoku migrations"
   end
 end

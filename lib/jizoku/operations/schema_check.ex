@@ -230,7 +230,8 @@ defmodule Jizoku.Operations.SchemaCheck do
     Enum.reduce(expected, {[], []}, fn {table, table_spec}, {missing, mismatched} ->
       requirements =
         [%{kind: :primary_key, columns: table_spec.primary_key}] ++
-          Enum.map(Map.get(table_spec, :unique, []), &%{kind: :unique_index, columns: &1})
+          Enum.map(Map.get(table_spec, :unique, []), &%{kind: :unique_index, columns: &1}) ++
+          Enum.map(Map.get(table_spec, :indexes, []), &%{kind: :index, columns: &1})
 
       Enum.reduce(requirements, {missing, mismatched}, fn requirement, acc ->
         compare_index_requirement(table, requirement, indexes, acc)
@@ -254,6 +255,11 @@ defmodule Jizoku.Operations.SchemaCheck do
         matches
         |> Enum.any?(&(&1.unique? and not &1.partial?))
         |> compare_index_match(:unique_index, table, requirement.columns, missing, mismatched)
+
+      {:index, matches} ->
+        matches
+        |> Enum.any?(&(not &1.partial?))
+        |> compare_index_match(:index, table, requirement.columns, missing, mismatched)
     end
   end
 

@@ -6,7 +6,7 @@ defmodule Mix.Tasks.Jizoku.Install do
 
       $ mix jizoku.install
 
-  This task creates one current-schema Jizoku migration in
+  This task creates the current Jizoku migrations in
   `priv/repo/migrations` so the host application can run it through its normal
   Ecto migration flow.
 
@@ -16,24 +16,33 @@ defmodule Mix.Tasks.Jizoku.Install do
   """
 
   @shortdoc "Installs Jizoku migrations into the host application"
-  @schema_migration_name "create_jizoku_schema.exs"
-  @required_schema_markers Enum.map(
-                             Jizoku.Persistence.Schema.table_names(),
-                             &"create table(:#{&1}"
-                           )
+  @journal_migration_name "create_jizoku_schema.exs"
+  @search_migration_name "add_jizoku_run_search_projection.exs"
+  @journal_tables [
+    "jizoku_journal_threads",
+    "jizoku_journal_entries",
+    "jizoku_journal_checkpoints"
+  ]
+  @journal_markers Enum.map(@journal_tables, &"create table(:#{&1}")
+  @search_markers ["create table(:jizoku_run_search"]
+  @migrations [
+    %{
+      name: @journal_migration_name,
+      source: "20260815000000_create_jizoku_schema.exs",
+      markers: @journal_markers
+    },
+    %{
+      name: @search_migration_name,
+      source: "20260816000000_add_jizoku_run_search_projection.exs",
+      markers: @search_markers
+    }
+  ]
 
   use Mix.Task
 
   @impl Mix.Task
   def run(_args) do
-    source_file =
-      Application.app_dir(:jizoku, ["priv", "repo", "migrations", source_filename()])
-
     dest_dir = Path.join(["priv", "repo", "migrations"])
-
-    unless File.regular?(source_file) do
-      Mix.raise("Could not find Jizoku migration at #{source_file}")
-    end
 
     unless File.dir?(dest_dir) do
       Mix.raise("""
@@ -42,15 +51,8 @@ defmodule Mix.Tasks.Jizoku.Install do
       """)
     end
 
-    base_timestamp = timestamp()
-
-    if current_schema_installed?(dest_dir) do
-      Mix.shell().info("* skipping #{@schema_migration_name} (already installed)")
-    else
-      new_filename = "#{base_timestamp}_#{@schema_migration_name}"
-      File.cp!(source_file, Path.join(dest_dir, new_filename))
-      Mix.shell().info("* creating #{new_filename}")
-    end
+    validate_sources!()
+    install_missing_migrations(dest_dir)
 
     Mix.shell().info("""
 
@@ -74,20 +76,54 @@ defmodule Mix.Tasks.Jizoku.Install do
     """)
   end
 
-  defp current_schema_installed?(dest_dir) do
+  defp install_missing_migrations(dest_dir) do
+    installed_body = installed_migration_body(dest_dir)
+    missing = Enum.reject(@migrations, &markers_present?(installed_body, &1.markers))
+
+    case missing do
+      [] ->
+        Mix.shell().info("* skipping Jizoku migrations (current schema already installed)")
+
+      migrations ->
+        base_version = String.to_integer(timestamp())
+
+        migrations
+        |> Enum.with_index()
+        |> Enum.each(fn {migration, offset} ->
+          copy_migration!(dest_dir, migration, base_version + offset)
+        end)
+    end
+  end
+
+  defp installed_migration_body(dest_dir) do
     dest_dir
     |> File.ls!()
-    |> Enum.filter(&String.ends_with?(&1, @schema_migration_name))
-    |> Enum.any?(&current_schema_migration?(dest_dir, &1))
+    |> Enum.filter(&String.ends_with?(&1, ".exs"))
+    |> Enum.map_join("\n", &File.read!(Path.join(dest_dir, &1)))
   end
 
-  defp current_schema_migration?(dest_dir, filename) do
-    body = File.read!(Path.join(dest_dir, filename))
-    Enum.all?(@required_schema_markers, &String.contains?(body, &1))
+  defp markers_present?(body, markers) do
+    Enum.all?(markers, &String.contains?(body, &1))
   end
 
-  defp source_filename do
-    "20260815000000_#{@schema_migration_name}"
+  defp copy_migration!(dest_dir, migration, version) do
+    filename = "#{version}_#{migration.name}"
+    File.cp!(source_path(migration), Path.join(dest_dir, filename))
+    Mix.shell().info("* creating #{filename}")
+  end
+
+  defp validate_sources! do
+    Enum.each(@migrations, fn migration ->
+      source = source_path(migration)
+
+      unless File.regular?(source) do
+        Mix.raise("Could not find Jizoku migration at #{source}")
+      end
+    end)
+  end
+
+  defp source_path(migration) do
+    Application.app_dir(:jizoku, ["priv", "repo", "migrations", migration.source])
   end
 
   defp timestamp do

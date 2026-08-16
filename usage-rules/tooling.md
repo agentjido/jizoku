@@ -42,6 +42,16 @@
   `Jizoku.reconcile_dynamic_graph/2` instead of editing dispatch storage.
 - Keep list responses redacted by default; fetch detailed history only when the
   caller asks for it.
+- Use `first:` and `after:` for bounded cursor pages. Reuse the same filters and
+  selected partition until `next_cursor` is `nil`; do not decode or edit cursor
+  contents in host UI code.
+- Filter only host-approved search attributes. Keep payloads, outputs, errors,
+  secrets, credentials, and arbitrary metadata out of the search schema.
+- Treat `visibility_policy: :auditor` as privileged. External and operator
+  pages may filter by approved attributes but return them redacted.
+- Apply the additive Ecto run-search migration and rebuild each configured
+  partition explicitly. Other adapters and incomplete projections use the
+  journal catalog fallback.
 - Use `definition_version` from list, inspection, graph, and explanation
   surfaces as an operator label only; the definition fingerprint remains the
   compatibility guard.
