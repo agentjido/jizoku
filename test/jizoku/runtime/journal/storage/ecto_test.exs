@@ -1,6 +1,7 @@
 defmodule Jizoku.Runtime.Journal.Storage.EctoTest do
   use Jizoku.DataCase, async: false
 
+  alias Ecto.Adapters.SQL
   alias Ecto.Adapters.SQL.Sandbox
   alias Jido.Thread.Entry
   alias Jizoku.Persistence.JournalCheckpoint
@@ -166,7 +167,9 @@ defmodule Jizoku.Runtime.Journal.Storage.EctoTest do
              @storage_adapter.load_thread(@thread_id, repo: Repo)
 
     assert Repo.aggregate(
-             from(entry in JournalEntry, where: is_nil(entry.retention_run_id)),
+             from(entry in JournalEntry,
+               where: entry.retention_run_id == "__jizoku_unowned__"
+             ),
              :count
            ) == 2
   end
@@ -460,6 +463,28 @@ defmodule Jizoku.Runtime.Journal.Storage.EctoTest do
                  where: entry.thread_id == ^Journal.thread_id({:dispatch, "default"})
                )
              )
+  end
+
+  test "run writes remain available before the optional receipt table is migrated" do
+    SQL.query!(
+      Repo,
+      "ALTER TABLE jizoku_retention_receipts RENAME TO unavailable_retention_receipts",
+      []
+    )
+
+    run_id = "0190a4f1-0a7c-7cb1-80c5-b4f8b1d24001"
+
+    assert {:ok, snapshot} =
+             Jizoku.start(MutationWorkflow, %{},
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: "default",
+               run_id: run_id,
+               now: @started_at
+             )
+
+    assert snapshot.run_id == run_id
+    assert snapshot.status == :running
   end
 
   test "requires a repo option at the Jizoku storage boundary" do

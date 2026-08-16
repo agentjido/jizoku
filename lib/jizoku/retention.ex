@@ -7,6 +7,7 @@ defmodule Jizoku.Retention do
   alias Jizoku.Retention.Plan.Blocked
   alias Jizoku.Retention.Plan.Candidate
   alias Jizoku.Retention.Policy
+  alias Jizoku.Retention.Receipt
   alias Jizoku.Runtime.Journal
   alias Jizoku.Runtime.Journal.Storage
   alias Jizoku.Runtime.Routing
@@ -26,6 +27,8 @@ defmodule Jizoku.Retention do
           | {:journal_storage, term()}
           | {:partition, String.t() | nil}
           | {:now, DateTime.t()}
+
+  @type apply_option :: preview_option()
 
   @doc """
   Builds deterministic, expiring retention evidence without deleting data.
@@ -53,6 +56,75 @@ defmodule Jizoku.Retention do
   @doc false
   @spec valid_confirmation?(Plan.t(), String.t(), DateTime.t()) :: boolean()
   defdelegate valid_confirmation?(plan, token, now), to: Plan
+
+  @doc """
+  Applies one confirmed retention plan through the transactional Ecto boundary.
+
+  Exact retries return the original receipt. New deletion attempts reject
+  expired, modified, stale, cross-partition, unsupported, or empty plans.
+  """
+  @spec apply(Plan.t(), String.t(), [apply_option()]) ::
+          {:ok, Receipt.t()} | {:error, term()}
+  def apply(plan, confirmation, overrides \\ [])
+
+  def apply(%Plan{} = plan, confirmation, overrides)
+      when is_binary(confirmation) and is_list(overrides) do
+    with :ok <- Routing.public_retention_apply_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides),
+         {:ok, now} <- now(overrides),
+         :ok <- matching_partition(plan, storage),
+         true <- Plan.confirmation_matches?(plan, confirmation) do
+      Jizoku.Retention.EctoApply.apply(storage, plan, now)
+    else
+      false -> {:error, :invalid_retention_confirmation}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def apply(%Plan{}, _confirmation, _overrides) do
+    {:error, {:invalid_option, {:opts, :invalid}}}
+  end
+
+  def apply(_plan, _confirmation, _overrides) do
+    {:error, {:invalid_option, {:plan, :invalid}}}
+  end
+
+  @doc "Re-evaluates one candidate against current lifecycle and host policy state."
+  @spec revalidate_candidate(Snapshot.t(), Candidate.t(), DateTime.t()) ::
+          :ok | {:error, term()}
+  def revalidate_candidate(%Snapshot{} = snapshot, %Candidate{} = candidate, %DateTime{} = now) do
+    current = {
+      snapshot.run_id,
+      snapshot.workflow,
+      snapshot.queue,
+      snapshot.terminal_status,
+      snapshot.terminal_at,
+      snapshot.archived_at,
+      snapshot.thread_revisions.run,
+      snapshot.thread_revisions.dispatch
+    }
+
+    expected = {
+      candidate.run_id,
+      candidate.workflow,
+      candidate.queue,
+      candidate.terminal_status,
+      candidate.terminal_at,
+      candidate.archived_at,
+      candidate.run_revision,
+      candidate.dispatch_revision
+    }
+
+    with true <- current == expected,
+         {:ok, []} <- eligibility_reasons(snapshot, now) do
+      :ok
+    else
+      false -> {:error, {:stale_retention_plan, candidate.run_id}}
+      {:ok, reasons} -> {:error, {:retention_candidate_blocked, candidate.run_id, reasons}}
+      {:error, _reason} = error -> error
+    end
+  end
 
   defp normalize_filters(filters) when is_list(filters) do
     with :ok <- keyword_filters(filters),
@@ -111,6 +183,14 @@ defmodule Jizoku.Retention do
     case Keyword.get(overrides, :now, DateTime.utc_now()) do
       %DateTime{} = now -> {:ok, now}
       _invalid -> {:error, {:invalid_option, {:now, :invalid}}}
+    end
+  end
+
+  defp matching_partition(%Plan{partition: partition}, %Storage{} = storage) do
+    if Storage.partition(storage) == partition do
+      :ok
+    else
+      {:error, :retention_partition_mismatch}
     end
   end
 
@@ -261,6 +341,7 @@ defmodule Jizoku.Retention do
       archived_at: snapshot.archived_at,
       run_revision: snapshot.thread_revisions.run,
       dispatch_revision: snapshot.thread_revisions.dispatch,
+      dispatch_entry_count: dispatch_entry_count,
       affected: affected,
       estimated_entries: snapshot.thread_revisions.run + dispatch_entry_count
     }

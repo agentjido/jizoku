@@ -10,6 +10,7 @@ defmodule Jizoku.Retention.Plan.Candidate do
           archived_at: DateTime.t(),
           run_revision: non_neg_integer(),
           dispatch_revision: non_neg_integer(),
+          dispatch_entry_count: non_neg_integer(),
           affected: map(),
           estimated_entries: non_neg_integer()
         }
@@ -23,6 +24,7 @@ defmodule Jizoku.Retention.Plan.Candidate do
     :archived_at,
     :run_revision,
     :dispatch_revision,
+    :dispatch_entry_count,
     :affected,
     :estimated_entries
   ]
@@ -99,6 +101,15 @@ defmodule Jizoku.Retention.Plan do
   end
 
   def valid_confirmation?(%__MODULE__{}, _token, %DateTime{}), do: false
+
+  @doc "Validates that a token matches the exact, unmodified plan evidence."
+  @spec confirmation_matches?(t(), String.t()) :: boolean()
+  def confirmation_matches?(%__MODULE__{} = plan, token) when is_binary(token) do
+    digest_matches?(plan.confirmation_token, token) and
+      digest_matches?(plan.confirmation_token, digest(plan))
+  end
+
+  def confirmation_matches?(%__MODULE__{}, _token), do: false
 
   defp digest_matches?(left, right) when is_binary(left) and is_binary(right) do
     byte_size(left) == byte_size(right) and

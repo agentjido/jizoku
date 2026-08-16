@@ -19,15 +19,19 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
 
   import Ecto.Query
 
+  alias Ecto.Adapters.SQL
   alias Jido.Thread
   alias Jido.Thread.EntryNormalizer
   alias Jizoku.Persistence.JournalCheckpoint
   alias Jizoku.Persistence.JournalEntry
   alias Jizoku.Persistence.JournalThread
+  alias Jizoku.Persistence.RetentionReceipt
   alias Jizoku.ReadModel.RunSearch.EctoProjector
   alias Jizoku.Runtime.Journal.Storage.Metadata
 
   @encoded_term_tag :jizoku_ecto_term_v1
+  @retention_gap_metadata_key "jizoku_retention_gaps"
+  @retention_unowned_marker "__jizoku_unowned__"
 
   @type opts :: keyword()
 
@@ -128,6 +132,33 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
     end
   end
 
+  @doc "Acquires the transaction-scoped lock that serializes one retained run identity."
+  @spec lock_retention_identity(module(), String.t() | nil, String.t(), opts()) ::
+          :ok | {:error, term()}
+  def lock_retention_identity(repo, partition, run_id, opts)
+      when is_atom(repo) and is_binary(run_id) and is_list(opts) do
+    key = Enum.join([Keyword.get(opts, :prefix, ""), partition || "", run_id], ":")
+
+    case SQL.query(repo, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [key]) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, {:retention_lock_failed, reason}}
+    end
+  end
+
+  @doc "Marks shared thread metadata as intentionally containing retention sequence gaps."
+  @spec retention_gap_metadata(map()) :: map()
+  def retention_gap_metadata(metadata) when is_map(metadata) do
+    Map.put(metadata, @retention_gap_metadata_key, true)
+  end
+
+  @doc "Returns the persisted hash for one canonical Jizoku checkpoint key."
+  @spec checkpoint_key_hash(term()) :: {:ok, String.t()} | {:error, term()}
+  def checkpoint_key_hash(key) do
+    with {:ok, key_binary} <- encode_term(key) do
+      {:ok, key_hash(key_binary)}
+    end
+  end
+
   defp fetch_repo(opts) do
     case Keyword.get(opts, :repo) do
       repo when is_atom(repo) and not is_nil(repo) ->
@@ -151,9 +182,17 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
 
   defp load_locked_thread(repo, %JournalThread{} = thread, opts) do
     case load_entries(repo, thread.id, opts) do
-      {:ok, []} -> repo.rollback(:not_found)
+      {:ok, []} -> load_empty_thread_or_rollback(repo, thread)
       {:ok, entries} -> reconstruct_or_rollback(repo, thread, entries)
       {:error, reason} -> repo.rollback(reason)
+    end
+  end
+
+  defp load_empty_thread_or_rollback(repo, %JournalThread{} = thread) do
+    if retention_gaps?(thread) and thread.rev > 0 do
+      reconstruct_thread(thread, [])
+    else
+      repo.rollback(:not_found)
     end
   end
 
@@ -169,11 +208,72 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
   defp normalize_load_thread_result({:error, reason}), do: {:error, reason}
 
   defp append_thread_in_transaction(repo, thread_id, entries, expected_rev, now_ms, opts) do
-    thread = ensure_locked_thread(repo, thread_id, now_ms, opts)
+    case lock_and_reject_retained_run(repo, opts) do
+      :ok ->
+        thread = ensure_locked_thread(repo, thread_id, now_ms, opts)
 
-    case validate_expected_rev(expected_rev, thread.rev) do
-      :ok -> append_locked_thread(repo, thread, entries, now_ms, opts)
-      {:error, reason} -> repo.rollback(reason)
+        case validate_expected_rev(expected_rev, thread.rev) do
+          :ok -> append_locked_thread(repo, thread, entries, now_ms, opts)
+          {:error, reason} -> repo.rollback(reason)
+        end
+
+      {:error, reason} ->
+        repo.rollback(reason)
+    end
+  end
+
+  defp lock_and_reject_retained_run(repo, opts) do
+    case retention_identity(opts) do
+      {:ok, partition, run_id} ->
+        with :ok <- lock_retention_identity(repo, partition, run_id, opts),
+             {:ok, false} <- retained_run?(repo, partition, run_id, opts) do
+          :ok
+        else
+          {:ok, true} -> {:error, {:retained_run, run_id}}
+          {:error, _reason} = error -> error
+        end
+
+      :not_run_thread ->
+        :ok
+    end
+  end
+
+  defp retention_identity(opts) do
+    case Keyword.get(opts, :jizoku_projection_context) do
+      %{thread: {:run, run_id}, partition: partition} when is_binary(run_id) ->
+        {:ok, partition, run_id}
+
+      _other_thread ->
+        :not_run_thread
+    end
+  end
+
+  defp retained_run?(repo, partition, run_id, opts) do
+    with {:ok, true} <- retention_receipts_available?(repo, opts) do
+      {:ok,
+       repo.exists?(
+         from(receipt in RetentionReceipt,
+           where: receipt.partition_key == ^partition_key(partition) and receipt.run_id == ^run_id
+         ),
+         repo_opts(opts)
+       )}
+    end
+  end
+
+  defp retention_receipts_available?(repo, opts) do
+    relation =
+      case Keyword.get(opts, :prefix) do
+        prefix when is_binary(prefix) and prefix != "" ->
+          "#{prefix}.jizoku_retention_receipts"
+
+        _default_prefix ->
+          "jizoku_retention_receipts"
+      end
+
+    case SQL.query(repo, "SELECT to_regclass($1)::text", [relation]) do
+      {:ok, %{rows: [[nil]]}} -> {:ok, false}
+      {:ok, %{rows: [[_relation]]}} -> {:ok, true}
+      {:error, reason} -> {:error, {:retention_receipt_lookup_failed, reason}}
     end
   end
 
@@ -299,11 +399,11 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
   defp retention_run_id(%Jido.Thread.Entry{payload: %{data: data}}) when is_map(data) do
     case Map.get(data, :run_id) do
       run_id when is_binary(run_id) and run_id != "" -> run_id
-      _missing_or_invalid -> nil
+      _missing_or_invalid -> @retention_unowned_marker
     end
   end
 
-  defp retention_run_id(%Jido.Thread.Entry{}), do: nil
+  defp retention_run_id(%Jido.Thread.Entry{}), do: @retention_unowned_marker
 
   defp update_thread_revision(repo, %JournalThread{} = thread, rev, now_ms, opts) do
     db_now = DateTime.utc_now(:microsecond)
@@ -360,25 +460,49 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
   end
 
   defp validate_thread_revision(%JournalThread{} = thread, entries) do
-    entry_count = length(entries)
+    valid? =
+      if retention_gaps?(thread) do
+        case Enum.at(entries, -1) do
+          nil -> thread.rev > 0
+          entry -> thread.rev > entry.seq
+        end
+      else
+        thread.rev == length(entries)
+      end
 
-    if thread.rev == entry_count do
+    if valid? do
       :ok
     else
-      {:error, {:invalid_journal_thread, thread.id, {:rev_mismatch, thread.rev, entry_count}}}
+      {:error, {:invalid_journal_thread, thread.id, {:rev_mismatch, thread.rev, length(entries)}}}
     end
   end
 
   defp validate_entry_sequences(%JournalThread{} = thread, entries) do
     sequences = Enum.map(entries, & &1.seq)
-    expected_sequences = Enum.to_list(0..(length(entries) - 1)//1)
 
-    if sequences == expected_sequences do
+    valid? =
+      if retention_gaps?(thread) do
+        sequences == Enum.uniq(sequences) and sequences == Enum.sort(sequences) and
+          Enum.all?(sequences, &(&1 >= 0 and &1 < thread.rev))
+      else
+        sequences == Enum.to_list(0..(length(entries) - 1)//1)
+      end
+
+    if valid? do
       :ok
     else
       {:error, {:invalid_journal_thread, thread.id, {:seq_gap, sequences}}}
     end
   end
+
+  defp retention_gaps?(%JournalThread{metadata: metadata}) when is_map(metadata) do
+    Map.get(metadata, @retention_gap_metadata_key) == true
+  end
+
+  defp retention_gaps?(%JournalThread{}), do: false
+
+  defp partition_key(nil), do: ""
+  defp partition_key(partition) when is_binary(partition), do: partition
 
   defp repo_opts(opts) do
     case Keyword.fetch(opts, :prefix) do
