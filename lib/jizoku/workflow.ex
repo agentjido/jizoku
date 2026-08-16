@@ -35,6 +35,7 @@ defmodule Jizoku.Workflow do
   }
 
   alias Jizoku.Workflow.ActionRegistry
+  alias Jizoku.Workflow.Compatibility
   alias Jizoku.Workflow.GuardrailRegistry
   alias Jizoku.Workflow.Info
   alias Jizoku.Workflow.PayloadFieldSpec
@@ -89,6 +90,18 @@ defmodule Jizoku.Workflow do
   @spec to_spec(module()) ::
           {:ok, Spec.t()} | {:error, Jizoku.Workflow.Definition.load_error()}
   def to_spec(workflow) when is_atom(workflow), do: Info.fetch_spec(workflow)
+
+  @doc """
+  Compares two compiled modules or normalized workflow specs.
+
+  The result classifies changes as `:compatible`, `:migration_required`, or
+  `:incompatible` and includes deterministic field-level differences.
+  """
+  @spec compatibility(Compatibility.input(), Compatibility.input()) ::
+          {:ok, Compatibility.Result.t()} | {:error, term()}
+  def compatibility(old, new) do
+    Compatibility.compare(old, new)
+  end
 
   @doc """
   Validates a normalized workflow spec without resolving workflow or step modules.
