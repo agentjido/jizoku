@@ -774,10 +774,13 @@ defmodule Jizoku do
 
   Journal-backed runtime calls return redacted listing summaries. Use
   `inspect_run/2` or `inspect_run_graph/2` with a run id when callers need
-  detailed runtime state for one run.
+  detailed runtime state for one run. Legacy calls return a list; passing
+  `:first` or `:after` returns a `Jizoku.ReadModel.Listing.Page`. Page cursors
+  expire after one hour and must be reused with the same filters and selected
+  storage partition.
   """
   @spec list_runs([Listing.list_filter()], keyword()) ::
-          {:ok, [Listing.Summary.t()]}
+          {:ok, [Listing.Summary.t()] | Listing.Page.t()}
           | {:error, Config.config_error() | Listing.list_error()}
   def list_runs(filters \\ [], overrides \\ []) do
     with {:ok, :journal} <- Routing.runtime(overrides) do
