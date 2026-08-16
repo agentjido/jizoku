@@ -764,6 +764,89 @@ queues is compatible. Disable new emission and drain or repair every encoded
 completion before restoring an older reader. Delivery and acknowledgement of
 already-enqueued signals remain available after the admission flag is disabled.
 
+### Durable External Event Waits
+
+Use `:await_event` when a workflow must stop until a machine-originated domain
+event arrives, such as a verified payment callback, asynchronous provider job,
+or inventory notification. The wait is a durable journal fact and does not hold
+a worker or require a live workflow process.
+
+```elixir
+step :await_payment, :await_event,
+  event: "payment.completed",
+  correlation: [:payment_id],
+  output: :event,
+  timeout: [after: 86_400_000, on_timeout: :payment_timeout]
+
+step :record_settlement, Billing.Steps.RecordSettlement,
+  input: [:event]
+
+step :payment_timeout, Billing.Steps.RecordPaymentTimeout,
+  input: [:event_timeout]
+
+transition :await_payment, on: :ok, to: :record_settlement
+transition :record_settlement, on: :ok, to: :complete
+transition :payment_timeout, on: :ok, to: :complete
+```
+
+`:event` must be a non-empty storage-safe string. `:correlation` can be a
+storage-safe string or a non-empty path into the step input. Omit `:timeout` for
+an indefinite wait. With a timeout, `:after` is a positive millisecond duration
+and `:on_timeout` names a different declared step or `:complete`. Successful
+delivery places the event payload under the configured `output:` mapping. The
+timeout target receives an `:event_timeout` map containing the event,
+correlation, and timeout timestamp.
+
+Deliver an authenticated event through the public boundary:
+
+```elixir
+Jizoku.signal_run(
+  run_id,
+  "payment.completed",
+  %{payment_id: "pay_123", status: "settled"},
+  correlation: "pay_123",
+  idempotency_key: "payment-provider:evt_456",
+  metadata: %{source: "billing.payment_webhook"}
+)
+```
+
+The host application owns the public callback boundary. Verify the signature
+against the untouched request body before decoding it, enforce request size and
+rate limits, authorize the provider and run lookup, map only allowlisted
+provider events to fixed internal event names, validate the payload, and derive
+the Jizoku idempotency key from a stable provider event ID. Do not accept a
+runtime, queue, partition, module, or internal event name from webhook input.
+Do not log signature secrets or full callback payloads. See
+`examples/minimal_host_app/lib/minimal_host_app/payment_webhook.ex` for an
+executable HMAC boundary.
+
+Exact retries with the same idempotency key and normalized event return the
+existing resolution without another journal mutation. Reusing that key with
+different content fails closed. Event delivery, timeout selection, and
+cancellation compete through the same optimistic run-thread fence, so only one
+continuation is selected. Late delivery cannot reopen an already-resolved or
+terminal run. Version 1 supports one active matching wait per run; model fan-out
+or broadcast as explicit separate runs.
+
+Choose the primitive by ownership and lifecycle:
+
+| Need | Primitive |
+| --- | --- |
+| A machine-originated callback resumes this run | `:await_event` |
+| An operator must approve or reject | `approval_step/2` |
+| The workflow definition owns a fixed delay | `:wait` |
+| The same step observed pending state and should poll again | deferred continuation |
+| External infrastructure owns polling and later reports completion | host polling plus `:await_event` |
+| Discovered work needs its own retries, history, and cancellation | child workflow |
+
+`inspect_run/2` exposes the active wait and safe wait history;
+`inspect_run_graph/2`, `inspect_run_timeline/2`, and `explain_run/2` expose the
+same lifecycle and next actions. External and operator visibility remove event
+payloads and raw correlation values. Correlation and receipt digests are
+pseudonymous operational identifiers, not anonymization; low-entropy values may
+still be guessable, so authorize read-model access and avoid using secrets as
+correlation keys.
+
 ### Deferred Continuation
 
 Use deferred continuation when a step made a durable domain observation that is
@@ -966,6 +1049,10 @@ step :wait_for_approval, :pause
 approval_step :wait_for_review,
   output: :approval,
   deadline: [within: 300_000, due_soon: 60_000, escalation: :operator_action]
+step :await_payment, :await_event,
+  event: "payment.completed",
+  correlation: [:payment_id],
+  output: :event
 ```
 
 Built-in step options supported today:
@@ -974,9 +1061,11 @@ Built-in step options supported today:
 - `:log` requires `message` and accepts `level`
 - `:pause` intentionally stops the run at that step until an operator resumes it
 - `approval_step/2` pauses the run for an explicit approve/reject decision and uses `:ok` or `:error` transitions to continue
+- `:await_event` pauses the run until one matching, correlated external event resolves it; an optional timeout can select a declared fallback step
 - `:wait` appends delayed journal continuation so long waits do not block a worker slot
 - `:pause` is supported in transition-based workflows; dependency-based workflows cannot declare `:pause`
 - `approval_step/2` is also transition-based only; dependency-based workflows cannot declare built-in `:approval` steps
+- `:await_event` is transition-based only; dependency-based workflows cannot declare external event waits
 - `{:defer, reason, schedule_in: seconds}` is a native step result, not a built-in step; use it when the step's domain response says the same work should continue later
 
 Deadline policies:

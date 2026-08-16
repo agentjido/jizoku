@@ -405,6 +405,7 @@ meant to prove.
 | Workflow | What it proves | Source |
 | --- | --- | --- |
 | `PaymentRecovery` | A customer-facing recovery flow with retries, deferred gateway polling, a non-compensatable side effect, and explicit replay boundaries. | [`lib/minimal_host_app/workflows/payment_recovery.ex`](lib/minimal_host_app/workflows/payment_recovery.ex) |
+| `PaymentWebhook` | A durable correlated event wait with host-owned HMAC verification, idempotent provider delivery, safe inspection evidence, and a timeout continuation. | [`lib/minimal_host_app/workflows/payment_webhook.ex`](lib/minimal_host_app/workflows/payment_webhook.ex) |
 | `ManualApproval` | Operator pause, approval, rejection, durable resume, and audit history. | [`lib/minimal_host_app/workflows/manual_approval.ex`](lib/minimal_host_app/workflows/manual_approval.ex) |
 | `RetryVerification` | Workflow-level retry policy and failure recovery without backend-specific retry assumptions. | [`lib/minimal_host_app/workflows/retry_verification.ex`](lib/minimal_host_app/workflows/retry_verification.ex) |
 | `DependencyRecovery` | Recovery-oriented dependency joins, mapped input extraction, and durable inspection of joined work. | [`lib/minimal_host_app/workflows/dependency_recovery.ex`](lib/minimal_host_app/workflows/dependency_recovery.ex) |
@@ -413,6 +414,14 @@ meant to prove.
 The smoke, restart-resilience, and soak harnesses exercise these workflows so
 they stay grounded in executable example coverage instead of becoming doc-only
 fixtures.
+
+`MinimalHostApp.PaymentWebhook` is the sample host boundary for provider
+callbacks. It verifies an HMAC over the untouched body before JSON decoding,
+validates fixed fields, maps the callback to the allowlisted
+`"payment.completed"` event, and derives the Jizoku idempotency key from the
+provider event ID. The smoke path proves an invalid signature leaves the run
+unchanged, an exact callback retry is idempotent, successful delivery continues
+once, and the no-callback path selects the declared timeout continuation.
 
 ## Multi-Trigger Workflow Example
 

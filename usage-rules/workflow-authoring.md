@@ -99,6 +99,12 @@
 
 - Use `:pause` or `approval_step/2` for operator-controlled boundaries.
 - Resolve manual gates through `resume/3`, `approve/3`, and `reject/3`.
+- Use `:await_event` for a machine-originated event that must resume one
+  correlated run. Declare a storage-safe event name and correlation input path;
+  add an explicit timeout target when indefinite waiting is not acceptable.
+- Deliver verified events with `Jizoku.signal_run/4`, a stable provider-derived
+  idempotency key, and host-owned provenance metadata. Keep authentication,
+  authorization, signature verification, and event allowlisting in the host.
 - Use `:wait` for workflow-scale delays, not arbitrary timers.
 - Use `deadline: [within: milliseconds]` on normal steps, `:pause`, or
   `approval_step/2` when operators need durable SLA evidence. Treat deadline
@@ -108,8 +114,9 @@
   step; use retry only for failures and `:wait` for definition-owned delays.
 - Use a child workflow instead when the step discovers separate work with its
   own lifecycle rather than rechecking the same declared step.
-- Use a normal handoff step plus a later signal or run when an external domain
-  system owns polling, backoff, cancellation, and alert delivery.
+- Use a normal handoff step plus `:await_event` when an external domain system
+  owns polling, backoff, cancellation, and alert delivery but should resume the
+  current run. Start a later run instead when it is separate work.
 - Prefer cron or host scheduling when the whole workflow should start later.
 - Use continue-as-new when the same recurring workflow should start fresh now;
   do not model it as a child run, replay, deferred attempt, or dynamic graph.
