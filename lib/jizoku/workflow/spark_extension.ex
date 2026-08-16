@@ -242,7 +242,7 @@ defmodule Jizoku.Workflow.SparkExtension do
     end
   end
 
-  defp interop_metadata(module) when module in [:wait, :log, :pause, :approval] do
+  defp interop_metadata(module) when module in [:wait, :log, :pause, :approval, :await_event] do
     %{contract: :built_in, kind: module}
   end
 

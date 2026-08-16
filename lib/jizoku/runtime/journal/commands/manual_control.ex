@@ -1,10 +1,10 @@
 defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
   @moduledoc """
-  Journal-backed manual intervention controls.
+  Journal-backed blocking-step controls.
 
-  This module resolves manual pause boundaries by appending run-thread facts.
-  The dispatch thread is updated only after the run thread contains the durable
-  resolution and any successor runnable intent.
+  This module resolves manual pause and external event boundaries by appending
+  run-thread facts. The dispatch thread is updated only after the run thread
+  contains the durable resolution and any successor runnable intent.
   """
 
   alias Jido.Agent
@@ -24,9 +24,11 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
   alias Jizoku.Runtime.WorkflowAgent
   alias Jizoku.Runtime.WorkflowAgent.Projection
   alias Jizoku.Workflow.Definition
+  alias Jizoku.Workflow.EventWait
 
   @run_append_retries 25
   @dispatch_append_retries 25
+  @max_event_payload_bytes 1_048_576
 
   @type control_error ::
           :not_found
@@ -118,6 +120,41 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
 
   def apply_signal(
         %Signal{
+          type: :signal_run,
+          payload: %{
+            run_id: run_id,
+            event: event,
+            correlation: correlation,
+            event_payload: event_payload
+          },
+          idempotency_key: idempotency_key,
+          occurred_at: %DateTime{} = now
+        } = signal,
+        opts
+      )
+      when is_binary(run_id) and is_binary(event) and event != "" and is_binary(correlation) and
+             correlation != "" and is_map(event_payload) and is_binary(idempotency_key) and
+             idempotency_key != "" and is_list(opts) do
+    with :ok <- validate_event_signal(event, correlation, event_payload),
+         {:ok, storage} <- journal_storage(opts),
+         {:ok, queue} <- queue(opts),
+         {:ok, workflow_agent} <-
+           resolve_or_repair_event(storage, run_id, queue, signal, @run_append_retries),
+         {:ok, dispatch_agent} <- DispatchAgent.rebuild(storage, queue),
+         {:ok, _schedule_update} <-
+           DispatchScheduler.schedule_pending_dispatches(
+             storage,
+             workflow_agent,
+             dispatch_agent,
+             now,
+             @dispatch_append_retries
+           ) do
+      Inspection.snapshot(storage, run_id, queue: queue, now: now)
+    end
+  end
+
+  def apply_signal(
+        %Signal{
           type: type,
           payload: %{run_id: run_id, attributes: attrs},
           occurred_at: %DateTime{} = now
@@ -158,7 +195,7 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
     do: {:error, {:invalid_option, {:opts, :invalid}}}
 
   def apply_signal(%Signal{type: type}, _opts)
-      when type in [:resume_run, :approve_run, :reject_run],
+      when type in [:resume_run, :approve_run, :reject_run, :signal_run],
       do: {:error, {:invalid_signal, type}}
 
   def apply_signal(%Signal{type: type}, _opts), do: {:error, {:unsupported_signal, type}}
@@ -233,6 +270,113 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
         retries_left,
         resolution
       )
+    end
+  end
+
+  defp resolve_or_repair_event(_storage, _run_id, _queue, _signal, 0) do
+    {:error, :conflict}
+  end
+
+  defp resolve_or_repair_event(storage, run_id, queue, signal, retries_left) do
+    with {:ok, workflow_agent} <- rebuild_workflow_agent(storage, run_id),
+         {:ok, resolution} <- event_resolution_target(storage, workflow_agent, signal) do
+      append_event_resolution(
+        storage,
+        run_id,
+        queue,
+        signal,
+        retries_left,
+        resolution
+      )
+    end
+  end
+
+  defp event_resolution_target(
+         storage,
+         %Agent{agent_module: WorkflowAgent, state: %{projection: %Projection{} = projection}} =
+           workflow_agent,
+         %Signal{} = signal
+       ) do
+    case event_receipt_status(storage, workflow_agent.state.run_id, signal) do
+      :new -> active_event_resolution(projection, workflow_agent, signal)
+      :duplicate -> {:ok, {:repair, workflow_agent}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp active_event_resolution(
+         %Projection{} = projection,
+         workflow_agent,
+         %Signal{payload: %{event: event, correlation: correlation}}
+       ) do
+    case Projection.manual_state(projection) do
+      %{kind: "event_wait", metadata: metadata} = manual_state when is_map(metadata) ->
+        if map_value(metadata, :event) == event and
+             map_value(metadata, :correlation) == correlation do
+          {:ok, {:append, workflow_agent, manual_state}}
+        else
+          {:error,
+           {:event_wait_mismatch,
+            %{
+              expected_event: map_value(metadata, :event),
+              expected_correlation: map_value(metadata, :correlation),
+              received_event: event,
+              received_correlation: correlation
+            }}}
+        end
+
+      nil ->
+        if Projection.terminal?(projection) do
+          {:error, :terminal_run}
+        else
+          {:error, {:event_wait_not_found, %{event: event, correlation: correlation}}}
+        end
+
+      %{step: step, kind: kind} ->
+        {:error, {:unsupported_journal_manual_step, step, kind}}
+    end
+  end
+
+  defp append_event_resolution(
+         _storage,
+         _run_id,
+         _queue,
+         _signal,
+         _retries_left,
+         {:repair, workflow_agent}
+       ) do
+    {:ok, workflow_agent}
+  end
+
+  defp append_event_resolution(
+         storage,
+         run_id,
+         queue,
+         signal,
+         retries_left,
+         {:append, workflow_agent, manual_state}
+       ) do
+    with {:ok, entries} <-
+           event_resolution_entries(
+             workflow_agent,
+             storage,
+             queue,
+             signal,
+             manual_state
+           ) do
+      case Journal.append_entries(storage, entries,
+             expected_rev: workflow_agent.state.thread_rev,
+             telemetry_projection: workflow_agent.state.projection
+           ) do
+        {:ok, _thread} ->
+          WorkflowAgent.rebuild(storage, run_id)
+
+        {:error, :conflict} ->
+          resolve_or_repair_event(storage, run_id, queue, signal, retries_left - 1)
+
+        {:error, _reason} = error ->
+          error
+      end
     end
   end
 
@@ -474,6 +618,86 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
     end
   end
 
+  defp event_resolution_entries(
+         %Agent{agent_module: WorkflowAgent, state: %{projection: %Projection{} = projection}} =
+           workflow_agent,
+         storage,
+         queue,
+         %Signal{
+           payload: %{
+             event: event,
+             correlation: correlation,
+             event_payload: event_payload
+           }
+         } = signal,
+         manual_state
+       ) do
+    now = command_occurred_at(signal)
+
+    with {:ok, _workflow, definition, step_name} <-
+           resolved_event_definition(storage, workflow_agent, manual_state),
+         {:ok, result} <- Definition.apply_output_mapping(definition, step_name, event_payload),
+         context <- event_resolution_context(workflow_agent, manual_state, projection, result),
+         {:ok, transition} <- Definition.transition(definition, step_name, :ok, context),
+         {:ok, progression_entries} <-
+           resolution_progression_entries(
+             workflow_agent,
+             definition,
+             transition.to,
+             result,
+             manual_input(manual_state, projection),
+             signal,
+             queue,
+             now
+           ),
+         {:ok, command_receipt} <- event_command_receipt(signal) do
+      wait_id = map_value(manual_state.metadata, :wait_id)
+
+      {:ok,
+       [
+         command_receipt,
+         event_received_entry!(signal, wait_id),
+         event_wait_resolved_entry!(
+           workflow_agent.state.run_id,
+           wait_id,
+           step_name,
+           %{
+             event: event,
+             correlation: correlation,
+             result: result,
+             transition: Definition.serialize_transition_decision(transition),
+             trace: signal.trace
+           },
+           now
+         )
+         | progression_entries
+       ]}
+    end
+  end
+
+  defp event_resolution_context(workflow_agent, manual_state, projection, result) do
+    workflow_agent
+    |> applied_result_context()
+    |> Map.merge(projection_context(workflow_agent))
+    |> Map.merge(manual_input(manual_state, projection))
+    |> Map.merge(result)
+  end
+
+  defp event_command_receipt(%Signal{} = signal) do
+    attrs =
+      signal
+      |> Map.take([:metadata, :source, :trace, :idempotency_key])
+      |> Map.put(:run_id, signal.payload.run_id)
+      |> Map.put(:payload, signal.payload)
+      |> Map.put(:signal_id, signal.id)
+
+    CommandReceipt.new(
+      :signal_run,
+      attrs,
+      signal.occurred_at
+    )
+  end
+
   defp active_pause_state(%Projection{} = projection) do
     case Projection.manual_state(projection) do
       %{kind: "pause"} = manual_state ->
@@ -526,6 +750,23 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
            ),
          step_name when is_atom(step_name) <- Definition.deserialize_step(definition, step),
          {:ok, %{module: :approval}} <- Definition.step(definition, step_name) do
+      {:ok, workflow, definition, step_name}
+    else
+      step_name when is_binary(step_name) -> {:error, {:unknown_step, step_name}}
+      {:ok, _other_step} -> {:error, {:invalid_step, step}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp resolved_event_definition(storage, workflow_agent, %{step: step}) do
+    with {:ok, workflow, definition} <-
+           WorkflowDefinitionLoader.load(
+             storage,
+             workflow_agent.state.run_id,
+             workflow_agent.state.workflow
+           ),
+         step_name when is_atom(step_name) <- Definition.deserialize_step(definition, step),
+         {:ok, %{module: :await_event}} <- Definition.step(definition, step_name) do
       {:ok, workflow, definition, step_name}
     else
       step_name when is_binary(step_name) -> {:error, {:unknown_step, step_name}}
@@ -808,6 +1049,25 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
     end
   end
 
+  defp validate_event_signal(event, correlation, payload) do
+    cond do
+      not EventWait.valid_event?(event) ->
+        {:error, {:invalid_signal, {:event, :invalid}}}
+
+      not EventWait.valid_correlation_value?(correlation) ->
+        {:error, {:invalid_signal, {:correlation, :invalid}}}
+
+      not Options.storage_safe_value?(payload) ->
+        {:error, {:invalid_signal, {:event_payload, :unsupported_term}}}
+
+      byte_size(:erlang.term_to_binary(payload)) > @max_event_payload_bytes ->
+        {:error, {:invalid_signal, {:event_payload, :too_large}}}
+
+      true ->
+        :ok
+    end
+  end
+
   defp rebuild_workflow_agent(storage, run_id) do
     case WorkflowAgent.rebuild(storage, run_id) do
       {:ok, _workflow_agent} = ok -> ok
@@ -818,6 +1078,48 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
 
   defp resumed_pause_recorded?(storage, run_id, command) do
     manual_resolution_recorded?(storage, run_id, :resumed, command)
+  end
+
+  defp event_receipt_status(
+         storage,
+         run_id,
+         %Signal{idempotency_key: idempotency_key, payload: payload}
+       )
+       when is_binary(idempotency_key) and is_map(payload) do
+    case Journal.load_entries(storage, {:run, run_id}) do
+      {:ok, entries} ->
+        entries
+        |> Enum.find(fn
+          %{
+            type: :run_signal_received,
+            data: %{idempotency_key: ^idempotency_key}
+          } ->
+            true
+
+          _entry ->
+            false
+        end)
+        |> classify_event_receipt(payload, idempotency_key)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp classify_event_receipt(nil, _payload, _idempotency_key) do
+    :new
+  end
+
+  defp classify_event_receipt(
+         %{data: %{signal_type: "signal_run", payload: payload}},
+         payload,
+         _idempotency_key
+       ) do
+    :duplicate
+  end
+
+  defp classify_event_receipt(_entry, _payload, idempotency_key) do
+    {:error, {:idempotency_conflict, idempotency_key}}
   end
 
   defp manual_resolution_recorded?(storage, run_id, action, %Signal{
@@ -933,6 +1235,59 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
       action: Atom.to_string(action),
       result: result,
       metadata: metadata,
+      trace: trace,
+      occurred_at: now
+    })
+  end
+
+  defp event_received_entry!(
+         %Signal{
+           payload: %{
+             run_id: run_id,
+             event: event,
+             correlation: correlation,
+             event_payload: event_payload
+           },
+           idempotency_key: idempotency_key,
+           trace: trace,
+           occurred_at: %DateTime{} = now
+         },
+         wait_id
+       ) do
+    entry!(:external_event_received, %{
+      run_id: run_id,
+      wait_id: wait_id,
+      event: event,
+      correlation: correlation,
+      payload: event_payload,
+      idempotency_key: idempotency_key,
+      trace: trace,
+      occurred_at: now
+    })
+  end
+
+  defp event_wait_resolved_entry!(
+         run_id,
+         wait_id,
+         step_name,
+         %{
+           event: event,
+           correlation: correlation,
+           result: result,
+           transition: transition,
+           trace: trace
+         },
+         %DateTime{} = now
+       ) do
+    entry!(:external_event_wait_resolved, %{
+      run_id: run_id,
+      wait_id: wait_id,
+      step: Definition.serialize_step(step_name),
+      event: event,
+      correlation: correlation,
+      action: "received",
+      result: result,
+      transition: transition,
       trace: trace,
       occurred_at: now
     })

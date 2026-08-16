@@ -609,6 +609,32 @@ defmodule Jizoku.WorkflowTest do
     assert :ok = Jizoku.Workflow.validate_spec(path_mapped_spec)
   end
 
+  test "validates named external event wait identity" do
+    assert {:ok, spec} = Jizoku.Workflow.to_spec(InvoiceReminder)
+
+    invalid_spec = %{
+      spec
+      | steps: [
+          %{
+            name: :await_payment,
+            module: :await_event,
+            opts: [event: "", correlation: []]
+          }
+        ],
+        transitions: [%{from: :await_payment, on: :ok, to: :complete}],
+        retries: [],
+        entry_steps: [:await_payment],
+        initial_step: :await_payment,
+        entry_step: :await_payment
+    }
+
+    assert {:error, {:invalid_workflow_spec, errors}} =
+             Jizoku.Workflow.validate_spec(invalid_spec)
+
+    assert Enum.any?(errors, &(&1.code == :invalid_event_name))
+    assert Enum.any?(errors, &(&1.code == :invalid_event_correlation))
+  end
+
   test "rejects invalid workflow spec retry options" do
     assert {:ok, spec} = Jizoku.Workflow.to_spec(InvoiceReminder)
     invalid_spec = %{spec | retries: [%{step: :send_email, opts: [max_attempts: 0]}]}

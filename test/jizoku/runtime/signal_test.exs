@@ -190,6 +190,54 @@ defmodule Jizoku.Runtime.SignalTest do
             }} = Signal.replay_run(@run_id, allow_irreversible: true, occurred_at: @occurred_at)
   end
 
+  test "builds a named external event command signal" do
+    assert {:ok,
+            %Signal{
+              type: :signal_run,
+              payload: %{
+                run_id: @run_id,
+                event: "payment.completed",
+                correlation: "pay_123",
+                event_payload: %{status: "settled"}
+              },
+              idempotency_key: "provider-event-456",
+              occurred_at: @occurred_at
+            }} =
+             Signal.signal_run(@run_id, "payment.completed", %{status: "settled"},
+               correlation: "pay_123",
+               idempotency_key: "provider-event-456",
+               occurred_at: @occurred_at
+             )
+  end
+
+  test "rejects unsafe external event identity" do
+    base_opts = [
+      correlation: "pay_123",
+      idempotency_key: "provider-event-456",
+      occurred_at: @occurred_at
+    ]
+
+    assert {:error, {:invalid_signal, {:event, :invalid}}} =
+             Signal.signal_run(@run_id, "", %{}, base_opts)
+
+    assert {:error, {:invalid_signal, {:correlation, :invalid}}} =
+             Signal.signal_run(
+               @run_id,
+               "payment.completed",
+               %{},
+               Keyword.put(base_opts, :correlation, "")
+             )
+
+    assert {:error, {:invalid_signal, {:idempotency_key, :required}}} =
+             Signal.signal_run(@run_id, "payment.completed", %{},
+               correlation: "pay_123",
+               occurred_at: @occurred_at
+             )
+
+    assert {:error, {:invalid_signal, {:event_payload, :unsupported_term}}} =
+             Signal.signal_run(@run_id, "payment.completed", %{pid: self()}, base_opts)
+  end
+
   test "defaults envelope metadata and timestamp" do
     assert {:ok,
             %Signal{

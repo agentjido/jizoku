@@ -97,6 +97,10 @@ defmodule Jizoku.Runtime.Journal.Commands.SignalInterpreter do
     Cancellation.apply_signal(signal, opts)
   end
 
+  defp do_apply(%Signal{type: :signal_run} = signal, opts) when is_list(opts) do
+    ManualControl.apply_signal(signal, opts)
+  end
+
   defp do_apply(%Signal{type: type} = signal, opts)
        when type in @manual_signal_types and is_list(opts) do
     ManualControl.apply_signal(signal, opts)

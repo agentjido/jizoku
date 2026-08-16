@@ -13,7 +13,7 @@ defmodule Jizoku.Workflow.ActionRegistry do
   alias Jizoku.Workflow.RegistryHelpers
   alias Jizoku.Workflow.Spec
 
-  @built_in_step_kinds [:wait, :log, :pause, :approval]
+  @built_in_step_kinds [:wait, :log, :pause, :approval, :await_event]
 
   @type action_key :: atom() | String.t()
   @type action_validation_error ::

@@ -12,11 +12,12 @@ defmodule Jizoku.Workflow.Validation do
   @supported_transaction_boundaries [:repo]
   @allowed_trigger_types [:manual, :cron]
   @allowed_cron_idempotency_strategies [:return_existing_run, :skip_duplicate]
-  @built_in_step_kinds [:wait, :log, :pause, :approval]
+  @built_in_step_kinds [:wait, :log, :pause, :approval, :await_event]
   @log_levels [:debug, :info, :warning, :error]
 
   alias Jizoku.Runtime.Deadline
   alias Jizoku.Workflow.DependencyGraph
+  alias Jizoku.Workflow.EventWait
   alias Jizoku.Workflow.InputMapping
   alias Jizoku.Workflow.ValueType
 
@@ -368,6 +369,7 @@ defmodule Jizoku.Workflow.Validation do
     errors
     |> validate_dependency_manual_step_kind(steps, :pause)
     |> validate_dependency_manual_step_kind(steps, :approval)
+    |> validate_dependency_manual_step_kind(steps, :await_event)
     |> validate_manual_step_transition_conditions(steps, transitions)
     |> validate_approval_transitions(steps, transitions)
   end
@@ -385,10 +387,43 @@ defmodule Jizoku.Workflow.Validation do
       :log -> validate_log_step(errors, step)
       :pause -> errors
       :approval -> errors
+      :await_event -> validate_event_wait_step(errors, step)
     end
   end
 
   defp validate_built_in_step(errors, _step), do: errors
+
+  defp validate_event_wait_step(errors, step) do
+    errors
+    |> validate_event_wait_name(step)
+    |> validate_event_wait_correlation(step)
+  end
+
+  defp validate_event_wait_name(errors, step) do
+    event = Keyword.get(step.opts, :event)
+
+    if EventWait.valid_event?(event) do
+      errors
+    else
+      [
+        "built-in step #{inspect(step.name)} requires a storage-safe non-empty :event option"
+        | errors
+      ]
+    end
+  end
+
+  defp validate_event_wait_correlation(errors, step) do
+    correlation = Keyword.get(step.opts, :correlation)
+
+    if EventWait.valid_correlation_declaration?(correlation) do
+      errors
+    else
+      [
+        "built-in step #{inspect(step.name)} requires :correlation to be a storage-safe string or non-empty input path"
+        | errors
+      ]
+    end
+  end
 
   defp validate_dependency_manual_step_kind(errors, steps, kind) do
     if dependency_mode?(steps) and Enum.any?(steps, &(&1.module == kind)) do
