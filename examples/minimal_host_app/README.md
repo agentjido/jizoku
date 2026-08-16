@@ -117,6 +117,12 @@ Keep historical modules deployed while any non-terminal run references them.
 Version labels are operator-facing identities; they never bypass fingerprint
 fencing.
 
+The checked-in `test/fixtures/jizoku_histories.exs` fixture records the exact v1
+fingerprint and a redacted golden timeline. `mix example.smoke` verifies that
+fixture against the deployed `:workflow_versions` registry before exercising the
+runtime flows, so removing or changing required historical code fails the sample
+CI path.
+
 ## Safe-Point Migration
 
 `MinimalHostApp.Verification.WorkflowMigration` starts from checked-in v1
