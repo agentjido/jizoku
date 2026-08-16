@@ -42,7 +42,7 @@ defmodule Jizoku.ReadModel.RunSearch.Rebuilder do
          %Storage{adapter: Jizoku.Runtime.Journal.Storage.Ecto} = storage,
          retries_left
        ) do
-    with {:ok, catalog} <- load_catalog(storage),
+    with {:ok, catalog} <- RunCatalogProjection.load(storage),
          {:ok, rows} <- build_rows(storage, catalog.projection),
          :ok <- upsert_rows(storage, rows),
          :ok <- verify_source_revisions(storage, catalog.rev, rows) do
@@ -63,24 +63,6 @@ defmodule Jizoku.ReadModel.RunSearch.Rebuilder do
 
   defp do_rebuild(%Storage{adapter: adapter}, _retries_left) do
     {:error, {:unsupported_run_search_projection, adapter}}
-  end
-
-  defp load_catalog(storage) do
-    storage
-    |> Journal.load_thread({:run_catalog, "all"})
-    |> catalog_from_load()
-  end
-
-  defp catalog_from_load({:ok, %{rev: rev, entries: entries}}) do
-    {:ok, %{rev: rev, projection: RunCatalogProjection.rebuild(entries)}}
-  end
-
-  defp catalog_from_load({:error, :not_found}) do
-    {:ok, %{rev: 0, projection: RunCatalogProjection.new()}}
-  end
-
-  defp catalog_from_load({:error, _reason} = error) do
-    error
   end
 
   defp build_rows(storage, %RunCatalogProjection{} = catalog) do
@@ -161,7 +143,7 @@ defmodule Jizoku.ReadModel.RunSearch.Rebuilder do
   end
 
   defp verify_source_revisions(%Storage{opts: opts} = storage, catalog_rev, rows) do
-    with {:ok, %{rev: ^catalog_rev}} <- load_catalog(storage),
+    with {:ok, %{rev: ^catalog_rev}} <- RunCatalogProjection.load(storage),
          true <- current_run_revisions?(storage, rows, opts) do
       :ok
     else

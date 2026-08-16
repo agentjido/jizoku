@@ -957,7 +957,7 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
   end
 
   defp ensure_run_cataloged(storage, run_id, entry, retries_left) do
-    case load_run_catalog(storage) do
+    case RunCatalogProjection.load(storage) do
       {:ok, %{rev: rev, projection: projection}} ->
         append_missing_run_catalog(storage, run_id, entry, rev, projection, retries_left)
 
@@ -986,19 +986,6 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
 
       {:error, :conflict} when retries_left > 0 ->
         ensure_run_cataloged(storage, run_id, entry, retries_left - 1)
-
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  defp load_run_catalog(storage) do
-    case Journal.load_thread(storage, {:run_catalog, "all"}) do
-      {:ok, %{rev: rev, entries: entries}} ->
-        {:ok, %{rev: rev, projection: RunCatalogProjection.rebuild(entries)}}
-
-      {:error, :not_found} ->
-        {:ok, %{rev: 0, projection: RunCatalogProjection.new()}}
 
       {:error, _reason} = error ->
         error

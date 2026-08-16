@@ -13,6 +13,7 @@ defmodule Jizoku do
   alias Jizoku.ReadModel.Inspection
   alias Jizoku.ReadModel.Listing
   alias Jizoku.ReadModel.Timeline
+  alias Jizoku.Retention
   alias Jizoku.Runs.DynamicWorkPreview
   alias Jizoku.Runs.GraphInspection
   alias Jizoku.Runs.GraphMutationPreview
@@ -815,6 +816,17 @@ defmodule Jizoku do
       Archive.unarchive(run_id, Routing.journal_control_options(overrides))
     end
   end
+
+  @doc """
+  Previews terminal archived runs that are eligible for retention deletion.
+
+  The preview is read-only and partition-scoped. It returns exact candidate
+  identities, current journal revisions, non-sensitive block reasons, and an
+  expiring confirmation token for a later apply operation.
+  """
+  @spec preview_retention([Retention.preview_filter()], keyword()) ::
+          {:ok, Retention.Plan.t()} | {:error, term()}
+  defdelegate preview_retention(filters, overrides \\ []), to: Retention, as: :preview
 
   @doc """
   Rebuilds the optional Ecto run-search projection for one selected partition.

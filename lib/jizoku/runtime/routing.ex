@@ -22,6 +22,13 @@ defmodule Jizoku.Runtime.Routing do
     :visibility_policy
   ]
   @public_run_search_rebuild_options [:runtime, :repo, :journal_storage, :partition]
+  @public_retention_preview_options [
+    :runtime,
+    :repo,
+    :journal_storage,
+    :partition,
+    :now
+  ]
   @journal_start_options [
     :runtime,
     :journal_storage,
@@ -252,6 +259,12 @@ defmodule Jizoku.Runtime.Routing do
   @spec public_run_search_rebuild_options(keyword() | term()) :: :ok | {:error, term()}
   def public_run_search_rebuild_options(opts) do
     validate_public_options(opts, @public_run_search_rebuild_options)
+  end
+
+  @doc "Validates options accepted by read-only retention preview."
+  @spec public_retention_preview_options(keyword() | term()) :: :ok | {:error, term()}
+  def public_retention_preview_options(opts) do
+    validate_public_options(opts, @public_retention_preview_options)
   end
 
   @doc """

@@ -9,6 +9,7 @@ defmodule Jizoku.Runtime.RunCatalogProjection do
   """
 
   alias Jizoku.Runtime.DispatchProtocol.Entry
+  alias Jizoku.Runtime.Journal
   alias Jizoku.Runtime.RunProjection
 
   @type anomaly :: %{
@@ -59,6 +60,22 @@ defmodule Jizoku.Runtime.RunCatalogProjection do
   @spec run_ids(t()) :: [String.t()]
   def run_ids(%__MODULE__{} = projection) do
     RunProjection.run_ids(projection.runs)
+  end
+
+  @doc false
+  @spec load(Journal.storage_config()) ::
+          {:ok, %{rev: non_neg_integer(), projection: t()}} | {:error, term()}
+  def load(storage) do
+    case Journal.load_thread(storage, {:run_catalog, "all"}) do
+      {:ok, %{rev: rev, entries: entries}} ->
+        {:ok, %{rev: rev, projection: rebuild(entries)}}
+
+      {:error, :not_found} ->
+        {:ok, %{rev: 0, projection: new()}}
+
+      {:error, _reason} = error ->
+        error
+    end
   end
 
   @doc false
