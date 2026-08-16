@@ -47,6 +47,9 @@ Use these when building or embedding Jizoku in an application.
 - [Operations](operations.md) - operational CLI diagnostics, retries,
   idempotency, replay, local transactions, leases, waits, cron activation, and
   production concerns.
+- [Archive and retention operations](retention.md) - reversible archive,
+  dry-run evidence, ownership backfill, confirmed deletion, receipts, backup,
+  privacy, and failure recovery.
 - [Observability](observability.md) - durable read-model surfaces,
   field-selection and redaction guidance, operator explanations, graph output,
   runtime telemetry, host-owned reporting, and logs.

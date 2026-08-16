@@ -117,6 +117,10 @@ control signals: host code builds `Jizoku.Runtime.Signal` values for
 cancel/resume/approve/reject commands and applies them through
 `Jizoku.apply_signal/2`. The example tests cover cancellation and manual
 control signals that reach run history, plus a missing-run signal target.
+The same boundary archives a terminal run, previews retention without changing
+state, and applies only the exact confirmed plan. Its integration test verifies
+that shared dispatch history remains valid in the Bedrock host while the
+selected run becomes non-inspectable and leaves a payload-free receipt.
 
 `BedrockMinimalHostApp.RuntimeSignals` is the concrete Jido-facing signal
 boundary. It accepts inbound `Jido.Signal` envelopes, converts them with

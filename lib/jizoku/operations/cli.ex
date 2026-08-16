@@ -77,6 +77,30 @@ defmodule Jizoku.Operations.CLI do
   end
 
   def format_error({:invalid_option, {key, _reason}}), do: "invalid option: #{inspect(key)}"
+  def format_error(:invalid_retention_confirmation), do: "retention confirmation is invalid"
+  def format_error(:expired_retention_plan), do: "retention plan has expired"
+  def format_error({:stale_retention_plan, _identity}), do: "retention plan is stale"
+
+  def format_error({:retention_ownership_backfill_required, _thread_ids}) do
+    "retention ownership backfill is required"
+  end
+
+  def format_error({:retention_candidate_blocked, _run_id, _reasons}) do
+    "retention candidate is now blocked"
+  end
+
+  def format_error({:unsupported_retention_apply, _adapter}) do
+    "configured storage does not support retention apply"
+  end
+
+  def format_error({:unsupported_retention_ownership_backfill, _adapter}) do
+    "configured storage does not support retention ownership backfill"
+  end
+
+  def format_error({:retention_ownership_backfill_failed, _reason}) do
+    "retention ownership backfill failed"
+  end
+
   def format_error(_reason), do: "runtime state is unavailable"
 
   defp run_with_storage(%Storage{adapter: Jizoku.Runtime.Journal.Storage.Ecto, opts: opts}, fun) do
