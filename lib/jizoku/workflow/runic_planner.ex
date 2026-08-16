@@ -138,10 +138,8 @@ defmodule Jizoku.Workflow.RunicPlanner do
 
     timeout_parents =
       Enum.reduce(spec.steps, transition_parents, fn step, acc ->
-        case EventWait.timeout_target(step.opts) do
-          target when is_atom(target) -> put_transition_parent(acc, step_names, step.name, target)
-          nil -> acc
-        end
+        target = EventWait.timeout_target(step.opts)
+        put_transition_parent(acc, step_names, step.name, target)
       end)
 
     Map.new(spec.steps, fn step ->
