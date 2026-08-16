@@ -26,9 +26,10 @@ defmodule Jizoku.Persistence.MigrationTest do
     end)
 
     migrations_path = Application.app_dir(:jizoku, "priv/repo/migrations")
-    unload_migration_module()
+    unload_migration_modules()
 
-    assert [_version] = run_migrations_without_module_conflict_warning(migrations_path, :up)
+    assert [_journal_version, _search_version] =
+             run_migrations_without_module_conflict_warning(migrations_path, :up)
 
     refute table_exists?("jizoku_runs")
     refute table_exists?("jizoku_step_runs")
@@ -36,8 +37,10 @@ defmodule Jizoku.Persistence.MigrationTest do
     assert table_exists?("jizoku_journal_threads")
     assert table_exists?("jizoku_journal_entries")
     assert table_exists?("jizoku_journal_checkpoints")
+    assert table_exists?("jizoku_run_search")
 
-    assert [_version] = run_migrations_without_module_conflict_warning(migrations_path, :down)
+    assert [_search_version, _journal_version] =
+             run_migrations_without_module_conflict_warning(migrations_path, :down)
 
     refute table_exists?("jizoku_runs")
     refute table_exists?("jizoku_step_runs")
@@ -45,6 +48,7 @@ defmodule Jizoku.Persistence.MigrationTest do
     refute table_exists?("jizoku_journal_threads")
     refute table_exists?("jizoku_journal_entries")
     refute table_exists?("jizoku_journal_checkpoints")
+    refute table_exists?("jizoku_run_search")
   end
 
   defp repo_config do
@@ -56,10 +60,17 @@ defmodule Jizoku.Persistence.MigrationTest do
     |> Keyword.delete(:pool)
   end
 
-  defp unload_migration_module do
-    module = Jizoku.Repo.Migrations.CreateJizokuSchema
-    :code.purge(module)
-    :code.delete(module)
+  defp unload_migration_modules do
+    Enum.each(
+      [
+        Jizoku.Repo.Migrations.CreateJizokuSchema,
+        Jizoku.Repo.Migrations.AddJizokuRunSearchProjection
+      ],
+      fn module ->
+        :code.purge(module)
+        :code.delete(module)
+      end
+    )
   end
 
   defp run_migrations_without_module_conflict_warning(migrations_path, direction) do

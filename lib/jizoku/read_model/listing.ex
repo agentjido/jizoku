@@ -11,6 +11,7 @@ defmodule Jizoku.ReadModel.Listing do
   alias Jizoku.ReadModel.Listing.Cursor
   alias Jizoku.ReadModel.Listing.Page
   alias Jizoku.ReadModel.Listing.Summary
+  alias Jizoku.ReadModel.RunSearch.EctoQuery
   alias Jizoku.ReadModel.Visibility
   alias Jizoku.Runtime.Deadline
   alias Jizoku.Runtime.Journal
@@ -248,23 +249,54 @@ defmodule Jizoku.ReadModel.Listing do
   end
 
   defp summaries(storage, %RunCatalogProjection{} = projection, query, %DateTime{} = now) do
-    projection
-    |> RunCatalogProjection.runs()
-    |> Enum.reverse()
-    |> Enum.filter(&catalog_match?(&1, query))
-    |> Enum.reduce_while({:ok, []}, fn run_index_summary, {:ok, summaries} ->
-      case summary(storage, run_index_summary, now) do
-        {:ok, %Summary{} = summary} ->
-          maybe_collect_summary(summary, summaries, query)
+    catalog_runs =
+      projection
+      |> RunCatalogProjection.runs()
+      |> Enum.reverse()
 
-        {:error, reason} ->
-          {:halt, {:error, {:run_catalog_summary_failed, run_index_summary.run_id, reason}}}
-      end
-    end)
-    |> case do
+    case EctoQuery.candidates(storage, query, length(catalog_runs)) do
+      {:ok, run_ids} ->
+        catalog_runs
+        |> catalog_runs_for_ids(run_ids)
+        |> summarize_runs(storage, query, now)
+
+      {:fallback, _reason} ->
+        catalog_runs
+        |> Enum.filter(&catalog_match?(&1, query))
+        |> summarize_runs(storage, query, now)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp summarize_runs(run_index_summaries, storage, query, now) do
+    result =
+      Enum.reduce_while(run_index_summaries, {:ok, []}, fn run_index_summary, {:ok, summaries} ->
+        case summary(storage, run_index_summary, now) do
+          {:ok, %Summary{} = summary} ->
+            maybe_collect_summary(summary, summaries, query)
+
+          {:error, reason} ->
+            {:halt, {:error, {:run_catalog_summary_failed, run_index_summary.run_id, reason}}}
+        end
+      end)
+
+    case result do
       {:ok, summaries} -> {:ok, Enum.reverse(summaries)}
       {:error, _reason} = error -> error
     end
+  end
+
+  defp catalog_runs_for_ids(catalog_runs, run_ids) do
+    runs_by_id = Map.new(catalog_runs, &{&1.run_id, &1})
+
+    Enum.flat_map(run_ids, fn run_id ->
+      case Map.fetch(runs_by_id, run_id) do
+        {:ok, run} -> [run]
+        :error -> []
+      end
+    end)
   end
 
   defp summary(

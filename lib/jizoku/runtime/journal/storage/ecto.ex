@@ -24,6 +24,7 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
   alias Jizoku.Persistence.JournalCheckpoint
   alias Jizoku.Persistence.JournalEntry
   alias Jizoku.Persistence.JournalThread
+  alias Jizoku.ReadModel.RunSearch.EctoProjector
   alias Jizoku.Runtime.Journal.Storage.Metadata
 
   @encoded_term_tag :jizoku_ecto_term_v1
@@ -188,7 +189,8 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
              now_ms,
              opts
            ),
-         {:ok, all_entries} <- load_entries(repo, thread.id, opts) do
+         {:ok, all_entries} <- load_entries(repo, thread.id, opts),
+         :ok <- project_run_search(repo, all_entries, updated_thread, opts) do
       reconstruct_thread(updated_thread, all_entries)
     else
       {:error, reason} -> repo.rollback(reason)
@@ -197,6 +199,19 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
 
   defp normalize_thread_result({:ok, %Thread{} = thread}), do: {:ok, thread}
   defp normalize_thread_result({:error, reason}), do: {:error, reason}
+
+  defp project_run_search(repo, entries, thread, opts) do
+    case Keyword.get(opts, :jizoku_projection_context) do
+      %{thread: {:run, run_id}, partition: partition} ->
+        case EctoProjector.project_thread(repo, entries, run_id, partition, thread.rev, opts) do
+          result when result in [:ok, :unavailable] -> :ok
+          {:error, _reason} = error -> error
+        end
+
+      _other_thread ->
+        :ok
+    end
+  end
 
   defp validate_expected_rev(nil, _current_rev), do: :ok
   defp validate_expected_rev(current_rev, current_rev), do: :ok

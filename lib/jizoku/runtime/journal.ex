@@ -41,6 +41,12 @@ defmodule Jizoku.Runtime.Journal do
         partition = Storage.partition(storage)
         {telemetry_projection, storage_opts} = Keyword.pop(opts, :telemetry_projection)
 
+        storage_opts =
+          Keyword.put(storage_opts, :jizoku_projection_context, %{
+            thread: thread,
+            partition: partition
+          })
+
         case Storage.append_thread(
                storage,
                thread_id(thread, partition),
