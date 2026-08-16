@@ -894,6 +894,37 @@ defmodule Jizoku do
   def apply_signal(_signal, _overrides), do: {:error, :invalid_signal}
 
   @doc """
+  Delivers one named external event to the matching durable run wait.
+
+  `:correlation` and `:idempotency_key` are required. Exact retries return the
+  existing resolution; reusing the idempotency key with different event
+  content fails closed. Authenticate and authorize inbound events at the host
+  boundary before calling this function.
+  """
+  @spec signal_run(Ecto.UUID.t(), String.t(), map(), keyword()) ::
+          {:ok, Jizoku.ReadModel.Inspection.Snapshot.t()}
+          | {:error, Config.config_error() | term()}
+  def signal_run(run_id, event, payload, overrides \\ [])
+
+  def signal_run(run_id, event, payload, overrides)
+      when is_binary(run_id) and is_binary(event) and is_map(payload) and is_list(overrides) do
+    with {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, signal_opts} <- control_signal_options(overrides),
+         signal_opts =
+           Keyword.put(signal_opts, :correlation, Keyword.get(overrides, :correlation)),
+         {:ok, signal} <- Signal.signal_run(run_id, event, payload, signal_opts) do
+      SignalInterpreter.apply(signal, Routing.journal_control_options(overrides))
+    else
+      {:error, {:invalid_signal, reason}} -> {:error, public_signal_error(reason)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def signal_run(_run_id, _event, _payload, _overrides) do
+    {:error, {:invalid_option, {:event_delivery, :invalid}}}
+  end
+
+  @doc """
   Resumes a run that is intentionally paused for manual intervention.
   """
   @spec resume(Ecto.UUID.t()) ::

@@ -8,7 +8,7 @@ defmodule Jizoku.Workflow.Definition do
   run creation, payload resolution, and persistence serialization.
   """
 
-  @type built_in_step_kind :: :wait | :log | :pause | :approval
+  @type built_in_step_kind :: :wait | :log | :pause | :approval | :await_event
   @type transition_outcome :: :ok | :error
   @type transition_condition :: Jizoku.Workflow.TransitionCondition.t()
   @type step_input_mapping :: [atom()] | keyword([atom()])
@@ -828,23 +828,32 @@ defmodule Jizoku.Workflow.Definition do
 
   defp fingerprint_terms(definition) do
     %{
-      steps:
-        Enum.map(definition.steps, fn step ->
-          %{
-            name: step.name,
-            module: inspect(step.module),
-            input: canonical_input_mapping(Keyword.get(step.opts, :input)),
-            output: Keyword.get(step.opts, :output),
-            after: canonical_dependency_list(Keyword.get(step.opts, :after)),
-            retry: Keyword.get(step.opts, :retry),
-            deadline: Keyword.get(step.opts, :deadline),
-            recovery: serialize_recovery_policy(recovery_policy(step))
-          }
-        end),
+      steps: Enum.map(definition.steps, &fingerprint_step/1),
       transitions:
         Enum.map(definition.transitions, &Map.take(&1, [:from, :on, :to, :condition, :recovery])),
       retries: definition.retries
     }
+  end
+
+  defp fingerprint_step(step) do
+    fingerprint = %{
+      name: step.name,
+      module: inspect(step.module),
+      input: canonical_input_mapping(Keyword.get(step.opts, :input)),
+      output: Keyword.get(step.opts, :output),
+      after: canonical_dependency_list(Keyword.get(step.opts, :after)),
+      retry: Keyword.get(step.opts, :retry),
+      deadline: Keyword.get(step.opts, :deadline),
+      recovery: serialize_recovery_policy(recovery_policy(step))
+    }
+
+    if step.module == :await_event do
+      fingerprint
+      |> Map.put(:event, Keyword.get(step.opts, :event))
+      |> Map.put(:correlation, Keyword.get(step.opts, :correlation))
+    else
+      fingerprint
+    end
   end
 
   defp canonical_dependency_list(nil), do: []

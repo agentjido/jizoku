@@ -691,6 +691,39 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   end
 
   defp apply_entry(
+         %Entry{type: :external_event_wait_opened, data: data} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if event_wait_opened_data?(data) do
+      pause_manual_step(projection, entry, event_wait_manual_data(data))
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :external_event_received, data: data} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if event_received_data?(data) do
+      projection
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :external_event_wait_resolved, data: data} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if event_wait_resolved_data?(data) do
+      resolve_manual_step(projection, entry, data)
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
          %Entry{type: :manual_step_resolved, data: data} = entry,
          %__MODULE__{} = projection
        ) do
@@ -1673,6 +1706,64 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   end
 
   defp manual_resolution_data?(_data), do: false
+
+  defp event_wait_opened_data?(data) when is_map(data) do
+    required_present?(data, [:run_id, :wait_id, :step, :event, :correlation, :opened_at]) and
+      non_empty_binary?(Map.get(data, :wait_id)) and non_empty_binary?(Map.get(data, :step)) and
+      non_empty_binary?(Map.get(data, :event)) and
+      non_empty_binary?(Map.get(data, :correlation)) and
+      match?(%DateTime{}, Map.get(data, :opened_at)) and is_map(Map.get(data, :result, %{}))
+  end
+
+  defp event_wait_opened_data?(_data) do
+    false
+  end
+
+  defp event_received_data?(data) when is_map(data) do
+    required_present?(data, [
+      :run_id,
+      :wait_id,
+      :event,
+      :correlation,
+      :payload,
+      :idempotency_key
+    ]) and is_map(Map.get(data, :payload))
+  end
+
+  defp event_received_data?(_data) do
+    false
+  end
+
+  defp event_wait_resolved_data?(data) when is_map(data) do
+    required_present?(data, [
+      :run_id,
+      :wait_id,
+      :step,
+      :event,
+      :correlation,
+      :action,
+      :result
+    ]) and is_map(Map.get(data, :result))
+  end
+
+  defp event_wait_resolved_data?(_data) do
+    false
+  end
+
+  defp event_wait_manual_data(data) do
+    %{
+      run_id: data.run_id,
+      step: data.step,
+      kind: "event_wait",
+      paused_at: data.opened_at,
+      metadata: %{
+        wait_id: data.wait_id,
+        event: data.event,
+        correlation: data.correlation,
+        output: Map.get(data, :result, %{})
+      }
+    }
+  end
 
   defp apply_outbox_entry(%__MODULE__{} = projection, %Entry{} = entry) do
     {outbox, anomaly} =

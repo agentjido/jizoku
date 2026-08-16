@@ -15,6 +15,7 @@ defmodule Jizoku.Runtime.Signal do
   | `:resume_run` | `%{run_id: Ecto.UUID.t(), attributes: map()}` |
   | `:cancel_run` | `%{run_id: Ecto.UUID.t()}` |
   | `:replay_run` | `%{run_id: Ecto.UUID.t(), allow_irreversible: boolean()}` |
+  | `:signal_run` | `%{run_id: Ecto.UUID.t(), event: String.t(), correlation: String.t(), event_payload: map()}` |
 
   Every signal carries caller metadata, an occurrence timestamp, and an optional
   idempotency key. Signals adapted from an external envelope may also carry its
@@ -22,14 +23,18 @@ defmodule Jizoku.Runtime.Signal do
   identity when the caller does not provide one.
   """
 
+  alias Jizoku.Runtime.Journal.Options
   alias Jizoku.Runtime.Partition
   alias Jizoku.Runtime.ScheduleIdentity
   alias Jizoku.Runtime.Trace
   alias Jizoku.Workflow.Definition
+  alias Jizoku.Workflow.EventWait
 
   @common_options [:id, :trace, :metadata, :occurred_at, :idempotency_key, :partition]
   @replay_options [:allow_irreversible | @common_options]
+  @event_options [:correlation | @common_options]
   @max_id_bytes 255
+  @max_event_payload_bytes 1_048_576
 
   @type command_type ::
           :start_run
@@ -39,6 +44,7 @@ defmodule Jizoku.Runtime.Signal do
           | :resume_run
           | :cancel_run
           | :replay_run
+          | :signal_run
 
   @type payload :: %{
           optional(:workflow) => String.t(),
@@ -46,7 +52,10 @@ defmodule Jizoku.Runtime.Signal do
           optional(:input) => map(),
           optional(:run_id) => Ecto.UUID.t(),
           optional(:attributes) => map(),
-          optional(:allow_irreversible) => boolean()
+          optional(:allow_irreversible) => boolean(),
+          optional(:event) => String.t(),
+          optional(:correlation) => String.t(),
+          optional(:event_payload) => map()
         }
 
   @type t :: %__MODULE__{
@@ -162,6 +171,31 @@ defmodule Jizoku.Runtime.Signal do
     end
   end
 
+  @doc """
+  Builds an idempotent command signal for delivering one named external event.
+  """
+  @spec signal_run(Ecto.UUID.t(), String.t(), map(), keyword()) ::
+          {:ok, t()} | {:error, error()}
+  def signal_run(run_id, event, event_payload, opts \\ []) do
+    with {:ok, run_id} <- run_id(run_id),
+         {:ok, event} <- event_name(event),
+         {:ok, event_payload} <- event_payload(event_payload),
+         {:ok, envelope} <- envelope(opts, @event_options),
+         {:ok, correlation} <- correlation(Keyword.get(opts, :correlation)),
+         :ok <- require_idempotency_key(envelope.idempotency_key) do
+      new(
+        :signal_run,
+        %{
+          run_id: run_id,
+          event: event,
+          correlation: correlation,
+          event_payload: event_payload
+        },
+        envelope
+      )
+    end
+  end
+
   defp run_attributes_signal(type, run_id, attributes, opts) do
     with {:ok, run_id} <- run_id(run_id),
          {:ok, attributes} <- map_value(attributes, :attributes),
@@ -211,6 +245,47 @@ defmodule Jizoku.Runtime.Signal do
       {:ok, nil} -> invalid(:trigger, :required)
       result -> result
     end
+  end
+
+  defp event_name(value) do
+    validate_event_identity(value, :event, &EventWait.valid_event?/1)
+  end
+
+  defp correlation(value) do
+    validate_event_identity(value, :correlation, &EventWait.valid_correlation_value?/1)
+  end
+
+  defp event_payload(value) when is_map(value) do
+    cond do
+      not Options.storage_safe_value?(value) ->
+        invalid(:event_payload, :unsupported_term)
+
+      byte_size(:erlang.term_to_binary(value)) > @max_event_payload_bytes ->
+        invalid(:event_payload, :too_large)
+
+      true ->
+        {:ok, value}
+    end
+  end
+
+  defp event_payload(_value) do
+    invalid(:event_payload, :expected_map)
+  end
+
+  defp validate_event_identity(value, field, validator) when is_function(validator, 1) do
+    if validator.(value) do
+      {:ok, value}
+    else
+      invalid(field, :invalid)
+    end
+  end
+
+  defp require_idempotency_key(value) when is_binary(value) do
+    :ok
+  end
+
+  defp require_idempotency_key(_value) do
+    invalid(:idempotency_key, :required)
   end
 
   defp run_id(run_id) when is_binary(run_id) do

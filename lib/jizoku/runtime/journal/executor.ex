@@ -1456,7 +1456,7 @@ defmodule Jizoku.Runtime.Journal.Executor do
   defp manual_intervention_execution?(definition, step_name, %{execution_opts: execution_opts})
        when is_list(execution_opts) do
     with true <- Keyword.get(execution_opts, :pause, false),
-         {:ok, %{module: module}} when module in [:pause, :approval] <-
+         {:ok, %{module: module}} when module in [:pause, :approval, :await_event] <-
            Definition.step(definition, step_name) do
       true
     else
@@ -1480,7 +1480,31 @@ defmodule Jizoku.Runtime.Journal.Executor do
 
         %{module: :approval} ->
           approval_progression_entries(attempt, definition, step_name, now, paused_at)
+
+        %{module: :await_event} ->
+          event_wait_progression_entries(attempt, step_name, now, paused_at, result)
       end
+    end
+  end
+
+  defp event_wait_progression_entries(attempt, step_name, now, opened_at, result) do
+    case Keyword.get(attempt.execution_opts, :await_event) do
+      %{event: event, correlation: correlation} ->
+        {:ok,
+         [
+           event_wait_opened_entry!(
+             attempt,
+             step_name,
+             event,
+             correlation,
+             result,
+             now,
+             opened_at
+           )
+         ]}
+
+      _missing ->
+        {:error, {:invalid_event_wait, step_name}}
     end
   end
 
@@ -2641,6 +2665,29 @@ defmodule Jizoku.Runtime.Journal.Executor do
     })
   end
 
+  defp event_wait_opened_entry!(
+         %ActionAttempt{} = attempt,
+         step_name,
+         event,
+         correlation,
+         result,
+         %DateTime{} = now,
+         %DateTime{} = opened_at
+       )
+       when is_atom(step_name) and is_binary(event) and is_binary(correlation) and is_map(result) do
+    entry!(:external_event_wait_opened, %{
+      run_id: attempt.run_id,
+      wait_id: attempt.runnable_key,
+      step: Definition.serialize_step(step_name),
+      event: event,
+      correlation: correlation,
+      result: result,
+      opened_at: opened_at,
+      trace: attempt.trace,
+      occurred_at: now
+    })
+  end
+
   defp runnables_planned_entry!(run_id, runnables, %DateTime{} = now) do
     Jizoku.Runtime.Journal.EntryBuilder.runnables_planned!(run_id, runnables, now)
   end
@@ -3034,6 +3081,15 @@ defmodule Jizoku.Runtime.Journal.Executor do
 
   defp recovered_attempt_execution_opts(%ActionAttempt{execution_opts: execution_opts}, _step)
        when is_list(execution_opts) and execution_opts != [] do
+    execution_opts
+  end
+
+  defp recovered_attempt_execution_opts(
+         %ActionAttempt{input: input},
+         %{module: :await_event, opts: opts}
+       )
+       when is_map(input) and is_list(opts) do
+    {:ok, _output, execution_opts} = BuiltInStep.execute_await_event(input, opts)
     execution_opts
   end
 
@@ -3876,6 +3932,11 @@ defmodule Jizoku.Runtime.Journal.Executor do
 
   defp run_step(%{module: :approval}, _input, _context) do
     {:ok, %{}, [pause: true]}
+  end
+
+  defp run_step(%{module: :await_event, opts: opts}, input, _context)
+       when is_list(opts) and is_map(input) do
+    BuiltInStep.execute_await_event(input, opts)
   end
 
   defp run_step(%{module: module}, input, context) when is_atom(module) do

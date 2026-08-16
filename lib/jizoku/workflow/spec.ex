@@ -12,10 +12,11 @@ defmodule Jizoku.Workflow.Spec do
   alias Jizoku.Runtime.Deadline
   alias Jizoku.Workflow.Definition
   alias Jizoku.Workflow.DependencyGraph
+  alias Jizoku.Workflow.EventWait
   alias Jizoku.Workflow.InputMapping
   alias Jizoku.Workflow.ValueType
 
-  @built_in_step_kinds [:wait, :log, :pause, :approval]
+  @built_in_step_kinds [:wait, :log, :pause, :approval, :await_event]
   @collection_fields [:triggers, :payload, :steps, :transitions, :retries, :entry_steps]
   @recognized_top_level_fields [
     :workflow,
@@ -869,6 +870,7 @@ defmodule Jizoku.Workflow.Spec do
     case field(step, :module) do
       :wait -> validate_wait_step(errors, name, opts, index)
       :log -> validate_log_step(errors, name, opts, index)
+      :await_event -> validate_event_wait_step(errors, name, opts, index)
       _other -> errors
     end
   end
@@ -912,6 +914,27 @@ defmodule Jizoku.Workflow.Spec do
     )
   end
 
+  defp validate_event_wait_step(errors, name, opts, index) do
+    event = Keyword.get(opts, :event)
+    correlation = Keyword.get(opts, :correlation)
+
+    errors
+    |> maybe_error(
+      EventWait.valid_event?(event),
+      [:steps, index, :opts, :event],
+      :invalid_event_name,
+      "built-in step #{inspect(name)} requires a storage-safe non-empty :event option",
+      %{step: name, event: event}
+    )
+    |> maybe_error(
+      EventWait.valid_correlation_declaration?(correlation),
+      [:steps, index, :opts, :correlation],
+      :invalid_event_correlation,
+      "built-in step #{inspect(name)} requires :correlation to be a storage-safe string or non-empty input path",
+      %{step: name, correlation: correlation}
+    )
+  end
+
   defp validate_approval_transitions(errors, step, index, transitions) do
     if field(step, :module) == :approval do
       name = field(step, :name)
@@ -947,7 +970,7 @@ defmodule Jizoku.Workflow.Spec do
   end
 
   defp validate_dependency_manual_step_kind(errors, step, index) do
-    if is_map(step) and field(step, :module) in [:pause, :approval] do
+    if is_map(step) and field(step, :module) in [:pause, :approval, :await_event] do
       [
         error(
           [:steps, index, :module],

@@ -42,6 +42,9 @@ defmodule Jizoku.Runtime.DispatchProtocol do
           | :dynamic_graph_mutated
           | :manual_step_paused
           | :manual_step_resolved
+          | :external_event_wait_opened
+          | :external_event_received
+          | :external_event_wait_resolved
           | :run_terminal
           | :run_indexed
           | :run_cataloged
@@ -60,6 +63,11 @@ defmodule Jizoku.Runtime.DispatchProtocol do
           | :live_wakeup_emitted
 
   @manual_entry_types [:manual_step_paused, :manual_step_resolved]
+  @event_wait_entry_types [
+    :external_event_wait_opened,
+    :external_event_received,
+    :external_event_wait_resolved
+  ]
 
   @run_entry_types [
     :run_signal_received,
@@ -76,6 +84,9 @@ defmodule Jizoku.Runtime.DispatchProtocol do
     :jido_signal_delivery_acknowledged,
     :manual_step_paused,
     :manual_step_resolved,
+    :external_event_wait_opened,
+    :external_event_received,
+    :external_event_wait_resolved,
     :run_terminal
   ]
 
@@ -151,6 +162,34 @@ defmodule Jizoku.Runtime.DispatchProtocol do
     jido_signal_delivery_acknowledged: [:run_id, :signal_id, :occurred_at],
     manual_step_paused: [:run_id, :step, :kind, :occurred_at],
     manual_step_resolved: [:run_id, :step, :action, :occurred_at],
+    external_event_wait_opened: [
+      :run_id,
+      :wait_id,
+      :step,
+      :event,
+      :correlation,
+      :opened_at,
+      :occurred_at
+    ],
+    external_event_received: [
+      :run_id,
+      :wait_id,
+      :event,
+      :correlation,
+      :payload,
+      :idempotency_key,
+      :occurred_at
+    ],
+    external_event_wait_resolved: [
+      :run_id,
+      :wait_id,
+      :step,
+      :event,
+      :correlation,
+      :action,
+      :result,
+      :occurred_at
+    ],
     run_terminal: [:run_id, :status, :occurred_at],
     run_indexed: [:run_id, :workflow, :queue, :occurred_at],
     run_cataloged: [:run_id, :workflow, :queue, :occurred_at],
@@ -309,6 +348,15 @@ defmodule Jizoku.Runtime.DispatchProtocol do
     |> Map.update(:action, nil, &normalize_manual_value/1)
     |> Map.update(:metadata, %{}, &redact_metadata/1)
     |> Map.put_new(:result, %{})
+  end
+
+  defp normalize_attrs(attrs, type) when type in @event_wait_entry_types do
+    attrs
+    |> Map.update(:wait_id, nil, &normalize_thread_id/1)
+    |> Map.update(:step, nil, &normalize_thread_id/1)
+    |> Map.update(:event, nil, &normalize_thread_id/1)
+    |> Map.update(:correlation, nil, &normalize_thread_id/1)
+    |> Map.update(:action, nil, &normalize_thread_id/1)
   end
 
   defp normalize_attrs(attrs, :run_signal_received) do
