@@ -96,6 +96,31 @@ Optional keys:
 - `:partition` - omitted by default, preserving the exact legacy journal
   namespace. A validated string scopes run, dispatch, workflow-index,
   global-catalog, and checkpoint identities together.
+- `:workflow_versions` - optional host-owned map of stable workflow modules to
+  retained implementations by definition version. Jizoku uses it only when a
+  run's persisted fingerprint no longer matches the stable module's current
+  definition.
+
+For blue/green workflow deployments, keep the stable workflow module as the
+registry key and register each retained implementation explicitly:
+
+```elixir
+config :jizoku,
+  workflow_versions: %{
+    MyApp.Workflows.Billing => %{
+      "2026-05-v1" => MyApp.Workflows.Billing.V1,
+      "2026-08-v2" => MyApp.Workflows.Billing
+    }
+  }
+```
+
+Each configured version must match the implementation's declared `version`.
+During execution and manual control, Jizoku resolves the persisted version only
+through this host map and still requires an exact definition fingerprint. The
+stable workflow module remains the run and step-context identity. Keep an older
+implementation deployed until every non-terminal run on that version has
+finished. A missing version or fingerprint mismatch fails closed with bounded
+version and fingerprint diagnostics; labels never override the execution fence.
 
 When a host uses partitions, it must route the same trusted `:partition`
 through start, worker, cron, signal, control, replay, and inspection calls.

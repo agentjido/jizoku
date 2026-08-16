@@ -16,6 +16,10 @@
   by default; explicit overrides must come from trusted host routing.
 - Do not derive `:partition` directly from an unauthenticated request or treat
   partition isolation as host authorization.
+- Register retained workflow implementations through host-owned
+  `:workflow_versions`, keyed by the stable current workflow module and declared
+  version. Keep historical modules deployed while non-terminal runs reference
+  them; version labels never override exact fingerprint fencing.
 
 - Do not configure `:executor` for step execution.
 - Use explicit `journal_storage` only when replacing the default inferred Ecto
