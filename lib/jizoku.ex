@@ -828,6 +828,11 @@ defmodule Jizoku do
           {:ok, Retention.Plan.t()} | {:error, term()}
   defdelegate preview_retention(filters, overrides \\ []), to: Retention, as: :preview
 
+  @doc "Applies an exact retention preview after explicit token confirmation."
+  @spec apply_retention(Retention.Plan.t(), String.t(), keyword()) ::
+          {:ok, Retention.Receipt.t()} | {:error, term()}
+  defdelegate apply_retention(plan, confirmation, overrides \\ []), to: Retention, as: :apply
+
   @doc """
   Rebuilds the optional Ecto run-search projection for one selected partition.
 
