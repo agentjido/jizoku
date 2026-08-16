@@ -20,6 +20,12 @@
   `:workflow_versions`, keyed by the stable current workflow module and declared
   version. Keep historical modules deployed while non-terminal runs reference
   them; version labels never override exact fingerprint fencing.
+- Migrate definitions only with a host-owned `Jizoku.Workflow.Migration`
+  contract at a quiescent manual pause. Keep callbacks deterministic and free
+  of side effects; use a new explicit contract for rollback.
+- Treat `Jizoku.migrate_run/2` as an authorized operator boundary. Do not accept
+  migration modules, version labels, storage, queues, or partitions directly
+  from untrusted input.
 
 - Do not configure `:executor` for step execution.
 - Use explicit `journal_storage` only when replacing the default inferred Ecto
