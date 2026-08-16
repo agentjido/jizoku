@@ -309,6 +309,24 @@ defmodule Jizoku.Runtime.Signal.JidoIngress do
     Signal.replay_run(run_id, Keyword.put(opts, :allow_irreversible, allow_irreversible))
   end
 
+  defp rebuild_signal(
+         :signal_run,
+         %{
+           run_id: run_id,
+           event: event,
+           correlation: correlation,
+           event_payload: event_payload
+         },
+         opts
+       ) do
+    Signal.signal_run(
+      run_id,
+      event,
+      event_payload,
+      Keyword.put(opts, :correlation, correlation)
+    )
+  end
+
   defp rebuild_signal(_type, _payload, _opts), do: invalid_ingress()
 
   defp serialize_signal(%Signal{} = signal) do

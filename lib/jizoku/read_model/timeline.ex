@@ -19,6 +19,10 @@ defmodule Jizoku.ReadModel.Timeline do
     jido_signal_delivered: 8,
     attempt_scheduled: 5,
     manual_step_paused: 6,
+    external_event_wait_opened: 6,
+    external_event_received: 7,
+    external_event_wait_timeout_selected: 7,
+    external_event_wait_resolved: 8,
     run_continued_to: 7,
     run_terminal: 7
   }
@@ -85,7 +89,103 @@ defmodule Jizoku.ReadModel.Timeline do
     |> Kernel.++(applied_events(snapshot))
     |> Kernel.++(jido_signal_events(snapshot))
     |> Kernel.++(manual_events(snapshot))
+    |> Kernel.++(event_wait_events(snapshot))
     |> Kernel.++(terminal_events(snapshot))
+  end
+
+  defp event_wait_events(%Snapshot{run_id: run_id, event_waits: event_waits})
+       when is_list(event_waits) do
+    Enum.flat_map(event_waits, &event_wait_events(run_id, &1))
+  end
+
+  defp event_wait_events(%Snapshot{}) do
+    []
+  end
+
+  defp event_wait_events(run_id, event_wait) when is_map(event_wait) do
+    step = value(event_wait, :step)
+    wait_id = value(event_wait, :wait_id)
+
+    []
+    |> maybe_add_event_wait_event(
+      :external_event_wait_opened,
+      value(event_wait, :opened_at),
+      run_id,
+      step,
+      wait_id,
+      "#{step} opened an external event wait",
+      event_wait_details(event_wait, [:event, :correlation_summary, :timeout])
+    )
+    |> maybe_add_event_wait_event(
+      :external_event_received,
+      value(event_wait, :received_at),
+      run_id,
+      step,
+      wait_id,
+      "#{step} received its matching external event",
+      event_wait_details(event_wait, [:event, :correlation_summary, :receipt_summary])
+    )
+    |> maybe_add_event_wait_event(
+      :external_event_wait_timeout_selected,
+      value(event_wait, :timeout_selected_at),
+      run_id,
+      step,
+      wait_id,
+      "#{step} selected its timeout continuation",
+      event_wait_details(event_wait, [:event, :timeout_target])
+    )
+    |> maybe_add_event_wait_event(
+      :external_event_wait_resolved,
+      value(event_wait, :resolved_at),
+      run_id,
+      step,
+      wait_id,
+      "#{step} external event wait resolved",
+      event_wait_details(event_wait, [:event, :resolution])
+    )
+    |> Enum.reverse()
+  end
+
+  defp event_wait_events(_run_id, _event_wait) do
+    []
+  end
+
+  defp maybe_add_event_wait_event(
+         events,
+         type,
+         %DateTime{} = occurred_at,
+         run_id,
+         step,
+         wait_id,
+         summary,
+         details
+       ) do
+    [
+      event(type, occurred_at, run_id,
+        step_id: step,
+        runnable_key: wait_id,
+        summary: summary,
+        details: details
+      )
+      | events
+    ]
+  end
+
+  defp maybe_add_event_wait_event(
+         events,
+         _type,
+         _occurred_at,
+         _run_id,
+         _step,
+         _wait_id,
+         _summary,
+         _details
+       ) do
+    events
+  end
+
+  defp event_wait_details(event_wait, fields) do
+    Map.take(event_wait, fields)
   end
 
   defp jido_signal_events(%Snapshot{run_id: run_id, jido_signals: %{items: items}}) do

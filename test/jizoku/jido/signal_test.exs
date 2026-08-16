@@ -3,6 +3,7 @@ defmodule Jizoku.Jido.SignalTest do
 
   alias Jizoku.Runtime.Journal
   alias Jizoku.Runtime.Signal
+  alias Jizoku.Runtime.Signal.JidoAdapter
   alias Jizoku.Runtime.WorkflowAgent
   alias Jizoku.Test.Storage
   alias Jizoku.Workflow.Definition
@@ -49,12 +50,48 @@ defmodule Jizoku.Jido.SignalTest do
     end
   end
 
+  defmodule RecordPaymentEvent do
+    use Jizoku.Step,
+      name: :record_payment_event,
+      input_schema: [event: [type: :map, required: true]]
+
+    @impl Jizoku.Step
+    def run(%{event: event}, _context) do
+      {:ok, %{payment_status: event.status}}
+    end
+  end
+
+  defmodule PaymentEventWorkflow do
+    use Jizoku.Workflow
+
+    workflow do
+      trigger :manual do
+        manual()
+
+        payload do
+          field :payment_id, :string
+        end
+      end
+
+      step :await_payment, :await_event,
+        event: "payment.completed",
+        correlation: [:payment_id],
+        output: :event
+
+      step :record_payment, RecordPaymentEvent, input: [:event]
+
+      transition :await_payment, on: :ok, to: :record_payment
+      transition :record_payment, on: :ok, to: :complete
+    end
+  end
+
   @now ~U[2026-08-11 12:00:00.000000Z]
   @queue "jido-commands"
   @partition "tenant_acme"
   @source "/my_app/orders"
   @checkpoint_version_key "jizoku.workflow_projection.checkpoint_version"
   @command_history_count_key "jizoku.workflow_projection.command_history_count"
+  @event_waits_key "jizoku.workflow_projection.event_waits"
   @trace %{
     trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
     span_id: "00f067aa0ba902b7",
@@ -105,6 +142,59 @@ defmodule Jizoku.Jido.SignalTest do
     assert completed.context.order == %{id: "ord_123", status: "recorded"}
   end
 
+  test "preserves Jido event identity and trace through external wait delivery", %{
+    storage: storage
+  } do
+    run_id = Ecto.UUID.generate()
+
+    assert {:ok, _started} =
+             Jizoku.start(
+               PaymentEventWorkflow,
+               :manual,
+               %{payment_id: "pay_jido_123"},
+               runtime_opts(storage, run_id: run_id, partition: @partition)
+             )
+
+    assert {:ok, %{status: :paused}} =
+             Jizoku.execute_next(runtime_opts(storage, partition: @partition))
+
+    assert {:ok, runtime_signal} =
+             Signal.signal_run(
+               run_id,
+               "payment.completed",
+               %{status: "settled"},
+               id: "jido-payment-event-123",
+               trace: @trace,
+               metadata: %{"provider" => "demo"},
+               occurred_at: @now,
+               idempotency_key: "provider-payment-event-123",
+               correlation: "pay_jido_123",
+               partition: @partition
+             )
+
+    assert {:ok, jido_signal} = JidoAdapter.to_jido(runtime_signal)
+    assert jido_signal.id == "jido-payment-event-123"
+    assert jido_signal.type == "jizoku.runtime.command.signal_run"
+    assert jido_signal.subject == run_id
+    assert jido_signal.extensions["correlation"] == @trace
+
+    assert {:ok, resolved} = Jizoku.apply_signal(jido_signal, runtime_opts(storage))
+    assert [%{status: :resolved, receipt_summary: receipt_summary}] = resolved.event_waits
+    assert receipt_summary.bytes == byte_size("provider-payment-event-123")
+
+    receipt = Enum.find(resolved.command_history, &(&1.signal_type == "signal_run"))
+    assert receipt.signal_id == "jido-payment-event-123"
+    assert receipt.idempotency_key == "provider-payment-event-123"
+    assert receipt.trace == @trace
+    assert receipt.metadata == %{"provider" => "demo"}
+
+    assert {:ok, completed} =
+             Jizoku.execute_next(runtime_opts(storage, partition: @partition))
+
+    assert completed.status == :completed
+    assert completed.context.payment_status == "settled"
+  end
+
   test "rejects full-revision checkpoints that could drop source provenance", %{
     storage: storage
   } do
@@ -126,10 +216,12 @@ defmodule Jizoku.Jido.SignalTest do
       source_less_projection
       |> Map.delete(@checkpoint_version_key)
       |> Map.delete(@command_history_count_key),
-      Map.put(source_less_projection, @command_history_count_key, 0)
+      Map.put(source_less_projection, @command_history_count_key, 0),
+      Map.put(agent.state.projection, @checkpoint_version_key, 3),
+      Map.put(agent.state.projection, @event_waits_key, nil)
     ]
 
-    assert Map.get(agent.state.projection, @checkpoint_version_key) == 3
+    assert Map.get(agent.state.projection, @checkpoint_version_key) == 4
     refute Map.has_key?(agent.state.projection, :checkpoint_version)
     refute Map.has_key?(agent.state.projection, :command_history_count)
 

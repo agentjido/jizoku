@@ -54,7 +54,12 @@ defmodule Jizoku.Runtime.Signal.JidoAdapterTest do
       Signal.reject_run(@run_id, %{comment: "nope"}, occurred_at: @occurred_at),
       Signal.resume_run(@run_id, %{actor: "ops"}, occurred_at: @occurred_at),
       Signal.cancel_run(@run_id, occurred_at: @occurred_at),
-      Signal.replay_run(@run_id, allow_irreversible: true, occurred_at: @occurred_at)
+      Signal.replay_run(@run_id, allow_irreversible: true, occurred_at: @occurred_at),
+      Signal.signal_run(@run_id, "payment.completed", %{status: "settled"},
+        correlation: "pay_123",
+        idempotency_key: "provider-event-123",
+        occurred_at: @occurred_at
+      )
     ]
 
     for {:ok, signal} <- signals do
@@ -283,7 +288,14 @@ defmodule Jizoku.Runtime.Signal.JidoAdapterTest do
        %{"run_id" => "not-a-uuid", "attributes" => %{}}},
       {"jizoku.runtime.command.cancel_run", "cancel_run", %{"run_id" => "not-a-uuid"}},
       {"jizoku.runtime.command.replay_run", "replay_run",
-       %{"run_id" => "not-a-uuid", "allow_irreversible" => false}}
+       %{"run_id" => "not-a-uuid", "allow_irreversible" => false}},
+      {"jizoku.runtime.command.signal_run", "signal_run",
+       %{
+         "run_id" => "not-a-uuid",
+         "event" => "payment.completed",
+         "correlation" => "pay_123",
+         "event_payload" => %{}
+       }}
     ]
 
     for {jido_type, command_type, payload} <- invalid_cases do

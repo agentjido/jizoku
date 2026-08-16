@@ -2,6 +2,7 @@ defmodule Jizoku.ExternalEventWaitTest do
   use ExUnit.Case, async: false
 
   alias Jido.Storage.ETS
+  alias Jizoku.ReadModel.Visibility
   alias Jizoku.Runtime.Journal
 
   @storage {ETS, table: :jizoku_external_event_wait_test}
@@ -206,6 +207,99 @@ defmodule Jizoku.ExternalEventWaitTest do
 
     assert {:ok, %{entries: entries}} = Journal.load_thread(@storage, {:run, run_id})
     refute Enum.any?(entries, &(&1.type == :external_event_received))
+
+    assert {:ok, cancelled} =
+             Jizoku.inspect_run(run_id,
+               journal_storage: @storage,
+               queue: @queue,
+               now: DateTime.add(@started_at, 2, :second)
+             )
+
+    assert [%{status: :cancelled, resolution: "cancelled"}] = cancelled.event_waits
+  end
+
+  test "inspection surfaces expose redaction-safe event wait evidence" do
+    run_id = Ecto.UUID.generate()
+    correlation = "pay_sensitive_correlation"
+
+    assert {:ok, _started} =
+             Jizoku.start(
+               TimeoutWorkflow,
+               :manual,
+               %{payment_id: correlation},
+               runtime_options(run_id, @started_at)
+             )
+
+    assert {:ok, waiting} = Jizoku.execute_next(worker_options(@started_at))
+
+    assert %{
+             event: "payment.completed",
+             correlation_summary: %{algorithm: :sha256, bytes: 25},
+             status: :waiting,
+             timeout: %{after_ms: 1_000, target: "record_timeout"}
+           } = waiting.active_event_wait
+
+    refute inspect(waiting.active_event_wait) =~ correlation
+
+    assert {:ok, graph} =
+             Jizoku.inspect_run_graph(
+               run_id,
+               journal_storage: @storage,
+               queue: @queue,
+               now: @started_at
+             )
+
+    await_node = Enum.find(graph.nodes, &(&1.id == "await_payment"))
+    assert await_node.metadata.event_waits == [waiting.active_event_wait]
+
+    assert {:ok, timeline} =
+             Jizoku.inspect_run_timeline(
+               run_id,
+               journal_storage: @storage,
+               queue: @queue,
+               now: @started_at
+             )
+
+    assert Enum.any?(timeline.events, &(&1.type == :external_event_wait_opened))
+    refute inspect(timeline) =~ correlation
+
+    assert {:ok, explanation} =
+             Jizoku.explain_run(
+               run_id,
+               journal_storage: @storage,
+               queue: @queue,
+               now: @started_at
+             )
+
+    assert explanation.summary == "The run is waiting for a matching external event."
+    assert :deliver_external_event in explanation.next_actions
+
+    delivered_at = DateTime.add(@started_at, 500, :millisecond)
+
+    assert {:ok, resolved} =
+             Jizoku.signal_run(
+               run_id,
+               "payment.completed",
+               %{status: "settled", private_note: "do-not-expose"},
+               Keyword.merge(control_options(delivered_at),
+                 correlation: correlation,
+                 idempotency_key: "provider-safe-read-model"
+               )
+             )
+
+    assert [event_wait] = resolved.event_waits
+    assert event_wait.status == :resolved
+    assert event_wait.resolution == "received"
+    assert event_wait.received_at == delivered_at
+    assert event_wait.resolved_at == delivered_at
+
+    assert {:ok, external_view} = Visibility.redact(resolved, %{}, :external)
+    refute inspect(external_view) =~ correlation
+    refute inspect(external_view) =~ "do-not-expose"
+    assert external_view.event_waits == resolved.event_waits
+
+    assert {:ok, %{status: :completed}} =
+             Jizoku.execute_next(worker_options(DateTime.add(delivered_at, 1, :millisecond)))
   end
 
   test "concurrent deliveries select one durable continuation" do
@@ -283,6 +377,11 @@ defmodule Jizoku.ExternalEventWaitTest do
 
     assert completed.status == :completed
     assert completed.context.timed_out_event == "payment.completed"
+
+    assert [event_wait] = completed.event_waits
+    assert event_wait.status == :timed_out
+    assert event_wait.resolution == "timed_out"
+    assert event_wait.timeout_selected_at == DateTime.add(@started_at, 1_000, :millisecond)
 
     assert {:ok, %{entries: entries}} = Journal.load_thread(@storage, {:run, run_id})
     assert Enum.count(entries, &(&1.type == :external_event_wait_timeout_selected)) == 1

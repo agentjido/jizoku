@@ -34,7 +34,7 @@ defmodule Jizoku.Runtime.Signal.JidoAdapter do
         }
 
   @start_commands [:start_run, :start_cron]
-  @run_commands [:approve_run, :reject_run, :resume_run, :cancel_run, :replay_run]
+  @run_commands [:approve_run, :reject_run, :resume_run, :cancel_run, :replay_run, :signal_run]
 
   @type_string_by_command %{
     start_run: "jizoku.runtime.command.start_run",
@@ -43,7 +43,8 @@ defmodule Jizoku.Runtime.Signal.JidoAdapter do
     reject_run: "jizoku.runtime.command.reject_run",
     resume_run: "jizoku.runtime.command.resume_run",
     cancel_run: "jizoku.runtime.command.cancel_run",
-    replay_run: "jizoku.runtime.command.replay_run"
+    replay_run: "jizoku.runtime.command.replay_run",
+    signal_run: "jizoku.runtime.command.signal_run"
   }
 
   @command_by_type_string Map.new(@type_string_by_command, fn {command, type} ->
@@ -329,6 +330,21 @@ defmodule Jizoku.Runtime.Signal.JidoAdapter do
     end
   end
 
+  defp transport_payload(:signal_run, payload) do
+    with {:ok, run_id} <- fetch_string(payload, :run_id),
+         {:ok, event} <- fetch_string(payload, :event),
+         {:ok, correlation} <- fetch_string(payload, :correlation),
+         {:ok, event_payload} <- fetch_map(payload, :event_payload) do
+      {:ok,
+       %{
+         "run_id" => run_id,
+         "event" => event,
+         "correlation" => correlation,
+         "event_payload" => event_payload
+       }}
+    end
+  end
+
   defp signal_data(data) when is_map(data) and map_size(data) > 0, do: {:ok, data}
   defp signal_data(_data), do: invalid(:data, :missing_signal_payload)
 
@@ -396,6 +412,23 @@ defmodule Jizoku.Runtime.Signal.JidoAdapter do
          {:ok, run_id} <- fetch_uuid(payload, :run_id),
          {:ok, allow_irreversible} <- fetch_boolean(payload, :allow_irreversible) do
       {:ok, %{run_id: run_id, allow_irreversible: allow_irreversible}}
+    end
+  end
+
+  defp normalize_payload(:signal_run, payload) do
+    with :ok <-
+           reject_alias_collisions(payload, [:run_id, :event, :correlation, :event_payload]),
+         {:ok, run_id} <- fetch_uuid(payload, :run_id),
+         {:ok, event} <- fetch_string(payload, :event),
+         {:ok, correlation} <- fetch_string(payload, :correlation),
+         {:ok, event_payload} <- fetch_map(payload, :event_payload) do
+      {:ok,
+       %{
+         run_id: run_id,
+         event: event,
+         correlation: correlation,
+         event_payload: event_payload
+       }}
     end
   end
 

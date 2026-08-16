@@ -20,6 +20,7 @@ defmodule Jizoku.Jido.SignalResolver do
           | {:approve_run, Ecto.UUID.t(), map()}
           | {:reject_run, Ecto.UUID.t(), map()}
           | {:replay_run, Ecto.UUID.t(), boolean()}
+          | {:signal_run, Ecto.UUID.t(), String.t(), map(), String.t()}
 
   @type rejection_reason :: atom()
 

@@ -25,8 +25,28 @@ defmodule Jizoku.ReadModel.Visibility do
     :paused_at,
     :requested_at,
     :resolved_at,
-    :deadline
+    :deadline,
+    :event,
+    :correlation_summary,
+    :timeout
   ]
+  @event_wait_fields [
+    :wait_id,
+    :step,
+    :event,
+    :correlation_summary,
+    :status,
+    :opened_at,
+    :timeout,
+    :received_at,
+    :receipt_summary,
+    :timeout_selected_at,
+    :timeout_target,
+    :resolution,
+    :resolved_at
+  ]
+  @event_wait_timeout_fields [:after_ms, :due_at, :target]
+  @identity_summary_fields [:algorithm, :digest, :bytes]
   @run_summary_fields [
     :run_id,
     :workflow,
@@ -101,7 +121,13 @@ defmodule Jizoku.ReadModel.Visibility do
     :visible_at,
     :signal_type,
     :kind,
-    :reason
+    :reason,
+    :event,
+    :correlation_summary,
+    :timeout,
+    :receipt_summary,
+    :timeout_target,
+    :resolution
   ]
 
   @type scope :: :external | :operator | :auditor
@@ -186,6 +212,8 @@ defmodule Jizoku.ReadModel.Visibility do
         command_history: [],
         deadline: summarize_deadline(snapshot.deadline),
         manual_state: summarize_manual_state(snapshot.manual_state),
+        active_event_wait: summarize_event_wait(snapshot.active_event_wait),
+        event_waits: Enum.map(snapshot.event_waits, &summarize_event_wait/1),
         planned_runnables: Enum.map(snapshot.planned_runnables, &summarize_runnable/1),
         pending_dispatches: Enum.map(snapshot.pending_dispatches, &summarize_runnable/1),
         pending_results: Enum.map(snapshot.pending_results, &summarize_attempt/1),
@@ -282,7 +310,7 @@ defmodule Jizoku.ReadModel.Visibility do
         output: nil,
         error: nil,
         deadline: summarize_deadline(node.deadline),
-        metadata: %{},
+        metadata: summarize_node_metadata(node.metadata),
         origin: summarize_dynamic_origin(node.origin),
         manual_state: summarize_manual_state(node.manual_state),
         attempts: []
@@ -295,10 +323,68 @@ defmodule Jizoku.ReadModel.Visibility do
     manual_state
     |> take_dual_keys(@manual_state_fields)
     |> Map.update(:deadline, nil, &summarize_deadline/1)
+    |> Map.update(:correlation_summary, nil, &summarize_identity/1)
+    |> Map.update(:timeout, nil, &summarize_event_wait_timeout/1)
     |> compact()
   end
 
   defp summarize_manual_state(_manual_state), do: nil
+
+  defp summarize_node_metadata(metadata) when is_map(metadata) do
+    case value(metadata, :event_waits) do
+      waits when is_list(waits) -> %{event_waits: Enum.map(waits, &summarize_event_wait/1)}
+      _missing -> %{}
+    end
+  end
+
+  defp summarize_node_metadata(_metadata) do
+    %{}
+  end
+
+  defp summarize_event_wait(nil) do
+    nil
+  end
+
+  defp summarize_event_wait(event_wait) when is_map(event_wait) do
+    event_wait
+    |> take_dual_keys(@event_wait_fields)
+    |> Map.update(:correlation_summary, nil, &summarize_identity/1)
+    |> Map.update(:receipt_summary, nil, &summarize_identity/1)
+    |> Map.update(:timeout, nil, &summarize_event_wait_timeout/1)
+    |> compact()
+  end
+
+  defp summarize_event_wait(_event_wait) do
+    nil
+  end
+
+  defp summarize_event_wait_timeout(nil) do
+    nil
+  end
+
+  defp summarize_event_wait_timeout(timeout) when is_map(timeout) do
+    timeout
+    |> take_dual_keys(@event_wait_timeout_fields)
+    |> compact()
+  end
+
+  defp summarize_event_wait_timeout(_timeout) do
+    nil
+  end
+
+  defp summarize_identity(nil) do
+    nil
+  end
+
+  defp summarize_identity(identity) when is_map(identity) do
+    identity
+    |> take_dual_keys(@identity_summary_fields)
+    |> compact()
+  end
+
+  defp summarize_identity(_identity) do
+    nil
+  end
 
   defp summarize_run(nil), do: nil
 
@@ -326,6 +412,9 @@ defmodule Jizoku.ReadModel.Visibility do
   defp summarize_timeline_details(details) when is_map(details) do
     details
     |> take_dual_keys(@timeline_detail_fields)
+    |> Map.update(:correlation_summary, nil, &summarize_identity/1)
+    |> Map.update(:receipt_summary, nil, &summarize_identity/1)
+    |> Map.update(:timeout, nil, &summarize_event_wait_timeout/1)
     |> compact()
   end
 
