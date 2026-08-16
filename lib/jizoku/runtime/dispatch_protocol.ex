@@ -44,6 +44,7 @@ defmodule Jizoku.Runtime.DispatchProtocol do
           | :manual_step_resolved
           | :external_event_wait_opened
           | :external_event_received
+          | :external_event_wait_timeout_selected
           | :external_event_wait_resolved
           | :run_terminal
           | :run_indexed
@@ -66,6 +67,7 @@ defmodule Jizoku.Runtime.DispatchProtocol do
   @event_wait_entry_types [
     :external_event_wait_opened,
     :external_event_received,
+    :external_event_wait_timeout_selected,
     :external_event_wait_resolved
   ]
 
@@ -86,6 +88,7 @@ defmodule Jizoku.Runtime.DispatchProtocol do
     :manual_step_resolved,
     :external_event_wait_opened,
     :external_event_received,
+    :external_event_wait_timeout_selected,
     :external_event_wait_resolved,
     :run_terminal
   ]
@@ -178,6 +181,17 @@ defmodule Jizoku.Runtime.DispatchProtocol do
       :correlation,
       :payload,
       :idempotency_key,
+      :occurred_at
+    ],
+    external_event_wait_timeout_selected: [
+      :run_id,
+      :wait_id,
+      :timeout_runnable_key,
+      :step,
+      :event,
+      :correlation,
+      :target,
+      :selected_at,
       :occurred_at
     ],
     external_event_wait_resolved: [
@@ -353,10 +367,12 @@ defmodule Jizoku.Runtime.DispatchProtocol do
   defp normalize_attrs(attrs, type) when type in @event_wait_entry_types do
     attrs
     |> Map.update(:wait_id, nil, &normalize_thread_id/1)
+    |> Map.update(:timeout_runnable_key, nil, &normalize_thread_id/1)
     |> Map.update(:step, nil, &normalize_thread_id/1)
     |> Map.update(:event, nil, &normalize_thread_id/1)
     |> Map.update(:correlation, nil, &normalize_thread_id/1)
     |> Map.update(:action, nil, &normalize_thread_id/1)
+    |> Map.update(:target, nil, &normalize_thread_id/1)
   end
 
   defp normalize_attrs(attrs, :run_signal_received) do

@@ -652,6 +652,7 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
            ),
          {:ok, command_receipt} <- event_command_receipt(signal) do
       wait_id = map_value(manual_state.metadata, :wait_id)
+      timeout_entries = event_timeout_cancelled_entries(manual_state, signal, now)
 
       {:ok,
        [
@@ -670,8 +671,29 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
            },
            now
          )
-         | progression_entries
-       ]}
+       ] ++ timeout_entries ++ progression_entries}
+    end
+  end
+
+  defp event_timeout_cancelled_entries(manual_state, %Signal{} = signal, %DateTime{} = now) do
+    timeout = map_value(manual_state.metadata, :timeout, %{})
+
+    case map_value(timeout, :timeout_runnable_key) do
+      runnable_key when is_binary(runnable_key) and runnable_key != "" ->
+        [
+          entry!(:runnable_applied, %{
+            run_id: signal.payload.run_id,
+            runnable_key: runnable_key,
+            result: %{},
+            execution_opts: [event_wait_timeout_cancelled: true],
+            applied_at: now,
+            trace: signal.trace,
+            occurred_at: now
+          })
+        ]
+
+      _missing ->
+        []
     end
   end
 

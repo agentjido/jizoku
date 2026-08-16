@@ -713,6 +713,17 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   end
 
   defp apply_entry(
+         %Entry{type: :external_event_wait_timeout_selected, data: data} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if event_wait_timeout_selected_data?(data) do
+      projection
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
          %Entry{type: :external_event_wait_resolved, data: data} = entry,
          %__MODULE__{} = projection
        ) do
@@ -1750,18 +1761,40 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     false
   end
 
+  defp event_wait_timeout_selected_data?(data) when is_map(data) do
+    required_present?(data, [
+      :run_id,
+      :wait_id,
+      :timeout_runnable_key,
+      :step,
+      :event,
+      :correlation,
+      :target,
+      :selected_at
+    ]) and match?(%DateTime{}, Map.get(data, :selected_at))
+  end
+
+  defp event_wait_timeout_selected_data?(_data) do
+    false
+  end
+
   defp event_wait_manual_data(data) do
     %{
       run_id: data.run_id,
       step: data.step,
       kind: "event_wait",
       paused_at: data.opened_at,
-      metadata: %{
-        wait_id: data.wait_id,
-        event: data.event,
-        correlation: data.correlation,
-        output: Map.get(data, :result, %{})
-      }
+      metadata:
+        maybe_put(
+          %{
+            wait_id: data.wait_id,
+            event: data.event,
+            correlation: data.correlation,
+            output: Map.get(data, :result, %{})
+          },
+          :timeout,
+          Map.get(data, :timeout)
+        )
     }
   end
 

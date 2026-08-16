@@ -1011,6 +1011,14 @@ defmodule Jizoku.Runtime.DispatchProtocol.Projection do
 
   defp apply_completed_attempt(projection, entry, %ActionAttempt{} = attempt) do
     cond do
+      is_map(attempt.event_wait_timeout) ->
+        put_attempt(projection, %ActionAttempt{
+          attempt
+          | applied?: true,
+            guardrails: guardrails(entry.data, attempt.guardrails),
+            transition: Map.get(entry.data, :transition)
+        })
+
       terminal_attempt?(projection, attempt) ->
         add_anomaly(projection, entry, :terminal_run)
 
@@ -1086,6 +1094,7 @@ defmodule Jizoku.Runtime.DispatchProtocol.Projection do
       attempt_number: data.attempt_number,
       step: data.step,
       input: data.input,
+      event_wait_timeout: Map.get(data, :event_wait_timeout),
       trace: Map.get(data, :trace),
       scheduled_at: data.occurred_at,
       visible_at: data.visible_at,
@@ -1155,6 +1164,7 @@ defmodule Jizoku.Runtime.DispatchProtocol.Projection do
     left.run_id == right.run_id and left.idempotency_key == right.idempotency_key and
       left.attempt_number == right.attempt_number and left.step == right.step and
       left.input == right.input and left.visible_at == right.visible_at and
+      left.event_wait_timeout == right.event_wait_timeout and
       left.deadline == right.deadline
   end
 

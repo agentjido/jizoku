@@ -848,9 +848,15 @@ defmodule Jizoku.Workflow.Definition do
     }
 
     if step.module == :await_event do
-      fingerprint
-      |> Map.put(:event, Keyword.get(step.opts, :event))
-      |> Map.put(:correlation, Keyword.get(step.opts, :correlation))
+      event_fingerprint =
+        fingerprint
+        |> Map.put(:event, Keyword.get(step.opts, :event))
+        |> Map.put(:correlation, Keyword.get(step.opts, :correlation))
+
+      case canonical_event_timeout(Keyword.get(step.opts, :timeout)) do
+        nil -> event_fingerprint
+        timeout -> Map.put(event_fingerprint, :timeout, timeout)
+      end
     else
       fingerprint
     end
@@ -858,6 +864,16 @@ defmodule Jizoku.Workflow.Definition do
 
   defp canonical_dependency_list(nil), do: []
   defp canonical_dependency_list(dependencies), do: canonical_atom_list(dependencies)
+
+  defp canonical_event_timeout(nil) do
+    nil
+  end
+
+  defp canonical_event_timeout(timeout) when is_list(timeout) do
+    if Keyword.keyword?(timeout), do: Map.new(timeout), else: timeout
+  end
+
+  defp canonical_event_timeout(timeout), do: timeout
 
   defp canonical_input_mapping(nil), do: nil
 

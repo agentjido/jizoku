@@ -39,8 +39,11 @@ defmodule Jizoku.Runtime.BuiltInStep do
     event = Keyword.fetch!(opts, :event)
 
     with {:ok, correlation} <- resolve_correlation(input, Keyword.fetch!(opts, :correlation)),
-         true <- EventWait.valid_correlation_value?(correlation) do
-      {:ok, %{}, [pause: true, await_event: %{event: event, correlation: correlation}]}
+         true <- EventWait.valid_correlation_value?(correlation),
+         {:ok, timeout} <- EventWait.timeout_from_opts(opts) do
+      wait = maybe_put(%{event: event, correlation: correlation}, :timeout, timeout)
+
+      {:ok, %{}, [pause: true, await_event: wait]}
     else
       _invalid ->
         {:error,
@@ -81,5 +84,13 @@ defmodule Jizoku.Runtime.BuiltInStep do
     |> Map.put(:code, code)
     |> Map.put(:message, message)
     |> Map.put(:retryable?, false)
+  end
+
+  defp maybe_put(map, _key, nil) do
+    map
+  end
+
+  defp maybe_put(map, key, value) do
+    Map.put(map, key, value)
   end
 end

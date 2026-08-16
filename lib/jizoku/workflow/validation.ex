@@ -363,7 +363,7 @@ defmodule Jizoku.Workflow.Validation do
   defp validate_built_in_steps(errors, steps, transitions) do
     errors =
       Enum.reduce(steps, errors, fn step, acc ->
-        validate_built_in_step(acc, step)
+        validate_built_in_step(acc, step, steps)
       end)
 
     errors
@@ -374,7 +374,8 @@ defmodule Jizoku.Workflow.Validation do
     |> validate_approval_transitions(steps, transitions)
   end
 
-  defp validate_built_in_step(errors, %{module: kind} = step) when kind in @built_in_step_kinds do
+  defp validate_built_in_step(errors, %{module: kind} = step, steps)
+       when kind in @built_in_step_kinds do
     errors =
       if Keyword.has_key?(step.opts, :transaction) do
         ["built-in step #{inspect(step.name)} cannot declare a :transaction boundary" | errors]
@@ -387,16 +388,17 @@ defmodule Jizoku.Workflow.Validation do
       :log -> validate_log_step(errors, step)
       :pause -> errors
       :approval -> errors
-      :await_event -> validate_event_wait_step(errors, step)
+      :await_event -> validate_event_wait_step(errors, step, steps)
     end
   end
 
-  defp validate_built_in_step(errors, _step), do: errors
+  defp validate_built_in_step(errors, _step, _steps), do: errors
 
-  defp validate_event_wait_step(errors, step) do
+  defp validate_event_wait_step(errors, step, steps) do
     errors
     |> validate_event_wait_name(step)
     |> validate_event_wait_correlation(step)
+    |> validate_event_wait_timeout(step, steps)
   end
 
   defp validate_event_wait_name(errors, step) do
@@ -422,6 +424,28 @@ defmodule Jizoku.Workflow.Validation do
         "built-in step #{inspect(step.name)} requires :correlation to be a storage-safe string or non-empty input path"
         | errors
       ]
+    end
+  end
+
+  defp validate_event_wait_timeout(errors, step, steps) do
+    case EventWait.timeout_from_opts(step.opts) do
+      {:ok, nil} ->
+        errors
+
+      {:ok, %{on_timeout: target}} ->
+        step_names = MapSet.new(steps, & &1.name)
+
+        if target != step.name and (target == :complete or MapSet.member?(step_names, target)) do
+          errors
+        else
+          [
+            "built-in step #{inspect(step.name)} defines an invalid :timeout target #{inspect(target)}"
+            | errors
+          ]
+        end
+
+      {:error, _reason} ->
+        ["built-in step #{inspect(step.name)} defines an invalid :timeout policy" | errors]
     end
   end
 
@@ -855,11 +879,19 @@ defmodule Jizoku.Workflow.Validation do
         definition.transitions
         |> Enum.map(& &1.to)
         |> MapSet.new()
+        |> MapSet.union(event_timeout_targets(definition.steps))
 
       definition.steps
       |> Enum.map(& &1.name)
       |> Enum.reject(&MapSet.member?(transition_targets, &1))
     end
+  end
+
+  defp event_timeout_targets(steps) do
+    steps
+    |> Enum.map(&EventWait.timeout_target(&1.opts))
+    |> Enum.reject(&is_nil/1)
+    |> MapSet.new()
   end
 
   defp dependency_mode?(steps) when is_list(steps) do
