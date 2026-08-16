@@ -78,6 +78,7 @@ defmodule MinimalHostApp.WorkflowRuns do
           Jizoku.ReadModel.Explanation.Diagnostic.t()
 
   @type listing_result :: Jizoku.ReadModel.Listing.Summary.t()
+  @type listing_page :: Jizoku.ReadModel.Listing.Page.t()
 
   alias MinimalHostApp.Steps
   alias Jizoku.Runtime.Signal
@@ -118,6 +119,26 @@ defmodule MinimalHostApp.WorkflowRuns do
           {:ok, run_result()} | {:error, term()}
   def start_dependency_recovery(attrs) when is_map(attrs) do
     Jizoku.start(MinimalHostApp.Workflows.DependencyRecovery, :dependency_recovery, attrs)
+  end
+
+  @doc """
+  Starts a dependency run with host-approved operational search attributes.
+  """
+  @spec start_indexed_dependency_recovery(dependency_recovery_attrs(), keyword()) ::
+          {:ok, run_result()} | {:error, term()}
+  def start_indexed_dependency_recovery(attrs, opts \\ [])
+      when is_map(attrs) and is_list(opts) do
+    search_attributes = %{
+      "account_id" => Map.fetch!(attrs, :account_id),
+      "workflow_kind" => "dependency_recovery"
+    }
+
+    Jizoku.start(
+      MinimalHostApp.Workflows.DependencyRecovery,
+      :dependency_recovery,
+      attrs,
+      Keyword.put(opts, :search_attributes, search_attributes)
+    )
   end
 
   @spec start_manual_approval(manual_approval_attrs()) ::
@@ -264,6 +285,31 @@ defmodule MinimalHostApp.WorkflowRuns do
   @spec list_runs(keyword()) :: {:ok, [listing_result()]} | {:error, term()}
   def list_runs(opts \\ []) do
     Jizoku.list_runs([], opts)
+  end
+
+  @doc """
+  Returns one operator-redacted dashboard page for an approved account filter.
+
+  Pass `:first` and the prior page `:after` cursor in `opts`; remaining options
+  are trusted runtime overrides owned by the host boundary.
+  """
+  @spec page_dependency_recovery_runs(String.t(), keyword()) ::
+          {:ok, listing_page()} | {:error, term()}
+  def page_dependency_recovery_runs(account_id, opts \\ [])
+      when is_binary(account_id) and account_id != "" and is_list(opts) do
+    {first, runtime_opts} = Keyword.pop(opts, :first, 20)
+    {cursor, runtime_opts} = Keyword.pop(runtime_opts, :after)
+
+    filters = [
+      workflow: MinimalHostApp.Workflows.DependencyRecovery,
+      attributes: %{"account_id" => account_id},
+      first: first
+    ]
+
+    filters = if is_binary(cursor), do: Keyword.put(filters, :after, cursor), else: filters
+    runtime_opts = Keyword.put_new(runtime_opts, :visibility_policy, :operator)
+
+    Jizoku.list_runs(filters, runtime_opts)
   end
 
   @spec list_daily_digest_runs() :: {:ok, [listing_result()]} | {:error, term()}

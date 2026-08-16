@@ -6,7 +6,7 @@ defmodule Jizoku.Persistence.Schema do
   host migrations and live-database diagnostics use the same required tables.
   """
 
-  @baseline 1
+  @baseline 2
   @timestamp %{type: "timestamp", nullable?: false, precision: 6}
   @tables %{
     "jizoku_journal_threads" => %{
@@ -49,6 +49,32 @@ defmodule Jizoku.Persistence.Schema do
         "updated_at" => @timestamp
       },
       primary_key: ["key_hash"]
+    },
+    "jizoku_run_search" => %{
+      columns: %{
+        "partition_key" => %{type: "text", nullable?: false},
+        "run_id" => %{type: "text", nullable?: false},
+        "partition" => %{type: "text", nullable?: true},
+        "workflow" => %{type: "text", nullable?: false},
+        "status" => %{type: "text", nullable?: false},
+        "terminal_status" => %{type: "text", nullable?: true},
+        "definition_version" => %{type: "text", nullable?: true},
+        "search_attributes" => %{type: "jsonb", nullable?: false},
+        "started_at" => @timestamp,
+        "terminal_at" => %{type: "timestamp", nullable?: true, precision: 6},
+        "thread_revision" => %{type: "int8", nullable?: false},
+        "inserted_at" => @timestamp,
+        "updated_at" => @timestamp
+      },
+      primary_key: ["partition_key", "run_id"],
+      indexes: [
+        ["partition_key", "started_at", "run_id"],
+        ["partition_key", "workflow", "started_at", "run_id"],
+        ["partition_key", "status", "started_at", "run_id"],
+        ["partition_key", "definition_version", "started_at", "run_id"],
+        ["partition_key", "terminal_at", "run_id"],
+        ["search_attributes"]
+      ]
     }
   }
 

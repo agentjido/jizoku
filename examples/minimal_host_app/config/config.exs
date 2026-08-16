@@ -22,6 +22,10 @@ config :minimal_host_app, MinimalHostApp.JizokuDeliveryAdapter,
 
 config :jizoku,
   repo: MinimalHostApp.Repo,
+  search_attribute_schema: %{
+    "account_id" => :string,
+    "workflow_kind" => :string
+  },
   workflow_versions: %{
     MinimalHostApp.Workflows.VersionedRouting => %{
       "v1" => MinimalHostApp.Workflows.VersionedRouting.V1,

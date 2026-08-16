@@ -11,7 +11,7 @@ defmodule Jizoku.Operations.SchemaCheckTest do
 
     assert %{
              status: :current,
-             baseline: 1,
+             baseline: 2,
              prefix: "public",
              missing: [],
              mismatched: []
@@ -194,7 +194,8 @@ defmodule Jizoku.Operations.SchemaCheckTest do
     indexes =
       Enum.flat_map(Schema.tables(), fn {table, table_spec} ->
         [[table, true, true, false, table_spec.primary_key]] ++
-          Enum.map(Map.get(table_spec, :unique, []), &[table, false, true, false, &1])
+          Enum.map(Map.get(table_spec, :unique, []), &[table, false, true, false, &1]) ++
+          Enum.map(Map.get(table_spec, :indexes, []), &[table, false, false, false, &1])
       end)
 
     foreign_keys = [

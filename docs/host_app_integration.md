@@ -235,6 +235,97 @@ inputs, outputs, attempts, or claim metadata. Dashboards can call
 `inspect_run(run_id, partition: partition, queue: queue, include_history: true)` or
 `inspect_run_graph(run_id, partition: partition, queue: queue)` for detail views.
 
+### Search attributes and cursor pages
+
+Search attributes are a bounded operational index. They are separate from run
+input, context, results, errors, command metadata, and arbitrary tags. Define a
+host-owned allowlist before attaching or filtering attributes:
+
+```elixir
+config :jizoku,
+  repo: MyApp.Repo,
+  search_attribute_schema: %{
+    "account_id" => :string,
+    "region" => :string,
+    "priority" => :integer,
+    "active" => :boolean,
+    "labels" => {:list, :string}
+  }
+```
+
+Start and update runs with string-keyed, JSON-safe values from that schema:
+
+```elixir
+{:ok, run} =
+  Jizoku.start(MyWorkflow, input,
+    search_attributes: %{"account_id" => "acct_123", "region" => "eu-west"}
+  )
+
+{:ok, run} =
+  Jizoku.update_search_attributes(
+    run.run_id,
+    %{"priority" => 3},
+    idempotency_key: "support:set-priority:3"
+  )
+```
+
+Updates append journal facts and use optimistic run fencing. Reusing an
+idempotency key with the exact same patch is a safe retry; reusing it with a
+different patch fails closed.
+
+Legacy `list_runs/2` calls still return a list. Passing `first:` or `after:`
+returns a cursor page:
+
+```elixir
+{:ok, page} =
+  Jizoku.list_runs(
+    workflow: MyWorkflow,
+    status: :waiting,
+    attributes: %{"account_id" => "acct_123"},
+    started_after: ~U[2026-07-01 00:00:00Z],
+    first: 50
+  )
+
+{:ok, next_page} =
+  Jizoku.list_runs(
+    workflow: MyWorkflow,
+    status: :waiting,
+    attributes: %{"account_id" => "acct_123"},
+    started_after: ~U[2026-07-01 00:00:00Z],
+    first: 50,
+    after: page.next_cursor
+  )
+```
+
+Cursors expire after one hour and are bound to the same normalized filters and
+selected storage partition. A `partition:` filter only narrows the already
+selected partition; it never switches storage or searches another partition.
+Authorize the partition before calling Jizoku and reuse the same filters for
+the next page.
+
+External and operator listing views redact search attributes after applying
+the filter. `visibility_policy: :auditor` preserves them and must remain behind
+a privileged host boundary. Search attributes are discovery metadata, not an
+authorization policy, and should never contain secrets, credentials, payloads,
+or unbounded high-cardinality values.
+
+Postgres-backed hosts should apply the additive run-search migration. New run
+facts update the Ecto projection transactionally; journal facts remain the
+source of truth, and other storage adapters use the catalog fallback. After an
+upgrade, rebuild each host-owned namespace explicitly:
+
+```elixir
+{:ok, _result} = Jizoku.rebuild_run_search_projection()
+{:ok, _result} = Jizoku.rebuild_run_search_projection(partition: "tenant_acme")
+```
+
+The rebuild refreshes only the selected partition with idempotent batched
+upserts and verifies that source revisions remained stable. Concurrently
+created rows are preserved. Enumerating all configured partitions stays a host
+responsibility; Jizoku never scans them implicitly. Rollback is safe because
+the Ecto table is a derived projection: callers fall back to the durable catalog
+and run journals when the additive table is unavailable or incomplete.
+
 Do not serialize inspection or graph detail directly to untrusted clients.
 Host apps should authorize the caller, select only the fields the view needs,
 and redact host-domain inputs, outputs, errors, manual metadata, idempotency

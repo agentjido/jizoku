@@ -20,6 +20,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
   alias Oban.Job
   alias Jizoku.ReadModel.Inspection.Snapshot
   alias Jizoku.ReadModel.Listing.Summary
+  alias Jizoku.ReadModel.Listing.Page
   alias Jizoku.Runtime.Signal
 
   test "public test runtime drains the host dependency workflow in memory" do
@@ -785,6 +786,59 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     assert graph_nodes["check_gateway_status"].deadline.status == :on_time
     assert graph_nodes["check_gateway_status"].deadline.escalation == %{outcome: :diagnostic}
+  end
+
+  test "pages approved search attributes through the host dashboard boundary" do
+    account_id = "acct_dashboard_#{System.unique_integer([:positive])}"
+
+    attrs = fn attempt_id ->
+      %{
+        account_id: account_id,
+        invoice_id: "invoice_#{attempt_id}",
+        attempt_id: attempt_id
+      }
+    end
+
+    assert {:ok, first_run} =
+             WorkflowRuns.start_indexed_dependency_recovery(attrs.("attempt_a"),
+               queue: "minimal-host-dashboard"
+             )
+
+    assert {:ok, second_run} =
+             WorkflowRuns.start_indexed_dependency_recovery(attrs.("attempt_b"),
+               queue: "minimal-host-dashboard"
+             )
+
+    assert {:ok, %Page{items: [first_item], next_cursor: cursor}} =
+             WorkflowRuns.page_dependency_recovery_runs(account_id, first: 1)
+
+    assert first_item.search_attributes == %{}
+    assert is_binary(cursor)
+
+    assert {:ok, %Page{items: [second_item], next_cursor: nil}} =
+             WorkflowRuns.page_dependency_recovery_runs(account_id, first: 1, after: cursor)
+
+    assert second_item.search_attributes == %{}
+
+    assert MapSet.new([first_item.run_id, second_item.run_id]) ==
+             MapSet.new([first_run.run_id, second_run.run_id])
+
+    assert {:ok, %Page{items: auditor_items}} =
+             Jizoku.list_runs(
+               [
+                 workflow: DependencyRecovery,
+                 attributes: %{"account_id" => account_id},
+                 first: 2
+               ],
+               visibility_policy: :auditor
+             )
+
+    assert Enum.all?(auditor_items, fn item ->
+             item.search_attributes == %{
+               "account_id" => account_id,
+               "workflow_kind" => "dependency_recovery"
+             }
+           end)
   end
 
   test "inspects a started run through the host boundary" do

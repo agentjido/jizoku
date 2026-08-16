@@ -185,6 +185,68 @@ defmodule Jizoku.ReadModel.RunSearchEctoTest do
     assert listed.run_id == matching.run_id
   end
 
+  test "rebuilds missing rows from journals within each explicit partition" do
+    assert {:ok, legacy_run} =
+             Jizoku.start(
+               Workflow,
+               :manual,
+               %{},
+               runtime_options(search_attributes: %{"account_id" => "acct_legacy"})
+             )
+
+    assert {:ok, partitioned_run} =
+             Jizoku.start(
+               Workflow,
+               :manual,
+               %{},
+               runtime_options(
+                 partition: "tenant_acme",
+                 search_attributes: %{"account_id" => "acct_partitioned"}
+               )
+             )
+
+    Repo.delete_all(RunSearch)
+
+    assert {:ok, %{partition: nil, rebuilt: 1, catalog_revision: catalog_revision}} =
+             Jizoku.rebuild_run_search_projection(journal_storage: @storage)
+
+    assert catalog_revision > 0
+
+    assert %RunSearch{search_attributes: %{"account_id" => "acct_legacy"}} =
+             Repo.get_by!(RunSearch, partition_key: "", run_id: legacy_run.run_id)
+
+    Repo.update_all(
+      from(run in RunSearch, where: run.partition_key == "" and run.run_id == ^legacy_run.run_id),
+      set: [status: "stale", search_attributes: %{}]
+    )
+
+    assert {:ok, %{partition: nil, rebuilt: 1}} =
+             Jizoku.rebuild_run_search_projection(journal_storage: @storage)
+
+    assert %RunSearch{status: "running", search_attributes: %{"account_id" => "acct_legacy"}} =
+             Repo.get_by!(RunSearch, partition_key: "", run_id: legacy_run.run_id)
+
+    refute Repo.get_by(RunSearch,
+             partition_key: "tenant_acme",
+             run_id: partitioned_run.run_id
+           )
+
+    assert {:ok,
+            %{partition: "tenant_acme", rebuilt: 1, catalog_revision: partition_catalog_revision}} =
+             Jizoku.rebuild_run_search_projection(
+               journal_storage: @storage,
+               partition: "tenant_acme"
+             )
+
+    assert partition_catalog_revision > 0
+
+    assert %RunSearch{search_attributes: %{"account_id" => "acct_partitioned"}} =
+             Repo.get_by!(RunSearch,
+               partition_key: "tenant_acme",
+               run_id: partitioned_run.run_id
+             )
+  end
+
   defp runtime_options(overrides \\ []) do
     Keyword.merge(
       [

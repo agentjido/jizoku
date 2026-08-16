@@ -178,6 +178,11 @@ defmodule MinimalHostApp.Smoke do
           },
           dynamic_work_inspection: map(),
           graph_mutation_inspection: map(),
+          run_search_page: %{
+            first: Jizoku.ReadModel.Listing.Page.t(),
+            second: Jizoku.ReadModel.Listing.Page.t(),
+            rebuild: map()
+          },
           journal_cron_digest: Jizoku.ReadModel.Inspection.Snapshot.t(),
           command_signals: map(),
           jido_command_signals: map(),
@@ -213,6 +218,7 @@ defmodule MinimalHostApp.Smoke do
     journal_command_signals = run_journal_command_signals!()
     dynamic_work_inspection = run_dynamic_work_inspection!()
     graph_mutation_inspection = run_graph_mutation_inspection!()
+    run_search_page = run_search_page!()
     journal_cron_digest = run_journal_cron_digest!()
     command_signals = run_signal_construction!()
     jido_command_signals = run_jido_signal_adapter!(command_signals)
@@ -245,6 +251,7 @@ defmodule MinimalHostApp.Smoke do
         journal_command_signals: journal_command_signals,
         dynamic_work_inspection: dynamic_work_inspection,
         graph_mutation_inspection: graph_mutation_inspection,
+        run_search_page: run_search_page,
         journal_cron_digest: journal_cron_digest,
         command_signals: command_signals,
         jido_command_signals: jido_command_signals,
@@ -259,6 +266,56 @@ defmodule MinimalHostApp.Smoke do
     else
       {:error, reason} ->
         raise "cron smoke test failed: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
+  Exercises indexed attributes, rebuild, visibility, and cursor paging through
+  the sample host dashboard boundary.
+  """
+  @spec run_search_page!() :: %{
+          first: Jizoku.ReadModel.Listing.Page.t(),
+          second: Jizoku.ReadModel.Listing.Page.t(),
+          rebuild: map()
+        }
+  def run_search_page! do
+    RuntimeHarness.ensure_runtime_started()
+    unique = Ecto.UUID.generate()
+    account_id = "acct_search_#{unique}"
+    queue = "minimal-host-search-#{unique}"
+
+    attrs = fn attempt_id ->
+      %{
+        account_id: account_id,
+        invoice_id: "invoice_#{attempt_id}",
+        attempt_id: attempt_id
+      }
+    end
+
+    with {:ok, first_run} <-
+           WorkflowRuns.start_indexed_dependency_recovery(attrs.("first"), queue: queue),
+         {:ok, second_run} <-
+           WorkflowRuns.start_indexed_dependency_recovery(attrs.("second"), queue: queue),
+         {:ok, rebuild} <- Jizoku.rebuild_run_search_projection(),
+         {:ok, %Jizoku.ReadModel.Listing.Page{items: [first_item]} = first_page} <-
+           WorkflowRuns.page_dependency_recovery_runs(account_id, first: 1),
+         cursor when is_binary(cursor) <- first_page.next_cursor,
+         {:ok,
+          %Jizoku.ReadModel.Listing.Page{items: [second_item], next_cursor: nil} = second_page} <-
+           WorkflowRuns.page_dependency_recovery_runs(account_id, first: 1, after: cursor) do
+      expected_ids = MapSet.new([first_run.run_id, second_run.run_id])
+      listed_ids = MapSet.new([first_item.run_id, second_item.run_id])
+
+      unless listed_ids == expected_ids and
+               first_item.search_attributes == %{} and
+               second_item.search_attributes == %{} do
+        raise "unexpected run-search dashboard page"
+      end
+
+      %{first: first_page, second: second_page, rebuild: rebuild}
+    else
+      {:error, reason} -> raise "run-search smoke test failed: #{inspect(reason)}"
+      invalid -> raise "run-search smoke test returned invalid data: #{inspect(invalid)}"
     end
   end
 

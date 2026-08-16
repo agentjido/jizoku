@@ -18,7 +18,8 @@ defmodule Jizoku.RebrandContractTest do
     assert Jizoku.Persistence.Schema.table_names() == [
              "jizoku_journal_checkpoints",
              "jizoku_journal_entries",
-             "jizoku_journal_threads"
+             "jizoku_journal_threads",
+             "jizoku_run_search"
            ]
 
     assert [migration] =
