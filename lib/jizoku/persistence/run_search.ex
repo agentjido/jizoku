@@ -24,6 +24,8 @@ defmodule Jizoku.Persistence.RunSearch do
     field(:search_attributes, :map, default: %{})
     field(:started_at, :utc_datetime_usec)
     field(:terminal_at, :utc_datetime_usec)
+    field(:archived_at, :utc_datetime_usec)
+    field(:archive_reason, :string)
     field(:thread_revision, :integer)
 
     timestamps()

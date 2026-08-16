@@ -199,7 +199,7 @@ defmodule Jizoku.ReadModel.Visibility do
   defp redact_view(view, :auditor), do: view
 
   defp redact_view(%Summary{} = summary, _scope) do
-    %Summary{summary | search_attributes: %{}}
+    %Summary{summary | search_attributes: %{}, archive_reason: nil}
   end
 
   defp redact_view(%Snapshot{} = snapshot, _scope) do
@@ -208,6 +208,7 @@ defmodule Jizoku.ReadModel.Visibility do
       | input: nil,
         context: %{},
         search_attributes: %{},
+        archive_reason: nil,
         terminal_error: nil,
         parent_run: summarize_run(snapshot.parent_run),
         child_runs: Enum.map(snapshot.child_runs, &summarize_run/1),

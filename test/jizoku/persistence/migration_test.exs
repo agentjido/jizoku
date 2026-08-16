@@ -28,7 +28,7 @@ defmodule Jizoku.Persistence.MigrationTest do
     migrations_path = Application.app_dir(:jizoku, "priv/repo/migrations")
     unload_migration_modules()
 
-    assert [_journal_version, _search_version] =
+    assert [_journal_version, _search_version, _archive_version] =
              run_migrations_without_module_conflict_warning(migrations_path, :up)
 
     refute table_exists?("jizoku_runs")
@@ -38,8 +38,10 @@ defmodule Jizoku.Persistence.MigrationTest do
     assert table_exists?("jizoku_journal_entries")
     assert table_exists?("jizoku_journal_checkpoints")
     assert table_exists?("jizoku_run_search")
+    assert column_exists?("jizoku_run_search", "archived_at")
+    assert column_exists?("jizoku_run_search", "archive_reason")
 
-    assert [_search_version, _journal_version] =
+    assert [_archive_version, _search_version, _journal_version] =
              run_migrations_without_module_conflict_warning(migrations_path, :down)
 
     refute table_exists?("jizoku_runs")
@@ -64,7 +66,8 @@ defmodule Jizoku.Persistence.MigrationTest do
     Enum.each(
       [
         Jizoku.Repo.Migrations.CreateJizokuSchema,
-        Jizoku.Repo.Migrations.AddJizokuRunSearchProjection
+        Jizoku.Repo.Migrations.AddJizokuRunSearchProjection,
+        Jizoku.Repo.Migrations.AddJizokuRunArchives
       ],
       fn module ->
         :code.purge(module)
@@ -90,5 +93,18 @@ defmodule Jizoku.Persistence.MigrationTest do
     %{rows: [[result]]} = SQL.query!(MigrationRepo, query, ["public.#{table_name}"])
 
     result == table_name
+  end
+
+  defp column_exists?(table_name, column_name) do
+    query = """
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+    )
+    """
+
+    %{rows: [[result]]} = SQL.query!(MigrationRepo, query, [table_name, column_name])
+    result
   end
 end

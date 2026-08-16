@@ -240,12 +240,25 @@ defmodule MinimalHostApp.WorkflowRuns do
     Jizoku.explain_run(run_id)
   end
 
-  @spec cancel(Ecto.UUID.t()) :: {:ok, run_result()} | {:error, term()}
-  def cancel(run_id) do
+  @spec cancel(Ecto.UUID.t(), keyword()) :: {:ok, run_result()} | {:error, term()}
+  def cancel(run_id, opts \\ []) do
     with {:ok, signal} <-
            Signal.cancel_run(run_id, metadata: %{source: "minimal_host_app.workflow_runs"}) do
-      Jizoku.apply_signal(signal)
+      Jizoku.apply_signal(signal, opts)
     end
+  end
+
+  @doc "Archives one terminal run with a host-owned operational reason."
+  @spec archive_for_retention_hold(Ecto.UUID.t(), keyword()) ::
+          {:ok, run_result()} | {:error, term()}
+  def archive_for_retention_hold(run_id, opts \\ []) do
+    Jizoku.archive_run(run_id, Keyword.put(opts, :reason, "retention_hold"))
+  end
+
+  @doc "Restores one archived terminal run to the default dashboard listing."
+  @spec unarchive(Ecto.UUID.t(), keyword()) :: {:ok, run_result()} | {:error, term()}
+  def unarchive(run_id, opts \\ []) do
+    Jizoku.unarchive_run(run_id, opts)
   end
 
   @spec resume(Ecto.UUID.t()) :: {:ok, run_result()} | {:error, term()}
@@ -310,6 +323,20 @@ defmodule MinimalHostApp.WorkflowRuns do
     runtime_opts = Keyword.put_new(runtime_opts, :visibility_policy, :operator)
 
     Jizoku.list_runs(filters, runtime_opts)
+  end
+
+  @doc "Lists archived dependency runs for one host-approved account filter."
+  @spec list_archived_dependency_recovery_runs(String.t(), keyword()) ::
+          {:ok, [listing_result()]} | {:error, term()}
+  def list_archived_dependency_recovery_runs(account_id, opts \\ [])
+      when is_binary(account_id) and account_id != "" and is_list(opts) do
+    filters = [
+      workflow: MinimalHostApp.Workflows.DependencyRecovery,
+      attributes: %{"account_id" => account_id},
+      archived: :only
+    ]
+
+    Jizoku.list_runs(filters, Keyword.put_new(opts, :visibility_policy, :operator))
   end
 
   @spec list_daily_digest_runs() :: {:ok, [listing_result()]} | {:error, term()}

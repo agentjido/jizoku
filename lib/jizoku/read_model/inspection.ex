@@ -208,6 +208,9 @@ defmodule Jizoku.ReadModel.Inspection do
       terminal_at: workflow_projection.terminal_at,
       terminal_error:
         public_terminal_error(WorkflowAgent.Projection.terminal_error(workflow_projection)),
+      archived?: WorkflowAgent.Projection.archived?(workflow_projection),
+      archived_at: Map.get(workflow_projection, :archived_at),
+      archive_reason: Map.get(workflow_projection, :archive_reason),
       deadline:
         if(terminal?,
           do: nil,

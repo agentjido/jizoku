@@ -56,7 +56,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   alias Jizoku.Runtime.Trace
   alias Jizoku.Runtime.WorkflowAgent.Projection.GraphState
 
-  @checkpoint_version 5
+  @checkpoint_version 6
   @checkpoint_version_key "jizoku.workflow_projection.checkpoint_version"
   @command_history_count_key "jizoku.workflow_projection.command_history_count"
   @event_waits_key "jizoku.workflow_projection.event_waits"
@@ -119,6 +119,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
           terminal_status: atom() | nil,
           terminal_at: DateTime.t() | nil,
           terminal_error: map() | nil,
+          archived_at: DateTime.t() | nil,
+          archive_reason: String.t() | nil,
           anomalies: [anomaly()]
         }
 
@@ -154,6 +156,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
             terminal_status: nil,
             terminal_at: nil,
             terminal_error: nil,
+            archived_at: nil,
+            archive_reason: nil,
             anomalies: []
 
   @doc false
@@ -200,6 +204,24 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   @doc false
   @spec terminal_error(t()) :: map() | nil
   def terminal_error(%__MODULE__{terminal_error: terminal_error}), do: terminal_error
+
+  @doc false
+  @spec archived?(t()) :: boolean()
+  def archived?(%__MODULE__{} = projection) do
+    match?(%DateTime{}, Map.get(projection, :archived_at))
+  end
+
+  @doc false
+  @spec archive(t()) :: %{archived_at: DateTime.t(), reason: String.t()} | nil
+  def archive(%__MODULE__{} = projection) do
+    case {Map.get(projection, :archived_at), Map.get(projection, :archive_reason)} do
+      {%DateTime{} = archived_at, reason} when is_binary(reason) ->
+        %{archived_at: archived_at, reason: reason}
+
+      _not_archived ->
+        nil
+    end
+  end
 
   @doc false
   @spec manual_state(t()) :: manual_state() | nil
@@ -519,7 +541,9 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
           :continuation_request,
           :continuation_origin,
           :definition_migrations,
-          :context_migrated_runnable_keys
+          :context_migrated_runnable_keys,
+          :archived_at,
+          :archive_reason
         ],
         &Map.has_key?(projection, &1)
       ) and
@@ -558,6 +582,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     |> Map.put(:dynamic_work, dynamic_work)
     |> Map.put(:graph, graph)
     |> Map.put_new(:terminal_error, nil)
+    |> Map.put_new(:archived_at, nil)
+    |> Map.put_new(:archive_reason, nil)
     |> Map.put_new(:trace, nil)
   end
 
@@ -584,6 +610,52 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     else
       add_anomaly(projection, entry, :malformed_entry)
     end
+  end
+
+  defp apply_entry(
+         %Entry{type: :run_archived, data: data} = entry,
+         %__MODULE__{terminal_status: terminal_status} = projection
+       )
+       when terminal_status != nil do
+    cond do
+      not archive_data?(projection, data) ->
+        add_anomaly(projection, entry, :malformed_entry)
+
+      archived?(projection) ->
+        add_anomaly(projection, entry, :invalid_archive_transition)
+
+      true ->
+        %__MODULE__{
+          projection
+          | archived_at: Map.get(data, :occurred_at, entry.occurred_at),
+            archive_reason: Map.fetch!(data, :reason)
+        }
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: :run_unarchived, data: data} = entry,
+         %__MODULE__{terminal_status: terminal_status} = projection
+       )
+       when terminal_status != nil do
+    cond do
+      not archive_identity_data?(projection, data) ->
+        add_anomaly(projection, entry, :malformed_entry)
+
+      not archived?(projection) ->
+        add_anomaly(projection, entry, :invalid_archive_transition)
+
+      true ->
+        %__MODULE__{projection | archived_at: nil, archive_reason: nil}
+    end
+  end
+
+  defp apply_entry(
+         %Entry{type: type} = entry,
+         %__MODULE__{} = projection
+       )
+       when type in [:run_archived, :run_unarchived] do
+    add_anomaly(projection, entry, :invalid_archive_transition)
   end
 
   defp apply_entry(
@@ -862,6 +934,20 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     |> Map.update(@command_history_count_key, 1, &(&1 + 1))
   end
 
+  defp archive_data?(%__MODULE__{} = projection, data) do
+    archive_identity_data?(projection, data) and
+      non_empty_binary?(Map.get(data, :reason))
+  end
+
+  defp archive_identity_data?(%__MODULE__{} = projection, data) when is_map(data) do
+    Map.get(data, :run_id) == projection.run_id and
+      match?(%DateTime{}, Map.get(data, :occurred_at))
+  end
+
+  defp archive_identity_data?(%__MODULE__{}, _data) do
+    false
+  end
+
   defp definition_migration_data?(data) when is_map(data) do
     required_present?(data, [
       :run_id,
@@ -962,8 +1048,17 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
       valid_event_waits?(Map.get(projection, @event_waits_key)) and
       valid_search_attributes?(Map.get(projection, @search_attributes_key)) and
       valid_search_attribute_updates?(Map.get(projection, @search_attribute_updates_key)) and
+      valid_archive_state?(projection) and
       Outbox.valid_projection?(Map.get(projection, @jido_outbox_key)) and
       outbox_anomalies_consistent?(projection)
+  end
+
+  defp valid_archive_state?(projection) do
+    case {Map.get(projection, :archived_at), Map.get(projection, :archive_reason)} do
+      {nil, nil} -> true
+      {%DateTime{}, reason} -> non_empty_binary?(reason)
+      _invalid -> false
+    end
   end
 
   defp outbox_anomalies_consistent?(%{anomalies: anomalies} = projection)

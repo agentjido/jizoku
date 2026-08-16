@@ -150,6 +150,8 @@ defmodule Jizoku.ReadModel.RunSearch.Rebuilder do
           search_attributes: fragment("EXCLUDED.search_attributes"),
           started_at: fragment("EXCLUDED.started_at"),
           terminal_at: fragment("EXCLUDED.terminal_at"),
+          archived_at: fragment("EXCLUDED.archived_at"),
+          archive_reason: fragment("EXCLUDED.archive_reason"),
           thread_revision: fragment("EXCLUDED.thread_revision"),
           updated_at: fragment("EXCLUDED.updated_at")
         ]
