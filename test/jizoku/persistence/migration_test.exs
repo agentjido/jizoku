@@ -28,7 +28,7 @@ defmodule Jizoku.Persistence.MigrationTest do
     migrations_path = Application.app_dir(:jizoku, "priv/repo/migrations")
     unload_migration_modules()
 
-    assert [_journal_version, _search_version, _archive_version] =
+    assert [_journal_version, _search_version, _archive_version, _retention_version] =
              run_migrations_without_module_conflict_warning(migrations_path, :up)
 
     refute table_exists?("jizoku_runs")
@@ -40,8 +40,10 @@ defmodule Jizoku.Persistence.MigrationTest do
     assert table_exists?("jizoku_run_search")
     assert column_exists?("jizoku_run_search", "archived_at")
     assert column_exists?("jizoku_run_search", "archive_reason")
+    assert column_exists?("jizoku_journal_entries", "retention_run_id")
+    assert table_exists?("jizoku_retention_receipts")
 
-    assert [_archive_version, _search_version, _journal_version] =
+    assert [_retention_version, _archive_version, _search_version, _journal_version] =
              run_migrations_without_module_conflict_warning(migrations_path, :down)
 
     refute table_exists?("jizoku_runs")
@@ -51,6 +53,7 @@ defmodule Jizoku.Persistence.MigrationTest do
     refute table_exists?("jizoku_journal_entries")
     refute table_exists?("jizoku_journal_checkpoints")
     refute table_exists?("jizoku_run_search")
+    refute table_exists?("jizoku_retention_receipts")
   end
 
   defp repo_config do
@@ -67,7 +70,8 @@ defmodule Jizoku.Persistence.MigrationTest do
       [
         Jizoku.Repo.Migrations.CreateJizokuSchema,
         Jizoku.Repo.Migrations.AddJizokuRunSearchProjection,
-        Jizoku.Repo.Migrations.AddJizokuRunArchives
+        Jizoku.Repo.Migrations.AddJizokuRunArchives,
+        Jizoku.Repo.Migrations.AddJizokuRetention
       ],
       fn module ->
         :code.purge(module)

@@ -6,6 +6,7 @@ defmodule Jizoku.Runtime.Journal.Storage.EctoTest do
   alias Jizoku.Persistence.JournalCheckpoint
   alias Jizoku.Persistence.JournalEntry
   alias Jizoku.Persistence.JournalThread
+  alias Jizoku.Persistence.RetentionReceipt
   alias Jizoku.Runtime.DispatchProtocol
   alias Jizoku.Runtime.Journal
   alias Jizoku.Runtime.Journal.Storage
@@ -138,6 +139,7 @@ defmodule Jizoku.Runtime.Journal.Storage.EctoTest do
   @visible_at ~U[2026-05-14 00:00:10Z]
 
   setup do
+    Repo.delete_all(RetentionReceipt)
     Repo.delete_all(JournalCheckpoint)
     Repo.delete_all(JournalEntry)
     Repo.delete_all(JournalThread)
@@ -162,6 +164,11 @@ defmodule Jizoku.Runtime.Journal.Storage.EctoTest do
 
     assert {:ok, %{rev: 2, entries: [^stored_first, ^stored_second]}} =
              @storage_adapter.load_thread(@thread_id, repo: Repo)
+
+    assert Repo.aggregate(
+             from(entry in JournalEntry, where: is_nil(entry.retention_run_id)),
+             :count
+           ) == 2
   end
 
   test "rejects stale expected revisions without appending" do
@@ -446,6 +453,13 @@ defmodule Jizoku.Runtime.Journal.Storage.EctoTest do
 
     assert {:ok, %{rev: 1}} = Journal.append_entries(@storage, [scheduled_entry])
     assert {:ok, [^scheduled_entry]} = Journal.load_entries(@storage, {:dispatch, "default"})
+
+    assert %JournalEntry{retention_run_id: @run_id} =
+             Repo.one!(
+               from(entry in JournalEntry,
+                 where: entry.thread_id == ^Journal.thread_id({:dispatch, "default"})
+               )
+             )
   end
 
   test "requires a repo option at the Jizoku storage boundary" do

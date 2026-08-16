@@ -6,7 +6,7 @@ defmodule Jizoku.Persistence.Schema do
   host migrations and live-database diagnostics use the same required tables.
   """
 
-  @baseline 3
+  @baseline 4
   @timestamp %{type: "timestamp", nullable?: false, precision: 6}
   @tables %{
     "jizoku_journal_threads" => %{
@@ -27,11 +27,13 @@ defmodule Jizoku.Persistence.Schema do
         "thread_id" => %{type: "text", nullable?: false},
         "seq" => %{type: "int8", nullable?: false},
         "entry" => %{type: "bytea", nullable?: false},
+        "retention_run_id" => %{type: "text", nullable?: true},
         "inserted_at" => @timestamp,
         "updated_at" => @timestamp
       },
       primary_key: ["id"],
       unique: [["thread_id", "seq"]],
+      indexes: [["thread_id", "retention_run_id"]],
       foreign_keys: [
         %{
           columns: ["thread_id"],
@@ -77,6 +79,26 @@ defmodule Jizoku.Persistence.Schema do
         ["partition_key", "terminal_at", "run_id"],
         ["partition_key", "archived_at", "started_at", "run_id"],
         ["search_attributes"]
+      ]
+    },
+    "jizoku_retention_receipts" => %{
+      columns: %{
+        "partition_key" => %{type: "text", nullable?: false},
+        "run_id" => %{type: "text", nullable?: false},
+        "plan_digest" => %{type: "varchar", nullable?: false, length: 255},
+        "workflow" => %{type: "text", nullable?: false},
+        "queue" => %{type: "text", nullable?: false},
+        "terminal_status" => %{type: "text", nullable?: false},
+        "run_entries_deleted" => %{type: "int8", nullable?: false},
+        "dispatch_entries_deleted" => %{type: "int8", nullable?: false},
+        "deleted_at" => @timestamp,
+        "inserted_at" => @timestamp,
+        "updated_at" => @timestamp
+      },
+      primary_key: ["partition_key", "run_id"],
+      indexes: [
+        ["plan_digest"],
+        ["partition_key", "deleted_at", "run_id"]
       ]
     }
   }

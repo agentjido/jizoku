@@ -11,7 +11,7 @@ defmodule Jizoku.Operations.SchemaCheckTest do
 
     assert %{
              status: :current,
-             baseline: 3,
+             baseline: 4,
              prefix: "public",
              missing: [],
              mismatched: []

@@ -278,6 +278,7 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
               thread_id: thread_id,
               seq: entry.seq,
               entry: entry_binary,
+              retention_run_id: retention_run_id(entry),
               inserted_at: now,
               updated_at: now
             }
@@ -294,6 +295,15 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
       {:error, _reason} = error -> error
     end
   end
+
+  defp retention_run_id(%Jido.Thread.Entry{payload: %{data: data}}) when is_map(data) do
+    case Map.get(data, :run_id) do
+      run_id when is_binary(run_id) and run_id != "" -> run_id
+      _missing_or_invalid -> nil
+    end
+  end
+
+  defp retention_run_id(%Jido.Thread.Entry{}), do: nil
 
   defp update_thread_revision(repo, %JournalThread{} = thread, rev, now_ms, opts) do
     db_now = DateTime.utc_now(:microsecond)

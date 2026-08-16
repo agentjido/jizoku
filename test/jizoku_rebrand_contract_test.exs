@@ -19,6 +19,7 @@ defmodule Jizoku.RebrandContractTest do
              "jizoku_journal_checkpoints",
              "jizoku_journal_entries",
              "jizoku_journal_threads",
+             "jizoku_retention_receipts",
              "jizoku_run_search"
            ]
 
