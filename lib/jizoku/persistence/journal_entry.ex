@@ -19,6 +19,7 @@ defmodule Jizoku.Persistence.JournalEntry do
   schema "jizoku_journal_entries" do
     field(:seq, :integer)
     field(:entry, :binary)
+    field(:retention_run_id, :string)
 
     belongs_to(:thread, JournalThread)
 

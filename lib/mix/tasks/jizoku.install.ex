@@ -19,6 +19,7 @@ defmodule Mix.Tasks.Jizoku.Install do
   @journal_migration_name "create_jizoku_schema.exs"
   @search_migration_name "add_jizoku_run_search_projection.exs"
   @archive_migration_name "add_jizoku_run_archives.exs"
+  @retention_migration_name "add_jizoku_retention.exs"
   @journal_tables [
     "jizoku_journal_threads",
     "jizoku_journal_entries",
@@ -27,6 +28,10 @@ defmodule Mix.Tasks.Jizoku.Install do
   @journal_markers Enum.map(@journal_tables, &"create table(:#{&1}")
   @search_markers ["create table(:jizoku_run_search"]
   @archive_markers ["add(:archived_at", "add(:archive_reason"]
+  @retention_markers [
+    "add(:retention_run_id",
+    "create table(:jizoku_retention_receipts"
+  ]
   @migrations [
     %{
       name: @journal_migration_name,
@@ -42,6 +47,11 @@ defmodule Mix.Tasks.Jizoku.Install do
       name: @archive_migration_name,
       source: "20260816001000_add_jizoku_run_archives.exs",
       markers: @archive_markers
+    },
+    %{
+      name: @retention_migration_name,
+      source: "20260816002000_add_jizoku_retention.exs",
+      markers: @retention_markers
     }
   ]
 

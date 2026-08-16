@@ -21,7 +21,9 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
     {:ok, tmp_dir: tmp_dir}
   end
 
-  test "creates the current journal and run-search migrations", %{tmp_dir: tmp_dir} do
+  test "creates the current journal, search, archive, and retention migrations", %{
+    tmp_dir: tmp_dir
+  } do
     output =
       File.cd!(tmp_dir, fn ->
         capture_io(fn ->
@@ -31,7 +33,9 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
 
     installed_migrations = File.ls!(Path.join(tmp_dir, "priv/repo/migrations"))
 
-    assert [_journal_migration, _search_migration, _archive_migration] = installed_migrations
+    assert [_journal_migration, _search_migration, _archive_migration, _retention_migration] =
+             installed_migrations
+
     assert Enum.any?(installed_migrations, &String.ends_with?(&1, "create_jizoku_schema.exs"))
 
     assert Enum.any?(
@@ -42,6 +46,11 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
     assert Enum.any?(
              installed_migrations,
              &String.ends_with?(&1, "add_jizoku_run_archives.exs")
+           )
+
+    assert Enum.any?(
+             installed_migrations,
+             &String.ends_with?(&1, "add_jizoku_retention.exs")
            )
 
     assert output =~ "creating"
@@ -61,6 +70,8 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
     assert migration_body =~ "create table(:jizoku_run_search"
     assert migration_body =~ "add(:archived_at"
     assert migration_body =~ "add(:archive_reason"
+    assert migration_body =~ "add(:retention_run_id"
+    assert migration_body =~ "create table(:jizoku_retention_receipts"
 
     assert output =~ "runtime: :journal"
     assert output =~ "read_model: :read_model"
@@ -93,8 +104,13 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
 
     assert "20260101000000_create_jizoku_schema.exs" in installed_migrations
 
-    assert [_existing_migration, _journal_migration, _search_migration, _archive_migration] =
-             installed_migrations
+    assert [
+             _existing_migration,
+             _journal_migration,
+             _search_migration,
+             _archive_migration,
+             _retention_migration
+           ] = installed_migrations
 
     assert Enum.count(installed_migrations, &String.ends_with?(&1, "create_jizoku_schema.exs")) ==
              2
@@ -133,7 +149,9 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
     installed_migrations = File.ls!(Path.join(tmp_dir, "priv/repo/migrations"))
 
     assert "20260101000000_create_jizoku_schema.exs" in installed_migrations
-    assert [_existing_migration, _search_migration, _archive_migration] = installed_migrations
+
+    assert [_existing_migration, _search_migration, _archive_migration, _retention_migration] =
+             installed_migrations
 
     assert Enum.any?(
              installed_migrations,
@@ -143,7 +161,7 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
     assert output =~ "creating"
   end
 
-  test "adds only archive fields when journal and run search are already represented", %{
+  test "adds archive and retention fields when journal and run search are represented", %{
     tmp_dir: tmp_dir
   } do
     File.write!(
@@ -169,17 +187,22 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
         end)
       end)
 
-    assert ["20260101000000_create_jizoku_schema.exs", archive_migration] =
+    assert [
+             "20260101000000_create_jizoku_schema.exs",
+             archive_migration,
+             retention_migration
+           ] =
              tmp_dir
              |> Path.join("priv/repo/migrations")
              |> File.ls!()
              |> Enum.sort()
 
     assert String.ends_with?(archive_migration, "add_jizoku_run_archives.exs")
+    assert String.ends_with?(retention_migration, "add_jizoku_retention.exs")
     assert output =~ "creating"
   end
 
-  test "skips migrations when journal, run search, and archives are represented", %{
+  test "skips migrations when the current retention baseline is represented", %{
     tmp_dir: tmp_dir
   } do
     File.write!(
@@ -195,6 +218,8 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
           create table(:jizoku_run_search)
           add(:archived_at, :utc_datetime_usec)
           add(:archive_reason, :text)
+          add(:retention_run_id, :text)
+          create table(:jizoku_retention_receipts)
         end
       end
       """
