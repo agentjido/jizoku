@@ -30,6 +30,14 @@ defmodule Jizoku.Runtime.Routing do
     :now
   ]
   @public_retention_apply_options @public_retention_preview_options
+  @public_retention_capability_options [:runtime, :repo, :journal_storage, :partition]
+  @public_retention_backfill_options [
+    :runtime,
+    :repo,
+    :journal_storage,
+    :partition,
+    :batch_size
+  ]
   @journal_start_options [
     :runtime,
     :journal_storage,
@@ -272,6 +280,18 @@ defmodule Jizoku.Runtime.Routing do
   @spec public_retention_apply_options(keyword() | term()) :: :ok | {:error, term()}
   def public_retention_apply_options(opts) do
     validate_public_options(opts, @public_retention_apply_options)
+  end
+
+  @doc "Validates options accepted by retention capability inspection."
+  @spec public_retention_capability_options(keyword() | term()) :: :ok | {:error, term()}
+  def public_retention_capability_options(opts) do
+    validate_public_options(opts, @public_retention_capability_options)
+  end
+
+  @doc "Validates options accepted by retention ownership migration operations."
+  @spec public_retention_backfill_options(keyword() | term()) :: :ok | {:error, term()}
+  def public_retention_backfill_options(opts) do
+    validate_public_options(opts, @public_retention_backfill_options)
   end
 
   @doc """

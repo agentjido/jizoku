@@ -833,6 +833,39 @@ defmodule Jizoku do
           {:ok, Retention.Receipt.t()} | {:error, term()}
   defdelegate apply_retention(plan, confirmation, overrides \\ []), to: Retention, as: :apply
 
+  @doc "Reports retention operations supported by the configured journal adapter."
+  @spec retention_capabilities(keyword()) ::
+          {:ok, Jizoku.Runtime.Journal.Storage.retention_capabilities()} | {:error, term()}
+  def retention_capabilities(overrides \\ []) do
+    with :ok <- Routing.public_retention_capability_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides) do
+      Jizoku.Runtime.Journal.Storage.retention_capabilities(storage)
+    end
+  end
+
+  @doc "Previews the bounded legacy ownership migration for one partition."
+  @spec preview_retention_ownership_backfill(keyword()) ::
+          {:ok, Jizoku.Retention.OwnershipBackfill.result()} | {:error, term()}
+  def preview_retention_ownership_backfill(overrides \\ []) do
+    with :ok <- Routing.public_retention_backfill_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides) do
+      Jizoku.Retention.OwnershipBackfill.preview(storage, overrides)
+    end
+  end
+
+  @doc "Backfills one bounded batch of legacy retention ownership rows."
+  @spec backfill_retention_ownership(keyword()) ::
+          {:ok, Jizoku.Retention.OwnershipBackfill.result()} | {:error, term()}
+  def backfill_retention_ownership(overrides \\ []) do
+    with :ok <- Routing.public_retention_backfill_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides),
+         {:ok, storage} <- Routing.journal_storage(overrides) do
+      Jizoku.Retention.OwnershipBackfill.apply(storage, overrides)
+    end
+  end
+
   @doc """
   Rebuilds the optional Ecto run-search projection for one selected partition.
 
