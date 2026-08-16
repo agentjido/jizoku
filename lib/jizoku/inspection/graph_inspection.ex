@@ -20,6 +20,9 @@ defmodule Jizoku.Inspection.GraphInspection do
           partition: String.t() | nil,
           workflow: module() | String.t() | nil,
           definition_version: String.t() | nil,
+          definition_fingerprint: String.t() | nil,
+          definition_resolution: map() | nil,
+          definition_migrations: [map()],
           source: source(),
           status: atom(),
           current_node_id: String.t() | nil,
@@ -53,10 +56,13 @@ defmodule Jizoku.Inspection.GraphInspection do
     :partition,
     :workflow,
     :definition_version,
+    :definition_fingerprint,
+    :definition_resolution,
     :source,
     :status,
     :current_node_id,
     :terminal?,
+    definition_migrations: [],
     child_runs: [],
     child_links: [],
     continuation: %{continued_from: nil, continued_to: nil},
@@ -86,7 +92,7 @@ defmodule Jizoku.Inspection.GraphInspection do
   def from_snapshot(%Snapshot{} = snapshot, opts) when is_list(opts) do
     source = Keyword.get(opts, :source, :read_model)
     include_details? = Keyword.get(opts, :include_details, false)
-    definition = Keyword.get(opts, :definition) || load_definition(snapshot.workflow)
+    definition = graph_definition(snapshot, opts)
     current_node_ids = snapshot_current_node_ids(snapshot)
     current_node_id = List.first(current_node_ids)
     initial_nodes = snapshot_nodes(snapshot, definition, include_details?)
@@ -98,6 +104,9 @@ defmodule Jizoku.Inspection.GraphInspection do
       partition: snapshot.partition,
       workflow: snapshot.workflow,
       definition_version: snapshot.definition_version,
+      definition_fingerprint: snapshot.definition_fingerprint,
+      definition_resolution: snapshot.definition_resolution,
+      definition_migrations: snapshot.definition_migrations,
       source: source,
       status: snapshot.status,
       current_node_id: current_node_id,
@@ -140,6 +149,9 @@ defmodule Jizoku.Inspection.GraphInspection do
       partition: graph.partition,
       workflow: workflow_name(graph.workflow),
       definition_version: graph.definition_version,
+      definition_fingerprint: graph.definition_fingerprint,
+      definition_resolution: graph.definition_resolution,
+      definition_migrations: graph.definition_migrations,
       source: graph.source,
       status: graph.status,
       current_node_id: graph.current_node_id,
@@ -165,6 +177,14 @@ defmodule Jizoku.Inspection.GraphInspection do
       reconciliation_status: graph.reconciliation_status,
       anomalies: graph.anomalies
     }
+  end
+
+  defp graph_definition(%Snapshot{definition_resolution: %{status: :unavailable}}, _opts) do
+    nil
+  end
+
+  defp graph_definition(%Snapshot{} = snapshot, opts) do
+    Keyword.get(opts, :definition) || load_definition(snapshot.workflow)
   end
 
   defp dynamic_work_overlays(dynamic_work) when is_list(dynamic_work) do

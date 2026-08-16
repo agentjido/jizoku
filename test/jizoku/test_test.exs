@@ -441,7 +441,8 @@ defmodule Jizoku.TestTest do
                snapshot.status == :running
              end)
 
-    assert snapshot == run
+    assert %{snapshot | definition_resolution: nil} == run
+    assert snapshot.definition_resolution.status == :resolved
 
     assert {:completed, _snapshot} =
              Test.execute_until(runtime, run, fn _snapshot -> false end)

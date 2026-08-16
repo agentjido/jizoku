@@ -2,6 +2,7 @@ defmodule Jizoku.Runtime.Journal.WorkflowDefinitionLoaderTest do
   use ExUnit.Case, async: false
 
   alias Jido.Storage.ETS
+  alias Jizoku.Runs.GraphInspection
   alias Jizoku.Runtime.DispatchProtocol
   alias Jizoku.Runtime.Journal
   alias Jizoku.Runtime.Journal.WorkflowDefinitionLoader
@@ -227,6 +228,52 @@ defmodule Jizoku.Runtime.Journal.WorkflowDefinitionLoaderTest do
     seed_run!(run_id, CurrentWorkflow, historical)
     seed_attempt!(run_id)
     configure_workflow_versions!(%{CurrentWorkflow => %{"v2" => CurrentWorkflow}})
+
+    assert {:ok, inspected} =
+             Jizoku.inspect_run(run_id,
+               journal_storage: @storage,
+               queue: "version-routing",
+               now: @started_at
+             )
+
+    assert inspected.definition_fingerprint == Definition.fingerprint(historical)
+
+    assert inspected.definition_resolution == %{
+             status: :unavailable,
+             error: %{
+               code: "workflow_version_unavailable",
+               requested_version: "v1",
+               available_versions: ["v2"]
+             }
+           }
+
+    assert {:ok, explanation} =
+             Jizoku.explain_run(run_id,
+               journal_storage: @storage,
+               queue: "version-routing",
+               now: @started_at
+             )
+
+    assert explanation.summary ==
+             "The run requires a historical workflow version that is not registered."
+
+    assert explanation.next_actions == [
+             :restore_historical_workflow_version,
+             :verify_workflow_histories
+           ]
+
+    assert explanation.evidence.definition_resolution == inspected.definition_resolution
+
+    assert {:ok, graph} =
+             Jizoku.inspect_run_graph(run_id,
+               journal_storage: @storage,
+               queue: "version-routing",
+               now: @started_at
+             )
+
+    graph = GraphInspection.to_map(graph)
+    assert graph.definition_fingerprint == inspected.definition_fingerprint
+    assert graph.definition_resolution == inspected.definition_resolution
 
     assert {:ok, snapshot} =
              Jizoku.execute_next(

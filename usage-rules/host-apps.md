@@ -23,6 +23,10 @@
 - Migrate definitions only with a host-owned `Jizoku.Workflow.Migration`
   contract at a quiescent manual pause. Keep callbacks deterministic and free
   of side effects; use a new explicit contract for rollback.
+- Use `inspect_run/2`, `inspect_run_graph/2`, and `explain_run/2` to expose the
+  persisted definition version, fingerprint, resolution state, and migration
+  evidence. When resolution fails, restore the exact historical definition and
+  verify checked-in history fixtures before replaying terminal work.
 - Treat `Jizoku.migrate_run/2` as an authorized operator boundary. Do not accept
   migration modules, version labels, storage, queues, or partitions directly
   from untrusted input.

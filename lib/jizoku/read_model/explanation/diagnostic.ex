@@ -21,6 +21,10 @@ defmodule Jizoku.ReadModel.Explanation.Diagnostic do
           | :inspect_terminal_run
           | :wait_for_new_runnables
           | :inspect_dispatch_state
+          | :restore_historical_workflow_version
+          | :restore_exact_workflow_definition
+          | :verify_workflow_histories
+          | :replay_run_after_restore
 
   @type t :: %__MODULE__{
           run_id: String.t(),

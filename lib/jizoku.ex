@@ -41,9 +41,20 @@ defmodule Jizoku do
   alias Jizoku.Runtime.Trace
   alias Jizoku.Runtime.WorkflowAgent
   alias Jizoku.Workflow.ActionRegistry
+  alias Jizoku.Workflow.Definition
   alias Jizoku.Workflow.SpecPreview
 
   @dispatch_schedule_retries 25
+  @definition_resolution_error_fields [
+    :code,
+    :requested_version,
+    :available_versions,
+    :persisted_definition_version,
+    :persisted_definition_fingerprint,
+    :current_definition_version,
+    :current_definition_fingerprint,
+    :resolved_definition_fingerprint
+  ]
 
   @typedoc """
   Structured validation errors returned by the public read-model APIs.
@@ -1664,13 +1675,49 @@ defmodule Jizoku do
   end
 
   defp inspect_projected_run(run_id, overrides) when is_binary(run_id) do
-    with {:ok, storage} <- Routing.journal_storage(overrides) do
-      Inspection.snapshot(storage, run_id, Routing.projection_snapshot_options(overrides))
+    with {:ok, storage} <- Routing.journal_storage(overrides),
+         {:ok, %Inspection.Snapshot{} = snapshot} <-
+           Inspection.snapshot(storage, run_id, Routing.projection_snapshot_options(overrides)) do
+      {:ok,
+       %Inspection.Snapshot{
+         snapshot
+         | definition_resolution: definition_resolution(storage, snapshot)
+       }}
     end
   end
 
   defp inspect_projected_run(_run_id, _overrides) do
     {:error, {:invalid_option, {:run_id, :invalid}}}
+  end
+
+  defp definition_resolution(
+         storage,
+         %Inspection.Snapshot{run_id: run_id, workflow: workflow}
+       )
+       when is_binary(run_id) and is_binary(workflow) do
+    case WorkflowDefinitionLoader.load(storage, run_id, workflow) do
+      {:ok, _workflow, definition} ->
+        %{
+          status: :resolved,
+          definition_version: definition.definition_version,
+          definition_fingerprint: Definition.fingerprint(definition)
+        }
+
+      {:error, reason} ->
+        %{status: :unavailable, error: definition_resolution_error(reason)}
+    end
+  end
+
+  defp definition_resolution(_storage, %Inspection.Snapshot{}) do
+    %{status: :unavailable, error: %{code: "workflow_definition_unavailable"}}
+  end
+
+  defp definition_resolution_error(reason) when is_map(reason) do
+    Map.take(reason, @definition_resolution_error_fields)
+  end
+
+  defp definition_resolution_error(_reason) do
+    %{code: "workflow_definition_unavailable"}
   end
 
   defp inspect_graph_source(run_id, :read_model, overrides) do
@@ -1722,12 +1769,8 @@ defmodule Jizoku do
   end
 
   defp explain_projected_run(run_id, overrides) do
-    with {:ok, storage} <- Routing.journal_storage(overrides) do
-      Jizoku.ReadModel.Explanation.explain(
-        storage,
-        run_id,
-        Routing.projection_snapshot_options(overrides)
-      )
+    with {:ok, %Inspection.Snapshot{} = snapshot} <- inspect_projected_run(run_id, overrides) do
+      {:ok, Jizoku.ReadModel.Explanation.from_snapshot(snapshot)}
     end
   end
 end

@@ -62,6 +62,8 @@ defmodule Jizoku.ReadModel.Inspection.Snapshot do
           started_at: DateTime.t() | nil,
           context: map(),
           definition_version: String.t() | nil,
+          definition_fingerprint: String.t() | nil,
+          definition_resolution: map() | nil,
           definition_migrations: [map()],
           continuation: %{
             required(:continued_from) => map() | nil,
@@ -132,6 +134,8 @@ defmodule Jizoku.ReadModel.Inspection.Snapshot do
     :input,
     :started_at,
     :definition_version,
+    :definition_fingerprint,
+    :definition_resolution,
     :parent_run,
     :replayed_from_run_id,
     :queue,

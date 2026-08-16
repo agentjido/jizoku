@@ -9,6 +9,8 @@ defmodule MinimalHostApp.WorkflowMigrationTest do
     stable_workflow = Atom.to_string(MigratedRouting)
 
     assert snapshot.definition_version == "v2"
+    assert snapshot.definition_resolution.status == :resolved
+    assert is_binary(snapshot.definition_fingerprint)
     assert snapshot.context.schema == 2
 
     assert [%{migration_key: "minimal-host-routing-v1-to-v2"}] =

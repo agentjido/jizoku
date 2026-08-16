@@ -797,7 +797,8 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              })
 
     assert {:ok, inspected_run} = WorkflowRuns.inspect_payment_recovery(run.run_id)
-    assert inspected_run == run
+    assert %{inspected_run | definition_resolution: nil} == run
+    assert inspected_run.definition_resolution.status == :resolved
   end
 
   test "surfaces payment recovery compensation through host inspection history" do
