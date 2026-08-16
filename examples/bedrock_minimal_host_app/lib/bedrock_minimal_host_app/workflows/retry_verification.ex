@@ -6,6 +6,8 @@ defmodule BedrockMinimalHostApp.Workflows.RetryVerification do
   use Jizoku.Workflow
 
   workflow do
+    version "v2"
+
     trigger :retry_verification do
       manual()
 

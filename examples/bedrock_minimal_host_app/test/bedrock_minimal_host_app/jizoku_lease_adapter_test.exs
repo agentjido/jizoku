@@ -10,7 +10,38 @@ defmodule BedrockMinimalHostApp.JizokuLeaseAdapterTest do
   alias BedrockMinimalHostApp.WorkflowRuns
   alias BedrockMinimalHostApp.Workflows.DailyDigest
   alias Jizoku.Executor.Payload
+  alias Jizoku.Runtime.DispatchProtocol
   alias Jizoku.Runtime.Journal
+  alias Jizoku.Runtime.Journal.Storage.Ecto, as: JournalStorage
+  alias Jizoku.Workflow.Definition
+
+  defmodule HistoricalVersionStep do
+    use Jizoku.Step, name: "bedrock_historical_version", input_schema: []
+
+    @impl Jizoku.Step
+    def run(_input, context) do
+      {:ok,
+       %{
+         implementation: "v1",
+         workflow: Atom.to_string(context.workflow)
+       }}
+    end
+  end
+
+  defmodule HistoricalRetryVerification do
+    use Jizoku.Workflow
+
+    workflow do
+      version "v1"
+
+      trigger :retry_verification do
+        manual()
+      end
+
+      step :exercise_retry, HistoricalVersionStep
+      transition :exercise_retry, on: :ok, to: :complete
+    end
+  end
 
   setup do
     :ok = Sandbox.checkout(Repo)
@@ -127,6 +158,39 @@ defmodule BedrockMinimalHostApp.JizokuLeaseAdapterTest do
     assert {:ok, inspected_run} = WorkflowRuns.inspect_run(run.run_id)
     assert inspected_run.status == :completed
     assert inspected_run.context.digest_delivery.channel == "ops"
+  end
+
+  test "drains a registered historical workflow while holding a Bedrock lease", %{
+    queue: queue
+  } do
+    workflow = BedrockMinimalHostApp.Workflows.RetryVerification
+    run_id = Ecto.UUID.generate()
+    now = DateTime.utc_now()
+    storage = {JournalStorage, repo: Repo}
+    definition = HistoricalRetryVerification.workflow_definition()
+    workflow_versions = %{workflow => %{"v1" => HistoricalRetryVerification, "v2" => workflow}}
+
+    with_workflow_versions(workflow_versions, fn ->
+      seed_historical_attempt!(storage, run_id, workflow, definition, queue, now)
+
+      assert {:ok, _item_id} = JobQueue.enqueue(queue, "jizoku:payload", drain_payload(queue))
+      assert {:ok, [claim]} = JizokuLeaseAdapter.claim(%{}, queue, "historical-worker", [])
+
+      assert :ok = JizokuPayload.perform(claim.payload, %{})
+      assert :ok = JizokuLeaseAdapter.complete(%{}, claim, [])
+
+      assert {:ok, snapshot} =
+               Jizoku.inspect_run(run_id,
+                 journal_storage: storage,
+                 queue: queue
+               )
+
+      expected = %{implementation: "v1", workflow: Atom.to_string(workflow)}
+      assert snapshot.status == :completed
+      assert snapshot.definition_version == "v1"
+      assert snapshot.context == expected
+      assert [%{status: :completed, result: ^expected}] = snapshot.attempts
+    end)
   end
 
   test "applies cancellation through the example app signal boundary" do
@@ -569,6 +633,61 @@ defmodule BedrockMinimalHostApp.JizokuLeaseAdapterTest do
     Repo.delete_all("jizoku_journal_entries")
     Repo.delete_all("jizoku_journal_checkpoints")
     Repo.delete_all("jizoku_journal_threads")
+  end
+
+  defp seed_historical_attempt!(storage, run_id, workflow, definition, queue, now) do
+    runnable_key = "#{run_id}:exercise_retry:1"
+
+    runnable = %{
+      run_id: run_id,
+      runnable_key: runnable_key,
+      idempotency_key: runnable_key,
+      attempt_number: 1,
+      queue: queue,
+      step: "exercise_retry",
+      input: %{},
+      visible_at: now
+    }
+
+    {:ok, run_started} =
+      DispatchProtocol.new_entry(:run_started, %{
+        run_id: run_id,
+        workflow: Definition.serialize_workflow(workflow),
+        trigger: "retry_verification",
+        definition_version: definition.definition_version,
+        definition_fingerprint: Definition.fingerprint(definition),
+        occurred_at: now
+      })
+
+    {:ok, runnables_planned} =
+      DispatchProtocol.new_entry(:runnables_planned, %{
+        run_id: run_id,
+        runnables: [runnable],
+        occurred_at: now
+      })
+
+    {:ok, attempt_scheduled} =
+      DispatchProtocol.new_entry(
+        :attempt_scheduled,
+        Map.put(runnable, :occurred_at, now)
+      )
+
+    {:ok, _thread} = Journal.append_entries(storage, [run_started, runnables_planned])
+    {:ok, _thread} = Journal.append_entries(storage, [attempt_scheduled])
+  end
+
+  defp with_workflow_versions(registry, fun) when is_function(fun, 0) do
+    previous = Application.fetch_env(:jizoku, :workflow_versions)
+    Application.put_env(:jizoku, :workflow_versions, registry)
+
+    try do
+      fun.()
+    after
+      case previous do
+        {:ok, value} -> Application.put_env(:jizoku, :workflow_versions, value)
+        :error -> Application.delete_env(:jizoku, :workflow_versions)
+      end
+    end
   end
 
   defp drain_payload(queue), do: %{"kind" => "drain", "queue" => queue}

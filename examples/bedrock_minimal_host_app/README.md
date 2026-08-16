@@ -66,6 +66,8 @@ The stress test covers:
   completion
 - retry requeue and dead-letter behavior
 - Jizoku cron payloads being mapped into Bedrock jobs
+- a Bedrock-leased drain executing a v1 run through its host-registered
+  historical definition after the stable workflow module advances to v2
 - the `Jizoku.Executor.Leases` contract through a Bedrock-backed example
   adapter
 
