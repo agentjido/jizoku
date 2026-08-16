@@ -117,11 +117,30 @@ Keep historical modules deployed while any non-terminal run references them.
 Version labels are operator-facing identities; they never bypass fingerprint
 fencing.
 
+## Safe-Point Migration
+
+`MinimalHostApp.Verification.WorkflowMigration` starts from checked-in v1
+journal facts at a quiescent pause, applies a host-owned migration contract,
+then resumes through the v2 graph and action. The persisted migration retains
+both exact fingerprints, replaces accumulated context with the bounded
+transformed result, and maps the active manual step explicitly.
+
+Run the focused proof with:
+
+```sh
+MIX_ENV=test mix test test/workflow_migration_test.exs
+```
+
+Migration callbacks must be deterministic and side-effect free. Jizoku may
+evaluate them again after an optimistic append conflict, but replay uses only
+the persisted result and never invokes migration code.
+
 The smoke task:
 
 - validates a runtime-authored workflow spec through host-owned safe action keys
 - executes a durable v1 run through its registered implementation after the v2
   workflow is deployed
+- migrates a quiescent paused v1 run and completes it through the v2 workflow
 - round-trips a compiled workflow spec through the visual-editor JSON contract
   and previews the draft graph
 - validates visual-editor action keys through the host action registry before

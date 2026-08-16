@@ -11,6 +11,7 @@ defmodule MinimalHostApp.Smoke do
   alias MinimalHostApp.RuntimeSignals
   alias MinimalHostApp.Steps
   alias MinimalHostApp.Verification.WorkflowEvolution
+  alias MinimalHostApp.Verification.WorkflowMigration
   alias MinimalHostApp.WorkflowRuns
   alias MinimalHostApp.Workers.JizokuWorker
   alias Jizoku.Executor.Payload
@@ -180,6 +181,7 @@ defmodule MinimalHostApp.Smoke do
           editor_action_registry_graph: map(),
           editor_spec_diff: map(),
           workflow_evolution: Jizoku.ReadModel.Inspection.Snapshot.t(),
+          workflow_migration: Jizoku.ReadModel.Inspection.Snapshot.t(),
           daily_digest: Jizoku.ReadModel.Inspection.Snapshot.t()
         }
   def run_all! do
@@ -188,6 +190,7 @@ defmodule MinimalHostApp.Smoke do
     editor_action_registry_graph = run_editor_action_registry_preview!()
     editor_spec_diff = run_editor_spec_diff!()
     workflow_evolution = WorkflowEvolution.run!()
+    workflow_migration = WorkflowMigration.run!()
     payment_recovery = run!()
     deferred_payment_recovery = run_deferred_payment_recovery!()
     dependency_recovery = run_dependency_recovery!()
@@ -243,6 +246,7 @@ defmodule MinimalHostApp.Smoke do
         editor_action_registry_graph: editor_action_registry_graph,
         editor_spec_diff: editor_spec_diff,
         workflow_evolution: workflow_evolution,
+        workflow_migration: workflow_migration,
         daily_digest: cron_run
       }
     else

@@ -43,6 +43,86 @@ defmodule BedrockMinimalHostApp.JizokuLeaseAdapterTest do
     end
   end
 
+  defmodule MigrationV2Step do
+    use Jizoku.Step, name: "bedrock_migration_v2", input_schema: []
+
+    @impl Jizoku.Step
+    def run(input, context) do
+      {:ok,
+       %{
+         implementation: "v2",
+         schema: input.schema,
+         workflow: Atom.to_string(context.workflow)
+       }}
+    end
+  end
+
+  defmodule HistoricalMigrationWorkflow do
+    use Jizoku.Workflow
+
+    workflow do
+      version "v1"
+
+      trigger :manual do
+        manual()
+      end
+
+      step :legacy_gate, :pause
+      step :legacy_finish, HistoricalVersionStep
+      transition :legacy_gate, on: :ok, to: :legacy_finish
+      transition :legacy_finish, on: :ok, to: :complete
+    end
+  end
+
+  defmodule CurrentMigrationWorkflow do
+    use Jizoku.Workflow
+
+    workflow do
+      version "v2"
+
+      trigger :manual do
+        manual()
+      end
+
+      step :gate, :pause
+      step :finish, MigrationV2Step
+      transition :gate, on: :ok, to: :finish
+      transition :finish, on: :ok, to: :complete
+    end
+  end
+
+  defmodule V1ToV2Migration do
+    @behaviour Jizoku.Workflow.Migration
+
+    @impl Jizoku.Workflow.Migration
+    def key do
+      "bedrock-migration-v1-to-v2"
+    end
+
+    @impl Jizoku.Workflow.Migration
+    def source_version do
+      "v1"
+    end
+
+    @impl Jizoku.Workflow.Migration
+    def target_version do
+      "v2"
+    end
+
+    @impl Jizoku.Workflow.Migration
+    def migrate(%{context: context, manual_state: %{step: "legacy_gate"}}) do
+      {:ok,
+       %{
+         context:
+           context
+           |> Map.delete(:legacy)
+           |> Map.delete(:legacy_output)
+           |> Map.put(:schema, 2),
+         manual_step: :gate
+       }}
+    end
+  end
+
   setup do
     :ok = Sandbox.checkout(Repo)
     cleanup_runtime_state()
@@ -190,6 +270,70 @@ defmodule BedrockMinimalHostApp.JizokuLeaseAdapterTest do
       assert snapshot.definition_version == "v1"
       assert snapshot.context == expected
       assert [%{status: :completed, result: ^expected}] = snapshot.attempts
+    end)
+  end
+
+  test "drains a migrated v2 successor while holding a Bedrock lease", %{queue: queue} do
+    run_id = Ecto.UUID.generate()
+    now = DateTime.utc_now()
+    storage = {JournalStorage, repo: Repo}
+    source_definition = HistoricalMigrationWorkflow.workflow_definition()
+
+    workflow_versions = %{
+      CurrentMigrationWorkflow => %{
+        "v1" => HistoricalMigrationWorkflow,
+        "v2" => CurrentMigrationWorkflow
+      }
+    }
+
+    with_workflow_versions(workflow_versions, fn ->
+      seed_paused_migration!(storage, run_id, source_definition, queue, now)
+
+      assert {:ok, %{status: :paused, definition_version: "v2"}} =
+               Jizoku.migrate_run(run_id,
+                 to: "v2",
+                 migration: V1ToV2Migration,
+                 journal_storage: storage,
+                 queue: queue,
+                 now: now
+               )
+
+      assert {:ok, %{status: :running}} =
+               Jizoku.resume(
+                 run_id,
+                 %{actor: "bedrock-migration-test"},
+                 runtime: :journal,
+                 journal_storage: storage,
+                 queue: queue,
+                 idempotency_key: "resume-bedrock-migration",
+                 now: now
+               )
+
+      assert {:ok, _item_id} = JobQueue.enqueue(queue, "jizoku:payload", drain_payload(queue))
+      assert {:ok, [claim]} = JizokuLeaseAdapter.claim(%{}, queue, "migration-worker", [])
+
+      assert :ok = JizokuPayload.perform(claim.payload, %{})
+      assert :ok = JizokuLeaseAdapter.complete(%{}, claim, [])
+
+      assert {:ok, snapshot} =
+               Jizoku.inspect_run(run_id,
+                 journal_storage: storage,
+                 queue: queue
+               )
+
+      expected = %{
+        implementation: "v2",
+        schema: 2,
+        workflow: Atom.to_string(CurrentMigrationWorkflow)
+      }
+
+      assert snapshot.status == :completed
+      assert snapshot.definition_version == "v2"
+
+      assert [%{migration_key: "bedrock-migration-v1-to-v2"}] =
+               snapshot.definition_migrations
+
+      assert Enum.any?(snapshot.attempts, &(&1.result == expected))
     end)
   end
 
@@ -633,6 +777,58 @@ defmodule BedrockMinimalHostApp.JizokuLeaseAdapterTest do
     Repo.delete_all("jizoku_journal_entries")
     Repo.delete_all("jizoku_journal_checkpoints")
     Repo.delete_all("jizoku_journal_threads")
+  end
+
+  defp seed_paused_migration!(storage, run_id, definition, queue, now) do
+    runnable_key = "#{run_id}:legacy_gate:1"
+
+    runnable = %{
+      run_id: run_id,
+      runnable_key: runnable_key,
+      idempotency_key: runnable_key,
+      attempt_number: 1,
+      queue: queue,
+      step: "legacy_gate",
+      input: %{},
+      visible_at: now
+    }
+
+    entries = [
+      migration_entry!(:run_started, %{
+        run_id: run_id,
+        workflow: Definition.serialize_workflow(CurrentMigrationWorkflow),
+        trigger: "manual",
+        context: %{account_id: "acct-bedrock-migration", legacy: true, schema: 1},
+        definition_version: definition.definition_version,
+        definition_fingerprint: Definition.fingerprint(definition),
+        occurred_at: now
+      }),
+      migration_entry!(:runnables_planned, %{
+        run_id: run_id,
+        runnables: [runnable],
+        occurred_at: now
+      }),
+      migration_entry!(:runnable_applied, %{
+        run_id: run_id,
+        runnable_key: runnable_key,
+        result: %{legacy_output: true},
+        occurred_at: now
+      }),
+      migration_entry!(:manual_step_paused, %{
+        run_id: run_id,
+        step: "legacy_gate",
+        kind: "pause",
+        metadata: %{output: %{legacy_output: true}},
+        occurred_at: now
+      })
+    ]
+
+    {:ok, _thread} = Journal.append_entries(storage, entries)
+  end
+
+  defp migration_entry!(type, attrs) do
+    {:ok, entry} = DispatchProtocol.new_entry(type, attrs)
+    entry
   end
 
   defp seed_historical_attempt!(storage, run_id, workflow, definition, queue, now) do
