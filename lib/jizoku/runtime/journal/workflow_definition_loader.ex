@@ -3,6 +3,7 @@ defmodule Jizoku.Runtime.Journal.WorkflowDefinitionLoader do
   @moduledoc false
 
   alias Jizoku.Runtime.Journal
+  alias Jizoku.Runtime.WorkflowAgent.Projection
   alias Jizoku.Workflow.Definition
   alias Jizoku.Workflow.Spec
   alias Jizoku.Workflow.VersionRegistry
@@ -78,22 +79,37 @@ defmodule Jizoku.Runtime.Journal.WorkflowDefinitionLoader do
 
   defp persisted_definition_metadata(storage, run_id) do
     with {:ok, %{entries: entries}} <- Journal.load_thread(storage, {:run, run_id}) do
-      metadata =
-        Enum.find_value(entries, fn
-          %{type: :run_started, data: data} ->
-            %{
-              definition_version: metadata_value(data, :definition_version),
-              definition_fingerprint: metadata_value(data, :definition_fingerprint),
-              definition_source: metadata_value(data, :definition_source),
-              definition_spec: metadata_value(data, :definition_spec)
-            }
+      projection = Projection.rebuild(entries)
 
-          _entry ->
-            nil
-        end)
+      metadata =
+        entries
+        |> Enum.find_value(&run_started_metadata/1)
+        |> effective_definition_metadata(projection)
 
       {:ok, metadata || %{definition_version: nil, definition_fingerprint: nil}}
     end
+  end
+
+  defp run_started_metadata(%{type: :run_started, data: data}) do
+    %{
+      definition_source: metadata_value(data, :definition_source),
+      definition_spec: metadata_value(data, :definition_spec)
+    }
+  end
+
+  defp run_started_metadata(_entry) do
+    nil
+  end
+
+  defp effective_definition_metadata(metadata, %Projection{} = projection)
+       when is_map(metadata) do
+    metadata
+    |> Map.put(:definition_version, projection.definition_version)
+    |> Map.put(:definition_fingerprint, projection.definition_fingerprint)
+  end
+
+  defp effective_definition_metadata(_metadata, _projection) do
+    nil
   end
 
   defp validate_definition_fingerprint(definition, persisted) do

@@ -2177,11 +2177,7 @@ defmodule Jizoku.Runtime.Journal.Executor do
   end
 
   defp applied_result_context(workflow_agent) do
-    workflow_agent.state.projection
-    |> Map.get(:applied_results, %{})
-    |> Enum.filter(fn {_key, value} -> is_map(value) end)
-    |> Enum.map(fn {_key, value} -> value end)
-    |> Enum.reduce(%{}, &Map.merge(&2, &1))
+    Projection.applied_result_context(workflow_agent.state.projection)
   end
 
   defp run_context(%Agent{state: %{projection: %Projection{context: context}}})

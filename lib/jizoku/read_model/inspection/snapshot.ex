@@ -62,6 +62,7 @@ defmodule Jizoku.ReadModel.Inspection.Snapshot do
           started_at: DateTime.t() | nil,
           context: map(),
           definition_version: String.t() | nil,
+          definition_migrations: [map()],
           continuation: %{
             required(:continued_from) => map() | nil,
             required(:continued_to) => map() | nil
@@ -143,6 +144,7 @@ defmodule Jizoku.ReadModel.Inspection.Snapshot do
     :deadline,
     :thread_revisions,
     continuation: %{continued_from: nil, continued_to: nil},
+    definition_migrations: [],
     history: %{
       thread_revision: 0,
       level: :normal,
