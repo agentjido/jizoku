@@ -35,6 +35,12 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
 
   @type opts :: keyword()
 
+  @doc "Declares Ecto retention operations that are implemented transactionally."
+  @spec retention_capabilities() :: map()
+  def retention_capabilities do
+    %{transactional_apply?: true, ownership_backfill?: true}
+  end
+
   @impl Jido.Storage
   @spec get_checkpoint(term(), opts()) :: {:ok, term()} | :not_found | {:error, term()}
   def get_checkpoint(key, opts) do
@@ -156,6 +162,14 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
   def checkpoint_key_hash(key) do
     with {:ok, key_binary} <- encode_term(key) do
       {:ok, key_hash(key_binary)}
+    end
+  end
+
+  @doc false
+  @spec retention_entry_owner(binary()) :: {:ok, String.t()} | {:error, term()}
+  def retention_entry_owner(binary) when is_binary(binary) do
+    with {:ok, entry} <- decode_entry(binary) do
+      {:ok, retention_run_id(entry)}
     end
   end
 

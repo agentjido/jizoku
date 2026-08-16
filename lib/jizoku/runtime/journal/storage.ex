@@ -30,6 +30,13 @@ defmodule Jizoku.Runtime.Journal.Storage do
           partition: String.t() | nil
         }
 
+  @type retention_capabilities :: %{
+          archive?: boolean(),
+          preview?: boolean(),
+          transactional_apply?: boolean(),
+          ownership_backfill?: boolean()
+        }
+
   @doc false
   @spec scope(t() | config(), String.t() | nil) ::
           {:ok, t()} | {:error, {:invalid_option, term()}}
@@ -125,6 +132,30 @@ defmodule Jizoku.Runtime.Journal.Storage do
   def fetch_checkpoint(storage, key) do
     with {:ok, %__MODULE__{} = storage} <- normalize(storage) do
       Jido.Storage.fetch_checkpoint(storage.adapter, key, storage.opts)
+    end
+  end
+
+  @doc "Reports retention operations explicitly supported by the configured adapter."
+  @spec retention_capabilities(t() | config()) ::
+          {:ok, retention_capabilities()} | {:error, {:invalid_option, term()}}
+  def retention_capabilities(storage) do
+    with {:ok, %__MODULE__{} = storage} <- normalize(storage) do
+      capabilities =
+        case storage.adapter do
+          Jizoku.Runtime.Journal.Storage.Ecto ->
+            Jizoku.Runtime.Journal.Storage.Ecto.retention_capabilities()
+
+          _unsupported_adapter ->
+            %{}
+        end
+
+      {:ok,
+       %{
+         archive?: true,
+         preview?: true,
+         transactional_apply?: Map.get(capabilities, :transactional_apply?, false),
+         ownership_backfill?: Map.get(capabilities, :ownership_backfill?, false)
+       }}
     end
   end
 
