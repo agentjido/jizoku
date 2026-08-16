@@ -9,6 +9,7 @@ defmodule Jizoku.Config do
 
   alias Jizoku.Runtime.Journal.Options
   alias Jizoku.Runtime.Journal.Storage
+  alias Jizoku.Runtime.SearchAttributes
   alias Jizoku.Workflow.VersionRegistry
 
   @type runtime :: :journal
@@ -20,6 +21,7 @@ defmodule Jizoku.Config do
           journal_storage: term(),
           queue: atom() | String.t(),
           partition: String.t() | nil,
+          search_attribute_schema: SearchAttributes.schema() | nil,
           workflow_versions: VersionRegistry.registry() | nil
         ]
   @type t :: %__MODULE__{
@@ -29,12 +31,14 @@ defmodule Jizoku.Config do
           journal_storage: Jizoku.Runtime.Journal.Storage.t() | nil,
           queue: String.t(),
           partition: String.t() | nil,
+          search_attribute_schema: SearchAttributes.schema() | nil,
           workflow_versions: VersionRegistry.registry() | nil
         }
 
   defstruct [
     :repo,
     :journal_storage,
+    :search_attribute_schema,
     :workflow_versions,
     runtime: :journal,
     read_model: :read_model,
@@ -69,6 +73,7 @@ defmodule Jizoku.Config do
            validate_read_model(Keyword.get(config, :read_model, @default_read_model)),
          {:ok, queue} <- validate_queue(Keyword.get(config, :queue, @default_queue)),
          {:ok, workflow_versions} <- validate_workflow_versions(config),
+         {:ok, search_attribute_schema} <- validate_search_attribute_schema(config),
          {:ok, journal_storage} <- validate_journal_storage(config, runtime, read_model),
          {:ok, partition} <-
            validate_partition(configured_partition(config, overrides, journal_storage)),
@@ -80,6 +85,7 @@ defmodule Jizoku.Config do
          runtime: runtime,
          read_model: read_model,
          journal_storage: journal_storage,
+         search_attribute_schema: search_attribute_schema,
          workflow_versions: workflow_versions,
          queue: queue,
          partition: partition
@@ -160,6 +166,25 @@ defmodule Jizoku.Config do
 
           {:error, {:invalid_workflow_versions, errors}} ->
             {:error, {:invalid_config, [workflow_versions: errors]}}
+        end
+
+      :error ->
+        {:ok, nil}
+    end
+  end
+
+  defp validate_search_attribute_schema(config) do
+    case Keyword.fetch(config, :search_attribute_schema) do
+      {:ok, nil} ->
+        {:ok, nil}
+
+      {:ok, schema} ->
+        case SearchAttributes.validate_schema(schema) do
+          {:ok, schema} ->
+            {:ok, schema}
+
+          {:error, {:invalid_search_attribute_schema, errors}} ->
+            {:error, {:invalid_config, [search_attribute_schema: errors]}}
         end
 
       :error ->

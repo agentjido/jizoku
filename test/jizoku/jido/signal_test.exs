@@ -92,6 +92,8 @@ defmodule Jizoku.Jido.SignalTest do
   @checkpoint_version_key "jizoku.workflow_projection.checkpoint_version"
   @command_history_count_key "jizoku.workflow_projection.command_history_count"
   @event_waits_key "jizoku.workflow_projection.event_waits"
+  @search_attributes_key "jizoku.workflow_projection.search_attributes"
+  @search_attribute_updates_key "jizoku.workflow_projection.search_attribute_updates"
   @trace %{
     trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
     span_id: "00f067aa0ba902b7",
@@ -217,11 +219,13 @@ defmodule Jizoku.Jido.SignalTest do
       |> Map.delete(@checkpoint_version_key)
       |> Map.delete(@command_history_count_key),
       Map.put(source_less_projection, @command_history_count_key, 0),
-      Map.put(agent.state.projection, @checkpoint_version_key, 3),
-      Map.put(agent.state.projection, @event_waits_key, nil)
+      Map.put(agent.state.projection, @checkpoint_version_key, 4),
+      Map.put(agent.state.projection, @event_waits_key, nil),
+      Map.put(agent.state.projection, @search_attributes_key, nil),
+      Map.put(agent.state.projection, @search_attribute_updates_key, nil)
     ]
 
-    assert Map.get(agent.state.projection, @checkpoint_version_key) == 4
+    assert Map.get(agent.state.projection, @checkpoint_version_key) == 5
     refute Map.has_key?(agent.state.projection, :checkpoint_version)
     refute Map.has_key?(agent.state.projection, :command_history_count)
 

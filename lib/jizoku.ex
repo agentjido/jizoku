@@ -23,6 +23,7 @@ defmodule Jizoku do
   alias Jizoku.Runtime.Journal.Commands.ContinueAsNew
   alias Jizoku.Runtime.Journal.Commands.Migration
   alias Jizoku.Runtime.Journal.Commands.Replay
+  alias Jizoku.Runtime.Journal.Commands.SearchAttributes
   alias Jizoku.Runtime.Journal.Commands.SignalInterpreter
   alias Jizoku.Runtime.Journal.Commands.Starter
   alias Jizoku.Runtime.Journal.DynamicWork
@@ -781,6 +782,27 @@ defmodule Jizoku do
   def list_runs(filters \\ [], overrides \\ []) do
     with {:ok, :journal} <- Routing.runtime(overrides) do
       list_runs_with_runtime(:journal, filters, overrides)
+    end
+  end
+
+  @doc """
+  Merges allowlisted operational search attributes into one durable run.
+
+  Updates require a stable `:idempotency_key`. Exact retries return the
+  existing snapshot without another journal append; conflicting reuse fails
+  closed. Attribute schemas belong to trusted host configuration or overrides.
+  """
+  @spec update_search_attributes(Ecto.UUID.t(), map(), keyword()) ::
+          {:ok, Jizoku.ReadModel.Inspection.Snapshot.t()}
+          | {:error, Config.config_error() | term()}
+  def update_search_attributes(run_id, changes, overrides \\ []) do
+    with :ok <- Routing.public_search_attribute_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides) do
+      SearchAttributes.update(
+        run_id,
+        changes,
+        Routing.journal_search_attribute_options(overrides)
+      )
     end
   end
 

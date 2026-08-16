@@ -205,6 +205,7 @@ defmodule Jizoku.ReadModel.Visibility do
       snapshot
       | input: nil,
         context: %{},
+        search_attributes: %{},
         terminal_error: nil,
         parent_run: summarize_run(snapshot.parent_run),
         child_runs: Enum.map(snapshot.child_runs, &summarize_run/1),

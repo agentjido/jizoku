@@ -59,6 +59,7 @@ defmodule Jizoku.ReadModel.Inspection.Snapshot do
           workflow: String.t() | nil,
           trigger: String.t() | nil,
           input: map() | nil,
+          search_attributes: map(),
           started_at: DateTime.t() | nil,
           context: map(),
           definition_version: String.t() | nil,
@@ -158,6 +159,7 @@ defmodule Jizoku.ReadModel.Inspection.Snapshot do
       critical_threshold: 20_000
     },
     command_history: [],
+    search_attributes: %{},
     jido_signals: %{pending_count: 0, delivered_count: 0, items: []},
     manual_state: nil,
     active_event_wait: nil,

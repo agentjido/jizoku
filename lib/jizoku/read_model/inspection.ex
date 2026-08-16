@@ -167,6 +167,7 @@ defmodule Jizoku.ReadModel.Inspection do
       workflow: workflow,
       trigger: workflow_projection.trigger,
       input: workflow_projection.input,
+      search_attributes: WorkflowAgent.Projection.search_attributes(workflow_projection),
       started_at: workflow_projection.started_at,
       definition_version: workflow_projection.definition_version,
       definition_fingerprint: workflow_projection.definition_fingerprint,

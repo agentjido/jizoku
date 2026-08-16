@@ -52,14 +52,17 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   alias Jizoku.Runtime.DispatchProtocol.Entry
   alias Jizoku.Runtime.DynamicEdge
   alias Jizoku.Runtime.Jido.Outbox
+  alias Jizoku.Runtime.SearchAttributes
   alias Jizoku.Runtime.Trace
   alias Jizoku.Runtime.WorkflowAgent.Projection.GraphState
 
-  @checkpoint_version 4
+  @checkpoint_version 5
   @checkpoint_version_key "jizoku.workflow_projection.checkpoint_version"
   @command_history_count_key "jizoku.workflow_projection.command_history_count"
   @event_waits_key "jizoku.workflow_projection.event_waits"
   @jido_outbox_key "jizoku.workflow_projection.jido_outbox"
+  @search_attributes_key "jizoku.workflow_projection.search_attributes"
+  @search_attribute_updates_key "jizoku.workflow_projection.search_attribute_updates"
 
   @type anomaly :: %{
           required(:reason) => atom(),
@@ -161,6 +164,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     |> Map.put(@command_history_count_key, 0)
     |> Map.put(@event_waits_key, %{})
     |> Map.put(@jido_outbox_key, Outbox.new_projection())
+    |> Map.put(@search_attributes_key, %{})
+    |> Map.put(@search_attribute_updates_key, %{})
   end
 
   @doc false
@@ -223,6 +228,20 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
       _not_waiting ->
         nil
     end
+  end
+
+  @doc false
+  @spec search_attributes(t()) :: map()
+  def search_attributes(%__MODULE__{} = projection) do
+    Map.get(projection, @search_attributes_key, %{})
+  end
+
+  @doc false
+  @spec search_attribute_update_fingerprint(t(), String.t()) :: String.t() | nil
+  def search_attribute_update_fingerprint(%__MODULE__{} = projection, idempotency_key) do
+    projection
+    |> Map.get(@search_attribute_updates_key, %{})
+    |> Map.get(idempotency_key)
   end
 
   @doc false
@@ -534,6 +553,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     |> Map.put_new(:definition_migrations, [])
     |> Map.put_new(:context_migrated_runnable_keys, MapSet.new())
     |> Map.put_new(@event_waits_key, %{})
+    |> Map.put_new(@search_attributes_key, %{})
+    |> Map.put_new(@search_attribute_updates_key, %{})
     |> Map.put(:dynamic_work, dynamic_work)
     |> Map.put(:graph, graph)
     |> Map.put_new(:terminal_error, nil)
@@ -574,6 +595,17 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   end
 
   defp apply_entry(
+         %Entry{type: :search_attributes_updated, data: data} = entry,
+         %__MODULE__{} = projection
+       ) do
+    if search_attributes_updated_data?(data, projection) do
+      put_search_attribute_update(projection, data, entry)
+    else
+      add_anomaly(projection, entry, :malformed_entry)
+    end
+  end
+
+  defp apply_entry(
          %Entry{} = entry,
          %__MODULE__{terminal_status: terminal_status} = projection
        )
@@ -593,12 +625,14 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   end
 
   defp apply_entry(%Entry{type: :run_started, data: data} = entry, %__MODULE__{} = projection) do
-    if required_present?(data, [:run_id, :workflow]) do
+    if required_present?(data, [:run_id, :workflow]) and
+         SearchAttributes.valid_persisted?(Map.get(data, :search_attributes, %{})) do
       projection
       |> Map.put(:run_id, Map.fetch!(data, :run_id))
       |> Map.put(:workflow, Map.fetch!(data, :workflow))
       |> Map.put(:trigger, Map.get(data, :trigger))
       |> Map.put(:input, Map.get(data, :input))
+      |> Map.put(@search_attributes_key, Map.get(data, :search_attributes, %{}))
       |> Map.put(:context, Map.get(data, :context, %{}))
       |> Map.put(:trace, Map.get(data, :trace))
       |> Map.put(:started_at, Map.get(data, :occurred_at, entry.occurred_at))
@@ -926,6 +960,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     Map.get(projection, @checkpoint_version_key) == @checkpoint_version and
       valid_command_history_count?(projection) and
       valid_event_waits?(Map.get(projection, @event_waits_key)) and
+      valid_search_attributes?(Map.get(projection, @search_attributes_key)) and
+      valid_search_attribute_updates?(Map.get(projection, @search_attribute_updates_key)) and
       Outbox.valid_projection?(Map.get(projection, @jido_outbox_key)) and
       outbox_anomalies_consistent?(projection)
   end
@@ -978,6 +1014,62 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
 
   defp valid_event_wait?(_wait_id, _wait) do
     false
+  end
+
+  defp valid_search_attributes?(attributes) do
+    SearchAttributes.valid_persisted?(attributes)
+  end
+
+  defp valid_search_attribute_updates?(updates) when is_map(updates) do
+    Enum.all?(updates, fn {idempotency_key, fingerprint} ->
+      SearchAttributes.valid_idempotency_key?(idempotency_key) and
+        non_empty_binary?(fingerprint)
+    end)
+  end
+
+  defp valid_search_attribute_updates?(_updates) do
+    false
+  end
+
+  defp search_attributes_updated_data?(data, projection) when is_map(data) do
+    changes = Map.get(data, :changes)
+    fingerprint = Map.get(data, :fingerprint)
+
+    required_present?(data, [:run_id, :changes, :fingerprint, :idempotency_key]) and
+      Map.get(data, :run_id) == projection.run_id and
+      is_map(changes) and
+      SearchAttributes.valid_persisted?(changes) and
+      SearchAttributes.valid_idempotency_key?(Map.get(data, :idempotency_key)) and
+      non_empty_binary?(fingerprint) and
+      SearchAttributes.fingerprint(changes) == fingerprint
+  end
+
+  defp search_attributes_updated_data?(_data, _projection) do
+    false
+  end
+
+  defp put_search_attribute_update(projection, data, entry) do
+    idempotency_key = data.idempotency_key
+    updates = Map.get(projection, @search_attribute_updates_key, %{})
+
+    case Map.fetch(updates, idempotency_key) do
+      {:ok, fingerprint} when fingerprint == data.fingerprint ->
+        projection
+
+      {:ok, _conflicting_fingerprint} ->
+        add_anomaly(projection, entry, :idempotency_conflict)
+
+      :error ->
+        projection
+        |> Map.put(
+          @search_attributes_key,
+          Map.merge(search_attributes(projection), data.changes)
+        )
+        |> Map.put(
+          @search_attribute_updates_key,
+          Map.put(updates, idempotency_key, data.fingerprint)
+        )
+    end
   end
 
   defp terminal_error_from_data(data) when is_map(data) do

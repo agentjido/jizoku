@@ -32,6 +32,7 @@ defmodule Jizoku.Runtime.DispatchProtocol do
   @type entry_type ::
           :run_signal_received
           | :run_started
+          | :search_attributes_updated
           | :run_definition_migrated
           | :runnables_planned
           | :runnable_applied
@@ -74,6 +75,7 @@ defmodule Jizoku.Runtime.DispatchProtocol do
   @run_entry_types [
     :run_signal_received,
     :run_started,
+    :search_attributes_updated,
     :run_definition_migrated,
     :runnables_planned,
     :runnable_applied,
@@ -113,6 +115,13 @@ defmodule Jizoku.Runtime.DispatchProtocol do
   @required_fields %{
     run_signal_received: [:run_id, :signal_type, :payload, :metadata, :occurred_at],
     run_started: [:run_id, :workflow, :occurred_at],
+    search_attributes_updated: [
+      :run_id,
+      :changes,
+      :fingerprint,
+      :idempotency_key,
+      :occurred_at
+    ],
     run_definition_migrated: [
       :run_id,
       :migration_key,

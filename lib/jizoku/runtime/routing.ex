@@ -15,7 +15,16 @@ defmodule Jizoku.Runtime.Routing do
   @runtimes [:journal]
   @projection_snapshot_options [:queue, :now]
   @projection_list_options [:queue, :now]
-  @journal_start_options [:runtime, :journal_storage, :queue, :partition, :now, :run_id]
+  @journal_start_options [
+    :runtime,
+    :journal_storage,
+    :queue,
+    :partition,
+    :now,
+    :run_id,
+    :search_attributes,
+    :search_attribute_schema
+  ]
   @journal_spec_start_options [
     :runtime,
     :journal_storage,
@@ -24,7 +33,9 @@ defmodule Jizoku.Runtime.Routing do
     :now,
     :run_id,
     :action_registry,
-    :guardrail_registry
+    :guardrail_registry,
+    :search_attributes,
+    :search_attribute_schema
   ]
   @journal_child_start_options [
     :runtime,
@@ -36,6 +47,15 @@ defmodule Jizoku.Runtime.Routing do
     :metadata
   ]
   @journal_control_options [:runtime, :journal_storage, :queue, :partition, :now]
+  @journal_search_attribute_options [
+    :runtime,
+    :journal_storage,
+    :queue,
+    :partition,
+    :now,
+    :idempotency_key,
+    :search_attribute_schema
+  ]
   @journal_continuation_options [:runtime, :journal_storage, :queue, :partition, :now]
   @public_continuation_options [
     :runtime,
@@ -162,6 +182,22 @@ defmodule Jizoku.Runtime.Routing do
   @spec journal_control_options(keyword()) :: keyword()
   def journal_control_options(overrides) do
     configured_journal_options(overrides, @journal_control_options)
+  end
+
+  @doc """
+  Builds journal options for durable search-attribute updates.
+  """
+  @spec journal_search_attribute_options(keyword()) :: keyword()
+  def journal_search_attribute_options(overrides) do
+    configured_journal_options(overrides, @journal_search_attribute_options)
+  end
+
+  @doc """
+  Validates public search-attribute update options.
+  """
+  @spec public_search_attribute_options(keyword() | term()) :: :ok | {:error, term()}
+  def public_search_attribute_options(opts) do
+    validate_public_options(opts, @journal_search_attribute_options)
   end
 
   @doc "Builds trusted journal options for a continue-as-new command."
@@ -344,6 +380,7 @@ defmodule Jizoku.Runtime.Routing do
           queue: config.queue
         ]
         |> maybe_put_configured_partition(config.partition)
+        |> maybe_put_configured_search_attribute_schema(config.search_attribute_schema)
         |> Keyword.merge(Keyword.take(overrides, keys))
         |> Keyword.take(keys)
 
@@ -372,7 +409,8 @@ defmodule Jizoku.Runtime.Routing do
       :runtime,
       :read_model,
       :journal_storage,
-      :partition
+      :partition,
+      :search_attribute_schema
     ])
     |> preserve_explicit_storage_partition(overrides)
   end
@@ -409,6 +447,14 @@ defmodule Jizoku.Runtime.Routing do
 
   defp maybe_put_configured_partition(opts, partition),
     do: Keyword.put(opts, :partition, partition)
+
+  defp maybe_put_configured_search_attribute_schema(opts, nil) do
+    opts
+  end
+
+  defp maybe_put_configured_search_attribute_schema(opts, schema) do
+    Keyword.put(opts, :search_attribute_schema, schema)
+  end
 
   defp child_partition_override(opts, overrides) do
     case Keyword.fetch(overrides, :partition) do
