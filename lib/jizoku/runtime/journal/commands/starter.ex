@@ -27,6 +27,7 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
   alias Jizoku.Runtime.Journal.Options
   alias Jizoku.Runtime.RunCatalogProjection
   alias Jizoku.Runtime.RunIndexProjection
+  alias Jizoku.Runtime.SearchAttributes
   alias Jizoku.Runtime.Signal
   alias Jizoku.Runtime.Trace
   alias Jizoku.Runtime.WorkflowAgent
@@ -64,6 +65,7 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
          {:ok, storage} <- Options.storage_from_opts(opts),
          {:ok, queue} <- Options.queue_from_opts(opts),
          {:ok, now} <- Options.now_from_opts(opts),
+         {:ok, search_attributes} <- start_search_attributes(opts),
          {:ok, definition} <- Definition.load(workflow),
          :ok <- validate_continuation_definition(definition, opts),
          {:ok, trigger} <- trigger(definition, trigger_name),
@@ -82,6 +84,7 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
                definition: definition,
                trigger: trigger,
                input: resolved_payload,
+               search_attributes: search_attributes,
                run_id: run_id
              },
              journal_runnables,
@@ -181,6 +184,7 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
          {:ok, storage} <- Options.storage_from_opts(opts),
          {:ok, queue} <- Options.queue_from_opts(opts),
          {:ok, now} <- Options.now_from_opts(opts),
+         {:ok, search_attributes} <- start_search_attributes(opts),
          {:ok, spec} <- runtime_spec(spec, opts),
          definition <- definition_from_spec(spec),
          {:ok, trigger} <- trigger(definition, trigger_name),
@@ -207,6 +211,7 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
                definition_spec: persisted_spec,
                trigger: trigger,
                input: resolved_payload,
+               search_attributes: search_attributes,
                run_id: run_id
              },
              journal_runnables,
@@ -397,6 +402,7 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
            definition_spec: definition_spec,
            trigger: trigger,
            input: input,
+           search_attributes: search_attributes,
            run_id: run_id
          },
          runnables,
@@ -412,6 +418,7 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
           workflow: Definition.serialize_workflow(workflow),
           trigger: Atom.to_string(Map.fetch!(trigger, :name)),
           input: input,
+          search_attributes: search_attributes,
           context: initial_context(opts),
           replayed_from_run_id: replayed_from_run_id(opts),
           definition_version: definition.definition_version,
@@ -462,6 +469,7 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
             workflow: workflow,
             trigger: trigger,
             input: input,
+            search_attributes: search_attributes,
             runnables: runnables,
             definition_version: definition.definition_version,
             definition_fingerprint: expected_fingerprint
@@ -1114,7 +1122,8 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
              expected.workflow,
              expected.runnables,
              expected.definition_fingerprint,
-             existing_fingerprint
+             existing_fingerprint,
+             expected.search_attributes
            ),
          {:ok, expected_identity} <- continuation_definition_identity(opts),
          :ok <-
@@ -1153,7 +1162,8 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
              expected.workflow,
              expected.runnables,
              expected.definition_fingerprint,
-             existing_fingerprint
+             existing_fingerprint,
+             expected.search_attributes
            ),
          :ok <- validate_existing_continuation(workflow_agent, expected, opts) do
       {:ok, :existing}
@@ -1501,7 +1511,8 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
          workflow,
          expected_runnables,
          expected_fingerprint,
-         existing_fingerprint
+         existing_fingerprint,
+         expected_search_attributes
        ) do
     existing_workflow = workflow_agent.state.workflow
     expected_workflow = Definition.serialize_workflow(workflow)
@@ -1512,6 +1523,9 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
         {:error, :conflict}
 
       not equivalent_definition_fingerprint?(existing_fingerprint, expected_fingerprint) ->
+        {:error, :conflict}
+
+      Projection.search_attributes(workflow_agent.state.projection) != expected_search_attributes ->
         {:error, :conflict}
 
       equivalent_runnables?(existing_runnables, expected_runnables) ->
@@ -1535,6 +1549,13 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
 
       {:ok, fingerprint}
     end
+  end
+
+  defp start_search_attributes(opts) do
+    SearchAttributes.normalize(
+      Keyword.get(opts, :search_attributes, %{}),
+      Keyword.get(opts, :search_attribute_schema)
+    )
   end
 
   defp definition_metadata_value(data, key) when is_map(data) and is_atom(key) do
