@@ -6,6 +6,7 @@ defmodule MinimalHostApp.Smoke do
   import Ecto.Query, only: [from: 2]
 
   alias MinimalHostApp.Cron
+  alias MinimalHostApp.PaymentWebhook
   alias MinimalHostApp.Repo
   alias MinimalHostApp.RuntimeHarness
   alias MinimalHostApp.RuntimeSignals
@@ -152,6 +153,10 @@ defmodule MinimalHostApp.Smoke do
           deferred_payment_recovery: Jizoku.ReadModel.Inspection.Snapshot.t(),
           dependency_recovery: Jizoku.ReadModel.Inspection.Snapshot.t(),
           manual_approval: Jizoku.ReadModel.Inspection.Snapshot.t(),
+          payment_webhook: %{
+            delivered: Jizoku.ReadModel.Inspection.Snapshot.t(),
+            timed_out: Jizoku.ReadModel.Inspection.Snapshot.t()
+          },
           manual_digest: Jizoku.ReadModel.Inspection.Snapshot.t(),
           local_ledger_checkout: Jizoku.ReadModel.Inspection.Snapshot.t(),
           local_ledger_rollback: Jizoku.ReadModel.Inspection.Snapshot.t(),
@@ -195,6 +200,7 @@ defmodule MinimalHostApp.Smoke do
     deferred_payment_recovery = run_deferred_payment_recovery!()
     dependency_recovery = run_dependency_recovery!()
     manual_approval = run_manual_approval!()
+    payment_webhook = run_payment_webhook!()
     manual_digest = run_manual_digest!()
     {local_ledger_checkout, local_ledger_rollback} = run_local_ledger_checkout!()
     saga_checkout = run_saga_checkout!()
@@ -224,6 +230,7 @@ defmodule MinimalHostApp.Smoke do
         deferred_payment_recovery: deferred_payment_recovery,
         dependency_recovery: dependency_recovery,
         manual_approval: manual_approval,
+        payment_webhook: payment_webhook,
         manual_digest: manual_digest,
         local_ledger_checkout: local_ledger_checkout,
         local_ledger_rollback: local_ledger_rollback,
@@ -1261,6 +1268,178 @@ defmodule MinimalHostApp.Smoke do
       {:error, reason} ->
         raise "manual approval smoke test failed: #{inspect(reason)}"
     end
+  end
+
+  @doc """
+  Exercises a host-verified webhook delivery and the durable timeout path.
+  """
+  @spec run_payment_webhook!() :: %{
+          delivered: Jizoku.ReadModel.Inspection.Snapshot.t(),
+          timed_out: Jizoku.ReadModel.Inspection.Snapshot.t()
+        }
+  def run_payment_webhook! do
+    RuntimeHarness.ensure_runtime_started()
+
+    secret = "minimal-host-app-webhook-secret"
+    payment_id = "pay_webhook_demo"
+
+    raw_body =
+      Jason.encode!(%{
+        event_id: "evt_webhook_demo",
+        payment_id: payment_id,
+        status: "settled"
+      })
+
+    signature = payment_webhook_signature(raw_body, secret)
+    invalid_signature = "sha256=" <> String.duplicate("0", 64)
+
+    with {:ok, run} <- WorkflowRuns.start_payment_webhook(%{payment_id: payment_id}),
+         {:ok, waiting} <- await_payment_event_wait(run.run_id, payment_id, @poll_attempts),
+         {:ok, explanation} <- WorkflowRuns.explain_run(run.run_id),
+         :ok <- ensure_payment_event_explanation(explanation),
+         {:error, :invalid_webhook_signature} <-
+           PaymentWebhook.deliver(run.run_id, raw_body, invalid_signature, secret),
+         {:ok, unchanged} <- WorkflowRuns.inspect_run(run.run_id),
+         :ok <- ensure_webhook_rejection_did_not_mutate(waiting, unchanged),
+         {:ok, resumed} <- PaymentWebhook.deliver(run.run_id, raw_body, signature, secret),
+         {:ok, duplicate} <- PaymentWebhook.deliver(run.run_id, raw_body, signature, secret),
+         :ok <- ensure_duplicate_webhook_is_idempotent(resumed, duplicate),
+         {:ok, delivered} <-
+           RuntimeHarness.await_terminal_run(run.run_id, attempts: @poll_attempts),
+         :ok <- ensure_delivered_payment_event(delivered, payment_id),
+         {:ok, timeout_run} <-
+           WorkflowRuns.start_payment_webhook(%{payment_id: "pay_webhook_timeout"}),
+         {:ok, _waiting_timeout} <-
+           await_payment_event_wait(timeout_run.run_id, "pay_webhook_timeout", @poll_attempts),
+         {:ok, timed_out} <-
+           RuntimeHarness.await_terminal_run(timeout_run.run_id, attempts: @poll_attempts),
+         :ok <- ensure_timed_out_payment_event(timed_out) do
+      %{delivered: delivered, timed_out: timed_out}
+    else
+      {:error, reason} ->
+        raise "payment webhook smoke test failed: #{inspect(reason)}"
+
+      other ->
+        raise "payment webhook smoke test failed: #{inspect(other)}"
+    end
+  end
+
+  defp payment_webhook_signature(raw_body, secret) do
+    digest = :crypto.mac(:hmac, :sha256, secret, raw_body)
+    "sha256=" <> Base.encode16(digest, case: :lower)
+  end
+
+  defp await_payment_event_wait(_run_id, _payment_id, 0) do
+    {:error, :timeout}
+  end
+
+  defp await_payment_event_wait(run_id, payment_id, attempts_remaining)
+       when attempts_remaining > 0 do
+    :ok = RuntimeHarness.wait_for_execution()
+    _result = Jizoku.execute_next(owner_id: "minimal-host-app-webhook-smoke")
+
+    case WorkflowRuns.inspect_run(run_id) do
+      {:ok, run} ->
+        case ensure_payment_event_wait(run, payment_id) do
+          :ok ->
+            {:ok, run}
+
+          {:error, _reason} ->
+            Process.sleep(50)
+            await_payment_event_wait(run_id, payment_id, attempts_remaining - 1)
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp ensure_payment_event_wait(
+         %Jizoku.ReadModel.Inspection.Snapshot{
+           status: :paused,
+           active_event_wait: %{
+             event: "payment.completed",
+             correlation_summary: %{algorithm: :sha256, digest: digest, bytes: bytes},
+             status: :waiting
+           }
+         },
+         payment_id
+       )
+       when is_binary(payment_id) do
+    expected_digest =
+      :crypto.hash(:sha256, payment_id)
+      |> Base.url_encode64(padding: false)
+
+    if digest == expected_digest and bytes == byte_size(payment_id) do
+      :ok
+    else
+      {:error, :unexpected_payment_event_correlation_summary}
+    end
+  end
+
+  defp ensure_payment_event_wait(_run, _payment_id) do
+    {:error, :unexpected_payment_event_wait}
+  end
+
+  defp ensure_payment_event_explanation(%Jizoku.ReadModel.Explanation.Diagnostic{
+         reason: :manual_intervention_required,
+         next_actions: [:deliver_external_event, :inspect_event_wait_timeout]
+       }) do
+    :ok
+  end
+
+  defp ensure_payment_event_explanation(_explanation) do
+    {:error, :unexpected_payment_event_explanation}
+  end
+
+  defp ensure_webhook_rejection_did_not_mutate(waiting, unchanged) do
+    if waiting.thread_revisions == unchanged.thread_revisions and
+         unchanged.status == :paused do
+      :ok
+    else
+      {:error, :invalid_webhook_mutated_run}
+    end
+  end
+
+  defp ensure_duplicate_webhook_is_idempotent(resumed, duplicate) do
+    if resumed.thread_revisions == duplicate.thread_revisions do
+      :ok
+    else
+      {:error, :duplicate_webhook_mutated_run}
+    end
+  end
+
+  defp ensure_delivered_payment_event(
+         %Jizoku.ReadModel.Inspection.Snapshot{
+           status: :completed,
+           context: %{
+             settled_payment_id: payment_id,
+             settlement_status: "settled"
+           },
+           event_waits: [%{status: :resolved, resolution: "received"}]
+         },
+         payment_id
+       ) do
+    :ok
+  end
+
+  defp ensure_delivered_payment_event(_run, _payment_id) do
+    {:error, :unexpected_delivered_payment_event}
+  end
+
+  defp ensure_timed_out_payment_event(%Jizoku.ReadModel.Inspection.Snapshot{
+         status: :completed,
+         context: %{
+           timed_out_event: "payment.completed",
+           timed_out_payment_id: "pay_webhook_timeout"
+         },
+         event_waits: [%{status: :timed_out, resolution: "timed_out"}]
+       }) do
+    :ok
+  end
+
+  defp ensure_timed_out_payment_event(_run) do
+    {:error, :unexpected_timed_out_payment_event}
   end
 
   @spec run_manual_digest!() :: Jizoku.ReadModel.Inspection.Snapshot.t()

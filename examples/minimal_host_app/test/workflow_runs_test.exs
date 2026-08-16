@@ -1701,6 +1701,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
              payment_recovery: payment_recovery,
              dependency_recovery: dependency_recovery,
              manual_approval: manual_approval,
+             payment_webhook: payment_webhook,
              manual_digest: manual_digest,
              local_ledger_checkout: local_ledger_checkout,
              local_ledger_rollback: local_ledger_rollback,
@@ -1735,6 +1736,14 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     assert manual_approval.status == :completed
     assert manual_approval.context.approval.status == "approved"
+
+    assert payment_webhook.delivered.status == :completed
+    assert payment_webhook.delivered.context.settlement_status == "settled"
+    assert [%{status: :resolved}] = payment_webhook.delivered.event_waits
+
+    assert payment_webhook.timed_out.status == :completed
+    assert payment_webhook.timed_out.context.timed_out_event == "payment.completed"
+    assert [%{status: :timed_out}] = payment_webhook.timed_out.event_waits
 
     assert manual_digest.status == :completed
     assert manual_digest.trigger == "manual_digest"

@@ -78,6 +78,21 @@
 - Authorize inbound Jido commands before calling Jizoku. Their CloudEvents
   source is persisted as audit provenance and is not an authorization grant.
 
+## External Events
+
+- Authenticate and authorize callbacks before calling `Jizoku.signal_run/4`.
+  Verify provider signatures against the untouched request body, then decode
+  and validate the payload.
+- Map provider callbacks to allowlisted internal event names. Do not accept
+  runtime, storage, queue, partition, module, or internal event choices from
+  callback input.
+- Use a stable provider event ID as the Jizoku idempotency key. Exact retries
+  are safe; conflicting reuse fails closed.
+- Resolve the run and correlation through host-owned domain data. Treat a run ID
+  or correlation supplied by an unauthenticated callback as untrusted.
+- Do not log signature secrets, raw callback bodies, or event payloads. Use
+  external or operator visibility for safe wait status and identity summaries.
+
 ## Read-Model Visibility
 
 - Authorize run listing, inspection, graph, and explanation calls at the host
