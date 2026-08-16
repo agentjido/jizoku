@@ -16,6 +16,7 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
   alias Jizoku.Runtime.Journal.CommandReceipt
   alias Jizoku.Runtime.Journal.DispatchScheduler
   alias Jizoku.Runtime.Journal.Options
+  alias Jizoku.Runtime.Journal.WorkflowDefinitionLoader
   alias Jizoku.Runtime.ManualAction
   alias Jizoku.Runtime.Signal
   alias Jizoku.Runtime.StepInput
@@ -500,8 +501,12 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
   end
 
   defp resolved_pause_definition(storage, workflow_agent, %{step: step}) do
-    with {:ok, workflow, definition} <- Definition.load_serialized(workflow_agent.state.workflow),
-         :ok <- validate_definition_fingerprint(storage, workflow_agent.state.run_id, definition),
+    with {:ok, workflow, definition} <-
+           WorkflowDefinitionLoader.load(
+             storage,
+             workflow_agent.state.run_id,
+             workflow_agent.state.workflow
+           ),
          step_name when is_atom(step_name) <- Definition.deserialize_step(definition, step),
          {:ok, %{module: :pause}} <- Definition.step(definition, step_name) do
       {:ok, workflow, definition, step_name}
@@ -513,8 +518,12 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
   end
 
   defp resolved_approval_definition(storage, workflow_agent, %{step: step}) do
-    with {:ok, workflow, definition} <- Definition.load_serialized(workflow_agent.state.workflow),
-         :ok <- validate_definition_fingerprint(storage, workflow_agent.state.run_id, definition),
+    with {:ok, workflow, definition} <-
+           WorkflowDefinitionLoader.load(
+             storage,
+             workflow_agent.state.run_id,
+             workflow_agent.state.workflow
+           ),
          step_name when is_atom(step_name) <- Definition.deserialize_step(definition, step),
          {:ok, %{module: :approval}} <- Definition.step(definition, step_name) do
       {:ok, workflow, definition, step_name}
@@ -865,45 +874,6 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
-  defp validate_definition_fingerprint(storage, run_id, definition) do
-    case persisted_definition_metadata(storage, run_id) do
-      {:ok, %{definition_fingerprint: nil} = persisted} ->
-        {:error, Definition.incompatible_definition_error(definition, persisted)}
-
-      {:ok, %{definition_fingerprint: fingerprint} = persisted} ->
-        if fingerprint == Definition.fingerprint(definition) do
-          :ok
-        else
-          {:error, Definition.incompatible_definition_error(definition, persisted)}
-        end
-
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  defp persisted_definition_metadata(storage, run_id) do
-    with {:ok, %{entries: entries}} <- Journal.load_thread(storage, {:run, run_id}) do
-      metadata =
-        Enum.find_value(entries, fn
-          %{type: :run_started, data: data} ->
-            %{
-              definition_version: definition_metadata_value(data, :definition_version),
-              definition_fingerprint: definition_metadata_value(data, :definition_fingerprint)
-            }
-
-          _entry ->
-            nil
-        end)
-
-      {:ok, metadata || %{definition_version: nil, definition_fingerprint: nil}}
-    end
-  end
-
-  defp definition_metadata_value(data, key) when is_map(data) and is_atom(key) do
-    Map.get(data, key) || Map.get(data, Atom.to_string(key))
-  end
 
   defp applied_result_context(%Agent{
          agent_module: WorkflowAgent,

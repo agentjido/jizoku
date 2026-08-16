@@ -21,6 +21,12 @@ config :minimal_host_app, MinimalHostApp.JizokuDeliveryAdapter,
   queue: :jizoku
 
 config :jizoku,
-  repo: MinimalHostApp.Repo
+  repo: MinimalHostApp.Repo,
+  workflow_versions: %{
+    MinimalHostApp.Workflows.VersionedRouting => %{
+      "v1" => MinimalHostApp.Workflows.VersionedRouting.V1,
+      "v2" => MinimalHostApp.Workflows.VersionedRouting
+    }
+  }
 
 import_config "#{config_env()}.exs"

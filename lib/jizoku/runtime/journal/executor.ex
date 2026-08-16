@@ -47,6 +47,7 @@ defmodule Jizoku.Runtime.Journal.Executor do
 
   @dispatch_append_retries 25
   @run_append_retries 25
+  @max_safe_list_items 50
   @minimum_heartbeat_interval_ms 50
 
   @type execute_error ::
@@ -839,7 +840,7 @@ defmodule Jizoku.Runtime.Journal.Executor do
     error =
       %{
         code: incompatible_error_code(reason),
-        message: "journal attempt is incompatible with the current workflow definition",
+        message: incompatible_error_message(reason),
         retryable?: false
       }
       |> Map.merge(incompatible_error_metadata(reason))
@@ -4069,6 +4070,12 @@ defmodule Jizoku.Runtime.Journal.Executor do
       :current_definition_fingerprint,
       Map.get(error, :current_definition_fingerprint)
     )
+    |> maybe_put_safe(:requested_version, Map.get(error, :requested_version))
+    |> maybe_put_safe_list(:available_versions, Map.get(error, :available_versions))
+    |> maybe_put_safe(
+      :resolved_definition_fingerprint,
+      Map.get(error, :resolved_definition_fingerprint)
+    )
     |> Map.put(:message, safe_error_message(Map.get(error, :message)))
   end
 
@@ -4079,6 +4086,17 @@ defmodule Jizoku.Runtime.Journal.Executor do
 
   defp maybe_put_safe(acc, _key, _value), do: acc
 
+  defp maybe_put_safe_list(acc, key, values) when is_list(values) do
+    if length(values) <= @max_safe_list_items and
+         Enum.all?(values, &(is_binary(&1) and byte_size(&1) <= 128)) do
+      Map.put(acc, key, values)
+    else
+      acc
+    end
+  end
+
+  defp maybe_put_safe_list(acc, _key, _values), do: acc
+
   defp maybe_put_safe_map(acc, key, value) when is_map(value), do: Map.put(acc, key, value)
   defp maybe_put_safe_map(acc, _key, _value), do: acc
 
@@ -4088,12 +4106,27 @@ defmodule Jizoku.Runtime.Journal.Executor do
   defp incompatible_error_code(%{code: code}) when is_binary(code), do: code
   defp incompatible_error_code(_reason), do: "incompatible_journal_attempt"
 
+  defp incompatible_error_message(%{code: "workflow_version_unavailable"}) do
+    "registered historical workflow version is unavailable"
+  end
+
+  defp incompatible_error_message(%{code: "workflow_version_fingerprint_mismatch"}) do
+    "registered historical workflow fingerprint does not match the persisted run"
+  end
+
+  defp incompatible_error_message(_reason) do
+    "journal attempt is incompatible with the current workflow definition"
+  end
+
   defp incompatible_error_metadata(reason) when is_map(reason) do
     Map.take(reason, [
       :persisted_definition_version,
       :persisted_definition_fingerprint,
       :current_definition_version,
-      :current_definition_fingerprint
+      :current_definition_fingerprint,
+      :requested_version,
+      :available_versions,
+      :resolved_definition_fingerprint
     ])
   end
 
@@ -4158,6 +4191,8 @@ defmodule Jizoku.Runtime.Journal.Executor do
               "Jido action output uses a reserved runtime key",
               "journal attempt is incompatible with the current workflow definition",
               "native Jido effect was rejected",
+              "registered historical workflow fingerprint does not match the persisted run",
+              "registered historical workflow version is unavailable",
               "step execution failed"
             ] do
     message

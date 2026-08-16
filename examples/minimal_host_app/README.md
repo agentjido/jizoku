@@ -99,9 +99,29 @@ still own worker placement and supervision, and side-effecting steps still need
 idempotency because an external action may occur before a worker loses its
 claim.
 
+## Workflow Version Routing
+
+The host config registers supported historical implementations under the stable
+current workflow module. `MinimalHostApp.Verification.WorkflowEvolution` seeds
+the durable facts left by a v1 deployment, then drains the attempt after v2 is
+current. Jizoku selects only the configured v1 module and still requires its
+fingerprint to match the run history exactly.
+
+Run the focused proof with:
+
+```sh
+MIX_ENV=test mix test test/workflow_evolution_test.exs
+```
+
+Keep historical modules deployed while any non-terminal run references them.
+Version labels are operator-facing identities; they never bypass fingerprint
+fencing.
+
 The smoke task:
 
 - validates a runtime-authored workflow spec through host-owned safe action keys
+- executes a durable v1 run through its registered implementation after the v2
+  workflow is deployed
 - round-trips a compiled workflow spec through the visual-editor JSON contract
   and previews the draft graph
 - validates visual-editor action keys through the host action registry before

@@ -9,6 +9,7 @@ defmodule Jizoku.Config do
 
   alias Jizoku.Runtime.Journal.Options
   alias Jizoku.Runtime.Journal.Storage
+  alias Jizoku.Workflow.VersionRegistry
 
   @type runtime :: :journal
   @type read_model :: :read_model
@@ -18,7 +19,8 @@ defmodule Jizoku.Config do
           read_model: read_model(),
           journal_storage: term(),
           queue: atom() | String.t(),
-          partition: String.t() | nil
+          partition: String.t() | nil,
+          workflow_versions: VersionRegistry.registry() | nil
         ]
   @type t :: %__MODULE__{
           repo: module() | nil,
@@ -26,12 +28,14 @@ defmodule Jizoku.Config do
           read_model: read_model(),
           journal_storage: Jizoku.Runtime.Journal.Storage.t() | nil,
           queue: String.t(),
-          partition: String.t() | nil
+          partition: String.t() | nil,
+          workflow_versions: VersionRegistry.registry() | nil
         }
 
   defstruct [
     :repo,
     :journal_storage,
+    :workflow_versions,
     runtime: :journal,
     read_model: :read_model,
     queue: "default",
@@ -64,6 +68,7 @@ defmodule Jizoku.Config do
          {:ok, read_model} <-
            validate_read_model(Keyword.get(config, :read_model, @default_read_model)),
          {:ok, queue} <- validate_queue(Keyword.get(config, :queue, @default_queue)),
+         {:ok, workflow_versions} <- validate_workflow_versions(config),
          {:ok, journal_storage} <- validate_journal_storage(config, runtime, read_model),
          {:ok, partition} <-
            validate_partition(configured_partition(config, overrides, journal_storage)),
@@ -75,6 +80,7 @@ defmodule Jizoku.Config do
          runtime: runtime,
          read_model: read_model,
          journal_storage: journal_storage,
+         workflow_versions: workflow_versions,
          queue: queue,
          partition: partition
        }}
@@ -142,6 +148,22 @@ defmodule Jizoku.Config do
 
       {:error, {:invalid_option, {:partition, :invalid}}} ->
         {:error, {:invalid_config, [partition: :invalid]}}
+    end
+  end
+
+  defp validate_workflow_versions(config) do
+    case Keyword.fetch(config, :workflow_versions) do
+      {:ok, registry} ->
+        case VersionRegistry.validate(registry) do
+          :ok ->
+            {:ok, registry}
+
+          {:error, {:invalid_workflow_versions, errors}} ->
+            {:error, {:invalid_config, [workflow_versions: errors]}}
+        end
+
+      :error ->
+        {:ok, nil}
     end
   end
 
