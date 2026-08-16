@@ -224,6 +224,7 @@ defmodule MinimalHostApp.Smoke do
     graph_mutation_inspection = run_graph_mutation_inspection!()
     run_search_page = run_search_page!()
     archive_lifecycle = run_archive_lifecycle!()
+    retention_lifecycle = run_retention_lifecycle!()
     journal_cron_digest = run_journal_cron_digest!()
     command_signals = run_signal_construction!()
     jido_command_signals = run_jido_signal_adapter!(command_signals)
@@ -258,6 +259,7 @@ defmodule MinimalHostApp.Smoke do
         graph_mutation_inspection: graph_mutation_inspection,
         run_search_page: run_search_page,
         archive_lifecycle: archive_lifecycle,
+        retention_lifecycle: retention_lifecycle,
         journal_cron_digest: journal_cron_digest,
         command_signals: command_signals,
         jido_command_signals: jido_command_signals,
@@ -363,6 +365,41 @@ defmodule MinimalHostApp.Smoke do
     else
       {:error, reason} -> raise "archive smoke test failed: #{inspect(reason)}"
       invalid -> raise "archive smoke test returned invalid data: #{inspect(invalid)}"
+    end
+  end
+
+  @doc "Exercises confirmed physical retention through the sample operations boundary."
+  @spec run_retention_lifecycle!() :: Jizoku.Retention.Receipt.t()
+  def run_retention_lifecycle! do
+    RuntimeHarness.ensure_runtime_started()
+    unique = Ecto.UUID.generate()
+    queue = "minimal-host-retention-#{unique}"
+    runtime_opts = [queue: queue]
+
+    attrs = %{
+      account_id: "acct_retention_#{unique}",
+      invoice_id: "invoice_retention_#{unique}",
+      attempt_id: "attempt_retention_#{unique}"
+    }
+
+    with {:ok, started} <- WorkflowRuns.start_indexed_dependency_recovery(attrs, runtime_opts),
+         {:ok, _cancelled} <- WorkflowRuns.cancel(started.run_id, runtime_opts),
+         {:ok, _archived} <-
+           WorkflowRuns.archive_for_retention_hold(started.run_id, runtime_opts),
+         preview_now = DateTime.utc_now(),
+         {:ok, plan} <-
+           WorkflowRuns.preview_retention(
+             [terminal_before: DateTime.add(preview_now, 60, :second)],
+             now: preview_now
+           ),
+         true <- Enum.map(plan.eligible, & &1.run_id) == [started.run_id],
+         {:ok, receipt} <-
+           WorkflowRuns.apply_retention(plan, plan.confirmation_token),
+         {:error, :not_found} <- WorkflowRuns.inspect_run(started.run_id, runtime_opts) do
+      receipt
+    else
+      {:error, reason} -> raise "retention smoke test failed: #{inspect(reason)}"
+      invalid -> raise "retention smoke test returned invalid data: #{inspect(invalid)}"
     end
   end
 

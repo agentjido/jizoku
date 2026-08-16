@@ -884,6 +884,45 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert visible.run_id == started.run_id
   end
 
+  test "previews and applies retention through the host operations boundary" do
+    unique = System.unique_integer([:positive])
+    queue = "minimal-host-retention-#{unique}"
+    runtime_opts = [queue: queue]
+
+    assert {:ok, started} =
+             WorkflowRuns.start_indexed_dependency_recovery(
+               %{
+                 account_id: "acct_retention_#{unique}",
+                 invoice_id: "invoice_retention_#{unique}",
+                 attempt_id: "attempt_retention_#{unique}"
+               },
+               runtime_opts
+             )
+
+    assert {:ok, _cancelled} = WorkflowRuns.cancel(started.run_id, runtime_opts)
+
+    assert {:ok, _archived} =
+             WorkflowRuns.archive_for_retention_hold(started.run_id, runtime_opts)
+
+    now = DateTime.utc_now()
+
+    assert {:ok, plan} =
+             WorkflowRuns.preview_retention(
+               [terminal_before: DateTime.add(now, 60, :second)],
+               now: now
+             )
+
+    assert Enum.map(plan.eligible, & &1.run_id) == [started.run_id]
+
+    assert {:ok, receipt} =
+             WorkflowRuns.apply_retention(plan, plan.confirmation_token)
+
+    assert receipt.run_ids == [started.run_id]
+    assert receipt.run_entries_deleted > 0
+    assert receipt.dispatch_entries_deleted > 0
+    assert {:error, :not_found} = WorkflowRuns.inspect_run(started.run_id, runtime_opts)
+  end
+
   test "inspects a started run through the host boundary" do
     assert {:ok, run} =
              WorkflowRuns.start_payment_recovery(%{

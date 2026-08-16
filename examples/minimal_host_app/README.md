@@ -183,6 +183,9 @@ The smoke task:
   attempt telemetry event
 - activates the same digest workflow through the host app's cron plugin
 - verifies both digest triggers complete through the same workflow graph
+- archives a terminal run, previews its exact retention identities through
+  `MinimalHostApp.WorkflowRuns`, applies the confirmed plan, and verifies the
+  retained receipt and physical removal through the host boundary
 
 The sample enables `config :jizoku, continuation_fences: :enabled`,
 `jido_effects: :enabled`, and `jido_emit_effects: :enabled` only in development

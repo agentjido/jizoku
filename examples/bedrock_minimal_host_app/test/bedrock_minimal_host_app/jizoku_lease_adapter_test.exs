@@ -374,6 +374,35 @@ defmodule BedrockMinimalHostApp.JizokuLeaseAdapterTest do
     end)
   end
 
+  test "previews and applies retention through the Bedrock host boundary" do
+    queue = "bedrock-retention-#{System.unique_integer([:positive])}"
+
+    with_jizoku_queue(queue, fn ->
+      assert {:ok, started} =
+               WorkflowRuns.start_cancellable_wait(%{account_id: "acct_bedrock_retention"})
+
+      assert {:ok, _cancelled} = WorkflowRuns.cancel(started.run_id)
+      assert {:ok, _archived} = WorkflowRuns.archive_for_retention(started.run_id)
+
+      now = DateTime.utc_now()
+
+      assert {:ok, plan} =
+               WorkflowRuns.preview_retention(
+                 [terminal_before: DateTime.add(now, 60, :second)],
+                 now: now
+               )
+
+      assert Enum.map(plan.eligible, & &1.run_id) == [started.run_id]
+
+      assert {:ok, receipt} =
+               WorkflowRuns.apply_retention(plan, plan.confirmation_token)
+
+      assert receipt.run_ids == [started.run_id]
+      assert receipt.dispatch_entries_deleted > 0
+      assert {:error, :not_found} = WorkflowRuns.inspect_run(started.run_id)
+    end)
+  end
+
   test "applies manual control signals through the example app boundary" do
     queue = "bedrock-signal-manual-#{System.unique_integer([:positive])}"
 

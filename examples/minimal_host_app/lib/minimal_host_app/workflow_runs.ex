@@ -261,6 +261,20 @@ defmodule MinimalHostApp.WorkflowRuns do
     Jizoku.unarchive_run(run_id, opts)
   end
 
+  @doc "Builds an exact, read-only retention plan through the host operations boundary."
+  @spec preview_retention(keyword(), keyword()) ::
+          {:ok, Jizoku.Retention.Plan.t()} | {:error, term()}
+  def preview_retention(filters, opts \\ []) when is_list(filters) and is_list(opts) do
+    Jizoku.preview_retention(filters, opts)
+  end
+
+  @doc "Applies one exact retention plan after explicit token confirmation."
+  @spec apply_retention(Jizoku.Retention.Plan.t(), String.t(), keyword()) ::
+          {:ok, Jizoku.Retention.Receipt.t()} | {:error, term()}
+  def apply_retention(plan, confirmation, opts \\ []) do
+    Jizoku.apply_retention(plan, confirmation, opts)
+  end
+
   @spec resume(Ecto.UUID.t()) :: {:ok, run_result()} | {:error, term()}
   def resume(run_id), do: resume(run_id, %{})
 

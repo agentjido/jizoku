@@ -47,6 +47,13 @@ itself.
   by tenant or domain. Omitting it selects the legacy unpartitioned namespace.
 - Treat partitions as storage routing, not authorization. Authorize the caller
   before selecting a partition or returning its run data.
+- Archive terminal runs before retention deletion. Preview is read-only; review
+  exact candidates, blocks, affected identities, expiry, and confirmation token
+  before calling `Jizoku.apply_retention/3`.
+- Run bounded retention ownership backfill separately for the legacy namespace
+  and each configured partition before the first Ecto apply. Never edit a plan,
+  bypass host legal/export holds, or treat retention receipts as payload audit
+  history.
 - Use `Jizoku.list_runs/2` for index views and
   `Jizoku.inspect_run/2`, `Jizoku.inspect_run_graph/2`,
   `Jizoku.inspect_run_timeline/2`, or `Jizoku.explain_run/2` for details.

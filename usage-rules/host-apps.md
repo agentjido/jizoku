@@ -39,6 +39,13 @@
 - Rebuild the optional Ecto run-search projection separately for the legacy
   namespace and every configured partition after applying its migration. Do
   not enumerate partitions from request input or ask Jizoku to scan them.
+- Keep retention behind an authorized host operations boundary. Use archive as
+  the reversible state, keep Mix and API preview read-only by default, and
+  require exact expiring confirmation before irreversible apply.
+- Backfill legacy `retention_run_id` ownership in bounded batches for each
+  trusted partition. Take a consistent backup, keep legal/export policy in a
+  host `Jizoku.Retention.Policy`, and retry lost apply responses with the exact
+  plan so the stored payload-free receipt provides the idempotency fence.
 
 ## Worker Loop
 
