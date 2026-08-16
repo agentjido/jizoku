@@ -1424,6 +1424,7 @@ defmodule Jizoku.Runtime.DispatchAgent do
           queue: queue,
           step: runnable_value(runnable, :step),
           input: runnable_value(runnable, :input),
+          event_wait_timeout: runnable_value(runnable, :event_wait_timeout),
           trace: runnable_value(runnable, :trace),
           visible_at: runnable_value(runnable, :visible_at),
           deadline: runnable_value(runnable, :deadline),

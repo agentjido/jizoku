@@ -533,7 +533,8 @@ defmodule Jizoku.Runtime.Journal.Executor do
 
     claim = claim_context(dispatch_agent, workflow_agent, attempt, claim_id, claim_token)
 
-    with {:ok, result} <- apply_step_output_mapping(definition, step_name, output),
+    with {:ok, result} <-
+           apply_completed_output_mapping(definition, step_name, output, execution_opts),
          {:ok, %{agent: dispatch_agent, attempt: %ActionAttempt{} = completed_attempt}} <-
            complete_current_claim(
              storage,
@@ -558,6 +559,18 @@ defmodule Jizoku.Runtime.Journal.Executor do
       {:error, _reason} = error ->
         error
     end
+  end
+
+  defp apply_completed_output_mapping(definition, step_name, output, execution_opts)
+       when is_list(execution_opts) do
+    case Keyword.fetch(execution_opts, :event_wait_timeout) do
+      {:ok, _timeout} -> {:ok, %{}}
+      :error -> apply_step_output_mapping(definition, step_name, output)
+    end
+  end
+
+  defp apply_completed_output_mapping(definition, step_name, output, _execution_opts) do
+    apply_step_output_mapping(definition, step_name, output)
   end
 
   defp complete_run_instruction(
@@ -1292,6 +1305,18 @@ defmodule Jizoku.Runtime.Journal.Executor do
          progression
        ) do
     cond do
+      event_wait_timeout_execution?(progression) ->
+        with {:ok, progression_entries} <-
+               event_wait_timeout_progression_entries(
+                 workflow_agent,
+                 attempt,
+                 definition,
+                 step_name,
+                 progression
+               ) do
+          {:ok, nil, progression_entries}
+        end
+
       deferred_continuation_execution?(progression) ->
         with {:ok, progression_entries} <-
                deferred_continuation_progression_entries(
@@ -1356,6 +1381,90 @@ defmodule Jizoku.Runtime.Journal.Executor do
           {:ok, Definition.serialize_transition_decision(transition), progression_entries}
         end
     end
+  end
+
+  defp event_wait_timeout_execution?(%{execution_opts: execution_opts})
+       when is_list(execution_opts) do
+    Keyword.has_key?(execution_opts, :event_wait_timeout)
+  end
+
+  defp event_wait_timeout_execution?(_progression) do
+    false
+  end
+
+  defp event_wait_timeout_progression_entries(
+         workflow_agent,
+         %ActionAttempt{} = attempt,
+         definition,
+         step_name,
+         %{execution_opts: execution_opts, now: %DateTime{} = now} = progression
+       ) do
+    timeout = Keyword.fetch!(execution_opts, :event_wait_timeout)
+
+    with :ok <- active_event_wait_timeout(workflow_agent, step_name, timeout, now),
+         {:ok, target} <- event_wait_timeout_target(definition, timeout),
+         result <- event_wait_timeout_result(timeout, now),
+         context <- journal_context(workflow_agent, attempt, result),
+         {:ok, target_entries} <-
+           success_target_progression_entries(
+             workflow_agent,
+             attempt,
+             definition,
+             target,
+             context,
+             progression
+           ) do
+      {:ok,
+       [
+         event_wait_timeout_selected_entry!(attempt, step_name, timeout, target, now),
+         event_wait_timeout_resolved_entry!(attempt, step_name, timeout, result, target, now)
+         | target_entries
+       ]}
+    end
+  end
+
+  defp active_event_wait_timeout(workflow_agent, step_name, timeout, %DateTime{} = now) do
+    manual_state = Projection.manual_state(workflow_agent.state.projection)
+    metadata = if is_map(manual_state), do: Map.get(manual_state, :metadata, %{}), else: %{}
+    active_timeout = map_value(metadata, :timeout, %{})
+
+    cond do
+      not match?(%{kind: "event_wait"}, manual_state) ->
+        {:error, {:event_wait_not_found, %{step: step_name}}}
+
+      map_value(manual_state, :step) != Definition.serialize_step(step_name) ->
+        {:error, {:event_wait_not_found, %{step: step_name}}}
+
+      map_value(active_timeout, :timeout_runnable_key) != timeout.timeout_runnable_key ->
+        {:error, {:stale_event_wait_timeout, timeout.timeout_runnable_key}}
+
+      DateTime.compare(now, timeout.due_at) == :lt ->
+        {:error, {:event_wait_timeout_not_due, timeout.due_at}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp event_wait_timeout_target(_definition, %{target: "complete"}) do
+    {:ok, :complete}
+  end
+
+  defp event_wait_timeout_target(definition, %{target: target}) when is_binary(target) do
+    case Definition.deserialize_step(definition, target) do
+      step_name when is_atom(step_name) -> {:ok, step_name}
+      _unknown -> {:error, {:unknown_step, target}}
+    end
+  end
+
+  defp event_wait_timeout_result(timeout, %DateTime{} = now) do
+    %{
+      event_timeout: %{
+        event: timeout.event,
+        correlation: timeout.correlation,
+        timed_out_at: now
+      }
+    }
   end
 
   defp deferred_continuation_execution?(%{execution_opts: execution_opts})
@@ -1471,7 +1580,7 @@ defmodule Jizoku.Runtime.Journal.Executor do
          definition,
          step_name,
          result,
-         %{now: now, schedule_base_at: paused_at}
+         %{queue: queue, now: now, schedule_base_at: paused_at}
        ) do
     with {:ok, step} <- Definition.step(definition, step_name) do
       case step do
@@ -1482,29 +1591,109 @@ defmodule Jizoku.Runtime.Journal.Executor do
           approval_progression_entries(attempt, definition, step_name, now, paused_at)
 
         %{module: :await_event} ->
-          event_wait_progression_entries(attempt, step_name, now, paused_at, result)
+          event_wait_progression_entries(
+            attempt,
+            definition,
+            step_name,
+            result,
+            %{queue: queue, now: now, opened_at: paused_at}
+          )
       end
     end
   end
 
-  defp event_wait_progression_entries(attempt, step_name, now, opened_at, result) do
+  defp event_wait_progression_entries(
+         attempt,
+         definition,
+         step_name,
+         result,
+         %{queue: queue, now: now, opened_at: opened_at}
+       ) do
     case Keyword.get(attempt.execution_opts, :await_event) do
-      %{event: event, correlation: correlation} ->
-        {:ok,
-         [
-           event_wait_opened_entry!(
-             attempt,
-             step_name,
-             event,
-             correlation,
-             result,
-             now,
-             opened_at
-           )
-         ]}
+      %{event: event, correlation: correlation} = wait ->
+        timeout_context = %{
+          step_name: step_name,
+          event: event,
+          correlation: correlation,
+          timeout: Map.get(wait, :timeout),
+          queue: queue,
+          now: now,
+          opened_at: opened_at
+        }
+
+        with {:ok, timeout, timeout_entries} <-
+               event_wait_timeout_plan(attempt, definition, timeout_context) do
+          {:ok,
+           [
+             event_wait_opened_entry!(
+               attempt,
+               step_name,
+               event,
+               correlation,
+               result,
+               timeout,
+               now,
+               opened_at
+             )
+             | timeout_entries
+           ]}
+        end
 
       _missing ->
         {:error, {:invalid_event_wait, step_name}}
+    end
+  end
+
+  defp event_wait_timeout_plan(
+         _attempt,
+         _definition,
+         %{timeout: nil}
+       ) do
+    {:ok, nil, []}
+  end
+
+  defp event_wait_timeout_plan(
+         %ActionAttempt{} = attempt,
+         definition,
+         %{
+           step_name: step_name,
+           event: event,
+           correlation: correlation,
+           timeout: %{after: timeout_ms, on_timeout: target},
+           queue: queue,
+           now: %DateTime{} = now,
+           opened_at: %DateTime{} = opened_at
+         }
+       ) do
+    due_at = DateTime.add(opened_at, timeout_ms, :millisecond)
+    timeout_runnable_key = "#{attempt.runnable_key}:timeout"
+
+    timeout = %{
+      wait_id: attempt.runnable_key,
+      timeout_runnable_key: timeout_runnable_key,
+      event: event,
+      correlation: correlation,
+      target: Definition.serialize_step(target),
+      after: timeout_ms,
+      due_at: due_at
+    }
+
+    with {:ok, recovery} <- replay_recovery_policy(definition, step_name) do
+      runnable = %{
+        run_id: attempt.run_id,
+        runnable_key: timeout_runnable_key,
+        idempotency_key: timeout_runnable_key,
+        attempt_number: 1,
+        queue: queue,
+        step: Definition.serialize_step(step_name),
+        input: attempt.input || %{},
+        recovery: recovery,
+        visible_at: due_at,
+        trace: child_trace(attempt),
+        event_wait_timeout: timeout
+      }
+
+      {:ok, timeout, [runnables_planned_entry!(attempt.run_id, [runnable], now)]}
     end
   end
 
@@ -2671,18 +2860,69 @@ defmodule Jizoku.Runtime.Journal.Executor do
          event,
          correlation,
          result,
+         timeout,
          %DateTime{} = now,
          %DateTime{} = opened_at
        )
        when is_atom(step_name) and is_binary(event) and is_binary(correlation) and is_map(result) do
-    entry!(:external_event_wait_opened, %{
+    attrs =
+      maybe_put(
+        %{
+          run_id: attempt.run_id,
+          wait_id: attempt.runnable_key,
+          step: Definition.serialize_step(step_name),
+          event: event,
+          correlation: correlation,
+          result: result,
+          opened_at: opened_at,
+          trace: attempt.trace,
+          occurred_at: now
+        },
+        :timeout,
+        timeout
+      )
+
+    entry!(:external_event_wait_opened, attrs)
+  end
+
+  defp event_wait_timeout_selected_entry!(
+         %ActionAttempt{} = attempt,
+         step_name,
+         timeout,
+         target,
+         %DateTime{} = now
+       ) do
+    entry!(:external_event_wait_timeout_selected, %{
       run_id: attempt.run_id,
-      wait_id: attempt.runnable_key,
+      wait_id: timeout.wait_id,
+      timeout_runnable_key: timeout.timeout_runnable_key,
       step: Definition.serialize_step(step_name),
-      event: event,
-      correlation: correlation,
+      event: timeout.event,
+      correlation: timeout.correlation,
+      target: Definition.serialize_step(target),
+      selected_at: now,
+      trace: attempt.trace,
+      occurred_at: now
+    })
+  end
+
+  defp event_wait_timeout_resolved_entry!(
+         %ActionAttempt{} = attempt,
+         step_name,
+         timeout,
+         result,
+         target,
+         %DateTime{} = now
+       ) do
+    entry!(:external_event_wait_resolved, %{
+      run_id: attempt.run_id,
+      wait_id: timeout.wait_id,
+      step: Definition.serialize_step(step_name),
+      event: timeout.event,
+      correlation: timeout.correlation,
+      action: "timed_out",
       result: result,
-      opened_at: opened_at,
+      timeout_target: Definition.serialize_step(target),
       trace: attempt.trace,
       occurred_at: now
     })
@@ -3636,6 +3876,31 @@ defmodule Jizoku.Runtime.Journal.Executor do
   end
 
   defp record_step_result(
+         {:ok, output, [event_wait_timeout: _timeout] = execution_opts, guardrails},
+         %{
+           runtime: runtime,
+           claim: %ClaimContext{} = claim,
+           definition: definition,
+           step_name: step_name
+         } = execution,
+         mark_finishing
+       ) do
+    mark_finishing.()
+
+    with :ok <- run_test_before_completion_hook(execution.opts, claim.attempt) do
+      resolve_event_timeout_attempt(
+        runtime,
+        claim,
+        definition,
+        step_name,
+        output,
+        execution_opts,
+        guardrails
+      )
+    end
+  end
+
+  defp record_step_result(
          {:ok, output, execution_opts, guardrails},
          %{runtime: runtime, claim: claim, definition: definition, step_name: step_name} =
            execution,
@@ -3661,6 +3926,103 @@ defmodule Jizoku.Runtime.Journal.Executor do
        ) do
     mark_finishing.()
     fail_attempt(runtime, claim, workflow, definition, step_name, reason)
+  end
+
+  defp resolve_event_timeout_attempt(
+         %RuntimeContext{storage: storage, queue: queue, now: now} = runtime,
+         %ClaimContext{
+           dispatch_agent: dispatch_agent,
+           workflow_agent: workflow_agent,
+           attempt: %ActionAttempt{} = attempt,
+           claim_id: claim_id,
+           claim_token: claim_token
+         },
+         definition,
+         step_name,
+         output,
+         execution_opts,
+         guardrails
+       ) do
+    with {:ok, result} <-
+           apply_completed_output_mapping(definition, step_name, output, execution_opts),
+         {:ok, workflow_agent} <-
+           resolve_event_timeout_progression(
+             workflow_agent,
+             runtime,
+             %{
+               attempt: attempt,
+               definition: definition,
+               step_name: step_name,
+               result: result,
+               execution_opts: execution_opts
+             }
+           ),
+         {:ok, dispatch_agent} <-
+           settle_event_timeout_claim(
+             storage,
+             dispatch_agent,
+             attempt.runnable_key,
+             claim_id,
+             claim_token,
+             result,
+             now: now,
+             execution_opts: execution_opts,
+             guardrails: guardrails
+           ),
+         {:ok, _schedule_update} <-
+           schedule_pending_dispatches(storage, workflow_agent, dispatch_agent, now) do
+      Inspection.snapshot(storage, attempt.run_id, queue: queue, now: now)
+    end
+  end
+
+  defp resolve_event_timeout_progression(workflow_agent, runtime, success) do
+    case append_success_progression(workflow_agent, runtime, success) do
+      {:ok, workflow_agent} ->
+        {:ok, workflow_agent}
+
+      {:error, :conflict} ->
+        rebuild_resolved_event_timeout(runtime.storage, workflow_agent, success.attempt)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp rebuild_resolved_event_timeout(storage, workflow_agent, %ActionAttempt{} = attempt) do
+    with {:ok, rebuilt_agent} <-
+           WorkflowAgent.rebuild(storage, workflow_agent.state.run_id) do
+      if success_progression_recorded?(rebuilt_agent, attempt) do
+        {:ok, rebuilt_agent}
+      else
+        {:error, :conflict}
+      end
+    end
+  end
+
+  defp settle_event_timeout_claim(
+         storage,
+         dispatch_agent,
+         runnable_key,
+         claim_id,
+         claim_token,
+         result,
+         opts
+       ) do
+    case complete_current_claim(
+           storage,
+           dispatch_agent,
+           runnable_key,
+           claim_id,
+           claim_token,
+           result,
+           opts
+         ) do
+      {:ok, %{agent: dispatch_agent}} ->
+        {:ok, dispatch_agent}
+
+      {:error, _reason} ->
+        DispatchAgent.rebuild(storage, dispatch_agent.state.queue)
+    end
   end
 
   defp run_repo_transaction_attempt(repo, execution) do
@@ -3799,6 +4161,24 @@ defmodule Jizoku.Runtime.Journal.Executor do
   end
 
   defp evaluated_step_result(execution, claim) do
+    case claim.attempt.event_wait_timeout do
+      timeout when is_map(timeout) ->
+        {:ok, %{}, [event_wait_timeout: timeout], []}
+
+      nil ->
+        evaluated_workflow_step_result(execution, claim)
+
+      invalid_timeout ->
+        {:error,
+         %{
+           message: "invalid external event timeout dispatch metadata",
+           reason: invalid_timeout,
+           retryable?: false
+         }}
+    end
+  end
+
+  defp evaluated_workflow_step_result(execution, claim) do
     with {:ok, input_guardrails} <-
            evaluate_runtime_guardrails(execution, :input, claim.attempt.input),
          {:ok, action_guardrails} <-

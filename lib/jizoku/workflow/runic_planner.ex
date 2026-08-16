@@ -3,6 +3,7 @@ defmodule Jizoku.Workflow.RunicPlanner do
   @moduledoc false
 
   alias Jizoku.Runtime.StepInput
+  alias Jizoku.Workflow.EventWait
   alias Jizoku.Workflow.Info
   alias Jizoku.Workflow.RunicPlanner.Runnable
   alias Jizoku.Workflow.Spec
@@ -135,11 +136,17 @@ defmodule Jizoku.Workflow.RunicPlanner do
           acc
       end)
 
+    timeout_parents =
+      Enum.reduce(spec.steps, transition_parents, fn step, acc ->
+        target = EventWait.timeout_target(step.opts)
+        put_transition_parent(acc, step_names, step.name, target)
+      end)
+
     Map.new(spec.steps, fn step ->
       parents =
         case Keyword.get(step.opts, :after) do
           dependencies when is_list(dependencies) -> dependencies
-          _other -> Map.get(transition_parents, step.name, [])
+          _other -> Map.get(timeout_parents, step.name, [])
         end
 
       {step.name, parents}

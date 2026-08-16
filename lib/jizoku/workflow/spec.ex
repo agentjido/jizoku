@@ -838,7 +838,7 @@ defmodule Jizoku.Workflow.Spec do
       if is_map(step) and field(step, :module) in @built_in_step_kinds and
            Keyword.keyword?(field(step, :opts) || []) do
         acc
-        |> validate_built_in_step(step, index)
+        |> validate_built_in_step(step, index, steps)
         |> validate_manual_step_transition_conditions(step, index, transitions)
         |> validate_approval_transitions(step, index, transitions)
       else
@@ -848,7 +848,7 @@ defmodule Jizoku.Workflow.Spec do
     |> validate_dependency_manual_step_kinds(steps)
   end
 
-  defp validate_built_in_step(errors, step, index) do
+  defp validate_built_in_step(errors, step, index, steps) do
     name = field(step, :name)
     opts = field(step, :opts) || []
 
@@ -870,7 +870,7 @@ defmodule Jizoku.Workflow.Spec do
     case field(step, :module) do
       :wait -> validate_wait_step(errors, name, opts, index)
       :log -> validate_log_step(errors, name, opts, index)
-      :await_event -> validate_event_wait_step(errors, name, opts, index)
+      :await_event -> validate_event_wait_step(errors, name, opts, index, steps)
       _other -> errors
     end
   end
@@ -914,7 +914,7 @@ defmodule Jizoku.Workflow.Spec do
     )
   end
 
-  defp validate_event_wait_step(errors, name, opts, index) do
+  defp validate_event_wait_step(errors, name, opts, index, steps) do
     event = Keyword.get(opts, :event)
     correlation = Keyword.get(opts, :correlation)
 
@@ -933,6 +933,39 @@ defmodule Jizoku.Workflow.Spec do
       "built-in step #{inspect(name)} requires :correlation to be a storage-safe string or non-empty input path",
       %{step: name, correlation: correlation}
     )
+    |> validate_event_wait_timeout(name, opts, index, steps)
+  end
+
+  defp validate_event_wait_timeout(errors, name, opts, index, steps) do
+    case EventWait.timeout_from_opts(opts) do
+      {:ok, nil} ->
+        errors
+
+      {:ok, %{on_timeout: target}} ->
+        valid_target? =
+          target != name and
+            (target == :complete or Enum.any?(steps, &(field(&1, :name) == target)))
+
+        maybe_error(
+          errors,
+          valid_target?,
+          [:steps, index, :opts, :timeout],
+          :invalid_event_timeout_target,
+          "built-in step #{inspect(name)} defines an invalid :timeout target",
+          %{step: name, target: target}
+        )
+
+      {:error, _reason} ->
+        [
+          error(
+            [:steps, index, :opts, :timeout],
+            :invalid_event_timeout,
+            "built-in step #{inspect(name)} defines an invalid :timeout policy",
+            %{step: name, timeout: Keyword.get(opts, :timeout)}
+          )
+          | errors
+        ]
+    end
   end
 
   defp validate_approval_transitions(errors, step, index, transitions) do
@@ -1770,11 +1803,19 @@ defmodule Jizoku.Workflow.Spec do
         transitions
         |> Enum.map(&field(&1, :to))
         |> MapSet.new()
+        |> MapSet.union(event_timeout_targets(steps))
 
       steps
       |> Enum.map(&field(&1, :name))
       |> Enum.reject(&MapSet.member?(transition_targets, &1))
     end
+  end
+
+  defp event_timeout_targets(steps) do
+    steps
+    |> Enum.map(fn step -> EventWait.timeout_target(field(step, :opts) || []) end)
+    |> Enum.reject(&is_nil/1)
+    |> MapSet.new()
   end
 
   defp step_names(steps) do
