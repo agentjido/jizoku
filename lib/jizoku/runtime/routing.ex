@@ -14,7 +14,13 @@ defmodule Jizoku.Runtime.Routing do
   @read_models [:read_model]
   @runtimes [:journal]
   @projection_snapshot_options [:queue, :now]
-  @projection_list_options [:queue, :now]
+  @projection_list_options [
+    :queue,
+    :now,
+    :search_attribute_schema,
+    :actor,
+    :visibility_policy
+  ]
   @journal_start_options [
     :runtime,
     :journal_storage,

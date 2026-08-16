@@ -87,6 +87,14 @@ defmodule Jizoku.SearchAttributesTest do
 
     assert Enum.any?(list_errors, &(&1.code == :list_too_large))
 
+    high_cardinality_schema =
+      Map.new(1..33, fn index -> {"attribute_#{index}", :string} end)
+
+    assert {:error, {:invalid_search_attribute_schema, cardinality_errors}} =
+             SearchAttributes.validate_schema(high_cardinality_schema)
+
+    assert Enum.any?(cardinality_errors, &(&1.code == :too_many_keys))
+
     assert SearchAttributes.valid_idempotency_key?("support:update")
     refute SearchAttributes.valid_idempotency_key?(String.duplicate("x", 513))
     refute SearchAttributes.valid_idempotency_key?(<<255>>)

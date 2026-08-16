@@ -12,6 +12,7 @@ defmodule Jizoku.ReadModel.Listing.Summary do
           partition: String.t() | nil,
           workflow: String.t(),
           definition_version: String.t() | nil,
+          search_attributes: map(),
           continuation: %{
             required(:continued_from) => map() | nil,
             required(:continued_to) => map() | nil
@@ -22,6 +23,8 @@ defmodule Jizoku.ReadModel.Listing.Summary do
           terminal?: boolean(),
           terminal_status: atom() | nil,
           deadline: map() | nil,
+          started_at: DateTime.t() | nil,
+          terminal_at: DateTime.t() | nil,
           indexed_at: DateTime.t(),
           thread_revision: non_neg_integer(),
           anomalies: [map()]
@@ -50,8 +53,11 @@ defmodule Jizoku.ReadModel.Listing.Summary do
     :terminal?,
     :terminal_status,
     :deadline,
+    :started_at,
+    :terminal_at,
     :indexed_at,
     :thread_revision,
+    search_attributes: %{},
     continuation: %{continued_from: nil, continued_to: nil},
     history: %{
       thread_revision: 0,

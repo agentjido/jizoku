@@ -198,7 +198,9 @@ defmodule Jizoku.ReadModel.Visibility do
 
   defp redact_view(view, :auditor), do: view
 
-  defp redact_view(%Summary{} = summary, _scope), do: summary
+  defp redact_view(%Summary{} = summary, _scope) do
+    %Summary{summary | search_attributes: %{}}
+  end
 
   defp redact_view(%Snapshot{} = snapshot, _scope) do
     %Snapshot{
