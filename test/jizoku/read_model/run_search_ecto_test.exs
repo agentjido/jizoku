@@ -153,6 +153,46 @@ defmodule Jizoku.ReadModel.RunSearchEctoTest do
     assert listed.run_id == started.run_id
   end
 
+  test "falls back safely before the additive archive migration" do
+    SQL.query!(
+      Repo,
+      "ALTER TABLE jizoku_run_search DROP COLUMN archive_reason, DROP COLUMN archived_at",
+      []
+    )
+
+    assert {:ok, started} =
+             Jizoku.start(
+               Workflow,
+               :manual,
+               %{},
+               runtime_options(search_attributes: %{"account_id" => "acct_archive_fallback"})
+             )
+
+    assert {:ok, _cancelled} = Jizoku.cancel(started.run_id, runtime_options())
+
+    assert {:ok, archived} =
+             Jizoku.archive_run(
+               started.run_id,
+               Keyword.delete(
+                 runtime_options(reason: "migration_pending"),
+                 :search_attribute_schema
+               )
+             )
+
+    assert archived.archived?
+
+    assert {:ok, []} = Jizoku.list_runs([], runtime_options())
+
+    assert {:ok, [listed]} =
+             Jizoku.list_runs(
+               [archived: :only],
+               runtime_options(visibility_policy: :auditor)
+             )
+
+    assert listed.run_id == started.run_id
+    assert listed.archive_reason == "migration_pending"
+  end
+
   test "falls back to journals while an existing projection is incomplete" do
     assert {:ok, matching} =
              Jizoku.start(

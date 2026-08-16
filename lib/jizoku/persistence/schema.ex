@@ -6,7 +6,7 @@ defmodule Jizoku.Persistence.Schema do
   host migrations and live-database diagnostics use the same required tables.
   """
 
-  @baseline 2
+  @baseline 3
   @timestamp %{type: "timestamp", nullable?: false, precision: 6}
   @tables %{
     "jizoku_journal_threads" => %{
@@ -62,6 +62,8 @@ defmodule Jizoku.Persistence.Schema do
         "search_attributes" => %{type: "jsonb", nullable?: false},
         "started_at" => @timestamp,
         "terminal_at" => %{type: "timestamp", nullable?: true, precision: 6},
+        "archived_at" => %{type: "timestamp", nullable?: true, precision: 6},
+        "archive_reason" => %{type: "text", nullable?: true},
         "thread_revision" => %{type: "int8", nullable?: false},
         "inserted_at" => @timestamp,
         "updated_at" => @timestamp
@@ -73,6 +75,7 @@ defmodule Jizoku.Persistence.Schema do
         ["partition_key", "status", "started_at", "run_id"],
         ["partition_key", "definition_version", "started_at", "run_id"],
         ["partition_key", "terminal_at", "run_id"],
+        ["partition_key", "archived_at", "started_at", "run_id"],
         ["search_attributes"]
       ]
     }

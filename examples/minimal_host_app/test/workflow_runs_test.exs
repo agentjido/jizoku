@@ -841,6 +841,49 @@ defmodule MinimalHostApp.WorkflowRunsTest do
            end)
   end
 
+  test "archives and restores terminal runs through the host dashboard boundary" do
+    unique = System.unique_integer([:positive])
+    account_id = "acct_archive_#{unique}"
+    queue = "minimal-host-archive-#{unique}"
+    runtime_opts = [queue: queue]
+
+    assert {:ok, started} =
+             WorkflowRuns.start_indexed_dependency_recovery(
+               %{
+                 account_id: account_id,
+                 invoice_id: "invoice_archive_#{unique}",
+                 attempt_id: "attempt_archive_#{unique}"
+               },
+               runtime_opts
+             )
+
+    assert {:ok, _cancelled} = WorkflowRuns.cancel(started.run_id, runtime_opts)
+
+    assert {:ok, archived} =
+             WorkflowRuns.archive_for_retention_hold(started.run_id, runtime_opts)
+
+    assert archived.archived?
+    assert archived.archive_reason == "retention_hold"
+
+    assert {:ok, %Page{items: [], next_cursor: nil}} =
+             WorkflowRuns.page_dependency_recovery_runs(account_id, first: 10)
+
+    assert {:ok, [listed]} =
+             WorkflowRuns.list_archived_dependency_recovery_runs(account_id)
+
+    assert listed.run_id == started.run_id
+    assert listed.archived?
+    assert listed.archive_reason == nil
+
+    assert {:ok, restored} = WorkflowRuns.unarchive(started.run_id, runtime_opts)
+    refute restored.archived?
+
+    assert {:ok, %Page{items: [visible], next_cursor: nil}} =
+             WorkflowRuns.page_dependency_recovery_runs(account_id, first: 10)
+
+    assert visible.run_id == started.run_id
+  end
+
   test "inspects a started run through the host boundary" do
     assert {:ok, run} =
              WorkflowRuns.start_payment_recovery(%{

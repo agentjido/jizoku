@@ -225,7 +225,7 @@ defmodule Jizoku.Jido.SignalTest do
       Map.put(agent.state.projection, @search_attribute_updates_key, nil)
     ]
 
-    assert Map.get(agent.state.projection, @checkpoint_version_key) == 5
+    assert Map.get(agent.state.projection, @checkpoint_version_key) == 6
     refute Map.has_key?(agent.state.projection, :checkpoint_version)
     refute Map.has_key?(agent.state.projection, :command_history_count)
 

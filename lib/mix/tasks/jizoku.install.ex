@@ -18,6 +18,7 @@ defmodule Mix.Tasks.Jizoku.Install do
   @shortdoc "Installs Jizoku migrations into the host application"
   @journal_migration_name "create_jizoku_schema.exs"
   @search_migration_name "add_jizoku_run_search_projection.exs"
+  @archive_migration_name "add_jizoku_run_archives.exs"
   @journal_tables [
     "jizoku_journal_threads",
     "jizoku_journal_entries",
@@ -25,6 +26,7 @@ defmodule Mix.Tasks.Jizoku.Install do
   ]
   @journal_markers Enum.map(@journal_tables, &"create table(:#{&1}")
   @search_markers ["create table(:jizoku_run_search"]
+  @archive_markers ["add(:archived_at", "add(:archive_reason"]
   @migrations [
     %{
       name: @journal_migration_name,
@@ -35,6 +37,11 @@ defmodule Mix.Tasks.Jizoku.Install do
       name: @search_migration_name,
       source: "20260816000000_add_jizoku_run_search_projection.exs",
       markers: @search_markers
+    },
+    %{
+      name: @archive_migration_name,
+      source: "20260816001000_add_jizoku_run_archives.exs",
+      markers: @archive_markers
     }
   ]
 

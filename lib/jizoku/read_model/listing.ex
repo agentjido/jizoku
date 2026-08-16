@@ -35,7 +35,8 @@ defmodule Jizoku.ReadModel.Listing do
     :started_before,
     :terminal_after,
     :terminal_before,
-    :definition_version
+    :definition_version,
+    :archived
   ]
   @supported_options [:queue, :now, :search_attribute_schema, :actor, :visibility_policy]
   @default_page_size 50
@@ -54,6 +55,7 @@ defmodule Jizoku.ReadModel.Listing do
           | {:terminal_after, DateTime.t()}
           | {:terminal_before, DateTime.t()}
           | {:definition_version, String.t()}
+          | {:archived, :exclude | :only | :include}
   @type list_option ::
           {:queue, atom() | String.t()}
           | {:now, DateTime.t()}
@@ -77,6 +79,7 @@ defmodule Jizoku.ReadModel.Listing do
            | {:terminal_after, :invalid}
            | {:terminal_before, :invalid}
            | {:definition_version, :invalid}
+           | {:archived, :invalid}
            | {:opts, :invalid}
            | {:option, atom()}
            | {:queue, :invalid}
@@ -99,7 +102,8 @@ defmodule Jizoku.ReadModel.Listing do
   authoritative run projection. Filters never inspect workflow payloads,
   results, or arbitrary journal metadata. Search attributes are redacted by
   default and are only returned when the selected visibility policy resolves to
-  `:auditor`.
+  `:auditor`. Archived runs are excluded by default; use `archived: :only` or
+  `archived: :include` to select them explicitly.
   """
   @spec list(Journal.storage_config(), [list_filter()], [list_option()]) ::
           {:ok, [Summary.t()] | Page.t()} | {:error, list_error()}
@@ -151,7 +155,8 @@ defmodule Jizoku.ReadModel.Listing do
          :ok <- validate_optional_filter(filters, :started_after, &datetime?/1),
          :ok <- validate_optional_filter(filters, :started_before, &datetime?/1),
          :ok <- validate_optional_filter(filters, :terminal_after, &datetime?/1),
-         :ok <- validate_optional_filter(filters, :terminal_before, &datetime?/1) do
+         :ok <- validate_optional_filter(filters, :terminal_before, &datetime?/1),
+         :ok <- validate_optional_filter(filters, :archived, &valid_archived_filter?/1) do
       {:ok, filters}
     end
   end
@@ -319,6 +324,9 @@ defmodule Jizoku.ReadModel.Listing do
          status: Projection.status(projection),
          terminal?: Projection.terminal?(projection),
          terminal_status: Projection.terminal_status(projection),
+         archived?: Projection.archived?(projection),
+         archived_at: Map.get(projection, :archived_at),
+         archive_reason: Map.get(projection, :archive_reason),
          deadline: summary_deadline(projection, now),
          started_at: projection.started_at,
          terminal_at: projection.terminal_at,
@@ -473,23 +481,31 @@ defmodule Jizoku.ReadModel.Listing do
       started_before: Keyword.get(filters, :started_before),
       terminal_after: Keyword.get(filters, :terminal_after),
       terminal_before: Keyword.get(filters, :terminal_before),
-      definition_version: Keyword.get(filters, :definition_version)
+      definition_version: Keyword.get(filters, :definition_version),
+      archived: Keyword.get(filters, :archived, :exclude)
     }
   end
 
   defp cursor_query(query) do
-    Map.take(query, [
-      :workflow,
-      :status,
-      :attributes,
-      :partition,
-      :storage_partition,
-      :started_after,
-      :started_before,
-      :terminal_after,
-      :terminal_before,
-      :definition_version
-    ])
+    cursor_query =
+      Map.take(query, [
+        :workflow,
+        :status,
+        :attributes,
+        :partition,
+        :storage_partition,
+        :started_after,
+        :started_before,
+        :terminal_after,
+        :terminal_before,
+        :definition_version
+      ])
+
+    if query.archived == :exclude do
+      cursor_query
+    else
+      Map.put(cursor_query, :archived, query.archived)
+    end
   end
 
   defp cursor_position(%{after: nil}, _query_fingerprint, _now) do
@@ -534,7 +550,8 @@ defmodule Jizoku.ReadModel.Listing do
   end
 
   defp summary_match?(%Summary{} = summary, query) do
-    status_match?(summary, query.status) and
+    archived_match?(summary, query.archived) and
+      status_match?(summary, query.status) and
       definition_version_match?(summary, query.definition_version) and
       attributes_match?(summary, query.attributes) and
       after_time?(summary.terminal_at, query.terminal_after) and
@@ -546,6 +563,11 @@ defmodule Jizoku.ReadModel.Listing do
 
   defp status_match?(%Summary{}, nil), do: true
   defp status_match?(%Summary{status: current}, expected), do: current == expected
+
+  defp archived_match?(%Summary{archived?: false}, :exclude), do: true
+  defp archived_match?(%Summary{archived?: true}, :only), do: true
+  defp archived_match?(%Summary{}, :include), do: true
+  defp archived_match?(%Summary{}, _filter), do: false
 
   defp definition_version_match?(%Summary{}, nil), do: true
 
@@ -611,6 +633,8 @@ defmodule Jizoku.ReadModel.Listing do
   defp valid_first?(first), do: is_integer(first) and first > 0 and first <= @max_page_size
 
   defp valid_after?(cursor), do: non_empty_binary?(cursor)
+
+  defp valid_archived_filter?(value), do: value in [:exclude, :only, :include]
 
   defp pagination_conflict?(filters) do
     Keyword.has_key?(filters, :limit) and

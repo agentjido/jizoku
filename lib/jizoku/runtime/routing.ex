@@ -54,6 +54,7 @@ defmodule Jizoku.Runtime.Routing do
     :metadata
   ]
   @journal_control_options [:runtime, :journal_storage, :queue, :partition, :now]
+  @journal_archive_options [:reason | @journal_control_options]
   @journal_search_attribute_options [
     :runtime,
     :journal_storage,
@@ -189,6 +190,24 @@ defmodule Jizoku.Runtime.Routing do
   @spec journal_control_options(keyword()) :: keyword()
   def journal_control_options(overrides) do
     configured_journal_options(overrides, @journal_control_options)
+  end
+
+  @doc "Builds journal options for a reversible run archive command."
+  @spec journal_archive_options(keyword()) :: keyword()
+  def journal_archive_options(overrides) do
+    configured_journal_options(overrides, @journal_archive_options)
+  end
+
+  @doc "Validates public options for a reversible run archive command."
+  @spec public_archive_options(keyword() | term()) :: :ok | {:error, term()}
+  def public_archive_options(opts) do
+    validate_public_options(opts, @journal_archive_options)
+  end
+
+  @doc "Validates public options for a reversible run unarchive command."
+  @spec public_unarchive_options(keyword() | term()) :: :ok | {:error, term()}
+  def public_unarchive_options(opts) do
+    validate_public_options(opts, @journal_control_options)
   end
 
   @doc """

@@ -19,6 +19,7 @@ defmodule Jizoku do
   alias Jizoku.Runtime.DispatchAgent
   alias Jizoku.Runtime.DispatchProtocol
   alias Jizoku.Runtime.Journal.ChildStarter
+  alias Jizoku.Runtime.Journal.Commands.Archive
   alias Jizoku.Runtime.Journal.Commands.Cancellation
   alias Jizoku.Runtime.Journal.Commands.ContinueAsNew
   alias Jizoku.Runtime.Journal.Commands.Migration
@@ -785,6 +786,33 @@ defmodule Jizoku do
   def list_runs(filters \\ [], overrides \\ []) do
     with {:ok, :journal} <- Routing.runtime(overrides) do
       list_runs_with_runtime(:journal, filters, overrides)
+    end
+  end
+
+  @doc """
+  Archives one terminal run without deleting its durable history.
+
+  Archived runs are omitted from default listings but remain directly
+  inspectable and can be selected with the explicit `:archived` list filter.
+  `:reason` is required and should contain bounded, non-sensitive operational
+  context.
+  """
+  @spec archive_run(Ecto.UUID.t(), keyword()) ::
+          {:ok, Jizoku.ReadModel.Inspection.Snapshot.t()} | {:error, term()}
+  def archive_run(run_id, overrides \\ []) do
+    with :ok <- Routing.public_archive_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides) do
+      Archive.archive(run_id, Routing.journal_archive_options(overrides))
+    end
+  end
+
+  @doc "Restores one archived terminal run to default listing visibility."
+  @spec unarchive_run(Ecto.UUID.t(), keyword()) ::
+          {:ok, Jizoku.ReadModel.Inspection.Snapshot.t()} | {:error, term()}
+  def unarchive_run(run_id, overrides \\ []) do
+    with :ok <- Routing.public_unarchive_options(overrides),
+         {:ok, :journal} <- Routing.runtime(overrides) do
+      Archive.unarchive(run_id, Routing.journal_control_options(overrides))
     end
   end
 

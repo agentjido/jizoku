@@ -183,6 +183,10 @@ defmodule MinimalHostApp.Smoke do
             second: Jizoku.ReadModel.Listing.Page.t(),
             rebuild: map()
           },
+          archive_lifecycle: %{
+            archived: Jizoku.ReadModel.Inspection.Snapshot.t(),
+            restored: Jizoku.ReadModel.Inspection.Snapshot.t()
+          },
           journal_cron_digest: Jizoku.ReadModel.Inspection.Snapshot.t(),
           command_signals: map(),
           jido_command_signals: map(),
@@ -219,6 +223,7 @@ defmodule MinimalHostApp.Smoke do
     dynamic_work_inspection = run_dynamic_work_inspection!()
     graph_mutation_inspection = run_graph_mutation_inspection!()
     run_search_page = run_search_page!()
+    archive_lifecycle = run_archive_lifecycle!()
     journal_cron_digest = run_journal_cron_digest!()
     command_signals = run_signal_construction!()
     jido_command_signals = run_jido_signal_adapter!(command_signals)
@@ -252,6 +257,7 @@ defmodule MinimalHostApp.Smoke do
         dynamic_work_inspection: dynamic_work_inspection,
         graph_mutation_inspection: graph_mutation_inspection,
         run_search_page: run_search_page,
+        archive_lifecycle: archive_lifecycle,
         journal_cron_digest: journal_cron_digest,
         command_signals: command_signals,
         jido_command_signals: jido_command_signals,
@@ -316,6 +322,47 @@ defmodule MinimalHostApp.Smoke do
     else
       {:error, reason} -> raise "run-search smoke test failed: #{inspect(reason)}"
       invalid -> raise "run-search smoke test returned invalid data: #{inspect(invalid)}"
+    end
+  end
+
+  @doc "Exercises reversible archive state through the sample dashboard boundary."
+  @spec run_archive_lifecycle!() :: %{
+          archived: Jizoku.ReadModel.Inspection.Snapshot.t(),
+          restored: Jizoku.ReadModel.Inspection.Snapshot.t()
+        }
+  def run_archive_lifecycle! do
+    RuntimeHarness.ensure_runtime_started()
+    unique = Ecto.UUID.generate()
+    account_id = "acct_archive_#{unique}"
+    queue = "minimal-host-archive-#{unique}"
+    runtime_opts = [queue: queue]
+
+    attrs = %{
+      account_id: account_id,
+      invoice_id: "invoice_archive_#{unique}",
+      attempt_id: "attempt_archive_#{unique}"
+    }
+
+    with {:ok, started} <-
+           WorkflowRuns.start_indexed_dependency_recovery(attrs, runtime_opts),
+         {:ok, _cancelled} <- WorkflowRuns.cancel(started.run_id, runtime_opts),
+         {:ok, archived} <-
+           WorkflowRuns.archive_for_retention_hold(started.run_id, runtime_opts),
+         {:ok, %Jizoku.ReadModel.Listing.Page{items: []}} <-
+           WorkflowRuns.page_dependency_recovery_runs(account_id),
+         {:ok, [listed]} <-
+           WorkflowRuns.list_archived_dependency_recovery_runs(account_id),
+         {:ok, restored} <- WorkflowRuns.unarchive(started.run_id, runtime_opts) do
+      unless archived.archived? and listed.run_id == started.run_id and
+               listed.archive_reason == nil and
+               not restored.archived? do
+        raise "unexpected archive lifecycle result"
+      end
+
+      %{archived: archived, restored: restored}
+    else
+      {:error, reason} -> raise "archive smoke test failed: #{inspect(reason)}"
+      invalid -> raise "archive smoke test returned invalid data: #{inspect(invalid)}"
     end
   end
 

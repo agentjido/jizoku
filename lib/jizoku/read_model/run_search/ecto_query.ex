@@ -36,6 +36,7 @@ defmodule Jizoku.ReadModel.RunSearch.EctoQuery do
     |> maybe_before_time(:started_at, query.started_before)
     |> maybe_after_time(:terminal_at, query.terminal_after)
     |> maybe_before_time(:terminal_at, query.terminal_before)
+    |> maybe_archived(Map.get(query, :archived, :exclude))
     |> maybe_after_cursor(query.cursor_position)
     |> order_by([run], desc: run.started_at, desc: run.run_id)
     |> maybe_limit(query.collection_limit)
@@ -51,7 +52,9 @@ defmodule Jizoku.ReadModel.RunSearch.EctoQuery do
     storage_partition = Map.get(query, :storage_partition)
     partition_key = EctoProjector.partition_key(storage_partition)
 
-    case {query.partition == storage_partition, EctoProjector.available?(repo, opts)} do
+    capability = EctoProjector.archive_columns_available?(repo, opts)
+
+    case {query.partition == storage_partition, capability} do
       {false, _available} -> {:ok, []}
       {true, false} -> {:fallback, :unavailable}
       {true, true} -> query_candidates(repo, query, partition_key, expected_count, opts)
@@ -117,6 +120,16 @@ defmodule Jizoku.ReadModel.RunSearch.EctoQuery do
   defp maybe_before_time(query, field, value) do
     where(query, [run], field(run, ^field) < ^value)
   end
+
+  defp maybe_archived(query, :exclude) do
+    where(query, [run], is_nil(run.archived_at))
+  end
+
+  defp maybe_archived(query, :only) do
+    where(query, [run], not is_nil(run.archived_at))
+  end
+
+  defp maybe_archived(query, :include), do: query
 
   defp maybe_after_cursor(query, nil), do: query
 

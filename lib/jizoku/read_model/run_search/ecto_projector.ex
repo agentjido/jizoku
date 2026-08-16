@@ -9,7 +9,7 @@ defmodule Jizoku.ReadModel.RunSearch.EctoProjector do
   alias Jizoku.Runtime.DispatchProtocol
   alias Jizoku.Runtime.WorkflowAgent.Projection
 
-  @replace_fields [
+  @legacy_replace_fields [
     :partition,
     :workflow,
     :status,
@@ -21,6 +21,8 @@ defmodule Jizoku.ReadModel.RunSearch.EctoProjector do
     :thread_revision,
     :updated_at
   ]
+  @archive_fields [:archived_at, :archive_reason]
+  @replace_fields @legacy_replace_fields ++ @archive_fields
 
   @doc "Projects a complete persisted Jido run thread inside its append transaction."
   @spec project_thread(
@@ -70,6 +72,8 @@ defmodule Jizoku.ReadModel.RunSearch.EctoProjector do
          search_attributes: Projection.search_attributes(projection),
          started_at: ecto_datetime(started_at),
          terminal_at: optional_ecto_datetime(projection.terminal_at),
+         archived_at: optional_ecto_datetime(Map.get(projection, :archived_at)),
+         archive_reason: Map.get(projection, :archive_reason),
          thread_revision: thread_revision,
          inserted_at: now,
          updated_at: now
@@ -87,16 +91,30 @@ defmodule Jizoku.ReadModel.RunSearch.EctoProjector do
   @doc "Checks whether the optional projection table is available without raising."
   @spec available?(module(), keyword()) :: boolean() | {:error, term()}
   def available?(repo, opts) when is_atom(repo) and is_list(opts) do
-    relation =
-      case Keyword.get(opts, :prefix) do
-        prefix when is_binary(prefix) and prefix != "" -> "#{prefix}.jizoku_run_search"
-        _default_prefix -> "jizoku_run_search"
-      end
+    relation = relation(opts)
 
     case SQL.query(repo, "SELECT to_regclass($1)::text", [relation]) do
       {:ok, %{rows: [[nil]]}} -> false
       {:ok, %{rows: [[_relation]]}} -> true
       {:ok, _unexpected} -> {:error, :invalid_run_search_capability_result}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc "Checks whether the archive projection columns are available."
+  @spec archive_columns_available?(module(), keyword()) :: boolean() | {:error, term()}
+  def archive_columns_available?(repo, opts) when is_atom(repo) and is_list(opts) do
+    query = """
+    SELECT count(*) = 2
+    FROM pg_catalog.pg_attribute
+    WHERE attrelid = to_regclass($1)
+      AND attname IN ('archived_at', 'archive_reason')
+      AND NOT attisdropped
+    """
+
+    case SQL.query(repo, query, [relation(opts)]) do
+      {:ok, %{rows: [[available?]]}} when is_boolean(available?) -> available?
+      {:ok, _unexpected} -> {:error, :invalid_run_search_archive_capability_result}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -160,19 +178,27 @@ defmodule Jizoku.ReadModel.RunSearch.EctoProjector do
   end
 
   defp upsert(repo, row, opts) do
+    case archive_columns_available?(repo, opts) do
+      true -> do_upsert(repo, row, @replace_fields, opts)
+      false -> legacy_upsert(repo, row, opts)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp legacy_upsert(repo, row, opts) do
     case available?(repo, opts) do
-      true -> do_upsert(repo, row, opts)
+      true -> do_upsert(repo, Map.drop(row, @archive_fields), @legacy_replace_fields, opts)
       false -> :unavailable
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp do_upsert(repo, row, opts) do
+  defp do_upsert(repo, row, replace_fields, opts) do
     case repo.insert_all(
            RunSearch,
            [row],
            [
-             on_conflict: {:replace, @replace_fields},
+             on_conflict: {:replace, replace_fields},
              conflict_target: [:partition_key, :run_id]
            ] ++ repo_opts(opts)
          ) do
@@ -185,6 +211,13 @@ defmodule Jizoku.ReadModel.RunSearch.EctoProjector do
     case Keyword.fetch(opts, :prefix) do
       {:ok, prefix} -> [prefix: prefix]
       :error -> []
+    end
+  end
+
+  defp relation(opts) do
+    case Keyword.get(opts, :prefix) do
+      prefix when is_binary(prefix) and prefix != "" -> "#{prefix}.jizoku_run_search"
+      _default_prefix -> "jizoku_run_search"
     end
   end
 
