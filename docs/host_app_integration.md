@@ -256,8 +256,11 @@ config :jizoku,
 Start and update runs with string-keyed, JSON-safe values from that schema:
 
 ```elixir
+partition = authorize_partition!(current_user, "tenant_acme")
+
 {:ok, run} =
   Jizoku.start(MyWorkflow, input,
+    partition: partition,
     search_attributes: %{"account_id" => "acct_123", "region" => "eu-west"}
   )
 
@@ -265,6 +268,7 @@ Start and update runs with string-keyed, JSON-safe values from that schema:
   Jizoku.update_search_attributes(
     run.run_id,
     %{"priority" => 3},
+    partition: partition,
     idempotency_key: "support:set-priority:3"
   )
 ```
@@ -279,21 +283,27 @@ returns a cursor page:
 ```elixir
 {:ok, page} =
   Jizoku.list_runs(
-    workflow: MyWorkflow,
-    status: :waiting,
-    attributes: %{"account_id" => "acct_123"},
-    started_after: ~U[2026-07-01 00:00:00Z],
-    first: 50
+    [
+      workflow: MyWorkflow,
+      status: :waiting,
+      attributes: %{"account_id" => "acct_123"},
+      started_after: ~U[2026-07-01 00:00:00Z],
+      first: 50
+    ],
+    partition: partition
   )
 
 {:ok, next_page} =
   Jizoku.list_runs(
-    workflow: MyWorkflow,
-    status: :waiting,
-    attributes: %{"account_id" => "acct_123"},
-    started_after: ~U[2026-07-01 00:00:00Z],
-    first: 50,
-    after: page.next_cursor
+    [
+      workflow: MyWorkflow,
+      status: :waiting,
+      attributes: %{"account_id" => "acct_123"},
+      started_after: ~U[2026-07-01 00:00:00Z],
+      first: 50,
+      after: page.next_cursor
+    ],
+    partition: partition
   )
 ```
 

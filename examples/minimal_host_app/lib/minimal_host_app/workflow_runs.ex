@@ -128,17 +128,28 @@ defmodule MinimalHostApp.WorkflowRuns do
           {:ok, run_result()} | {:error, term()}
   def start_indexed_dependency_recovery(attrs, opts \\ [])
       when is_map(attrs) and is_list(opts) do
-    search_attributes = %{
-      "account_id" => Map.fetch!(attrs, :account_id),
-      "workflow_kind" => "dependency_recovery"
-    }
+    case Map.fetch(attrs, :account_id) do
+      {:ok, account_id} ->
+        search_attributes = %{
+          "account_id" => account_id,
+          "workflow_kind" => "dependency_recovery"
+        }
 
-    Jizoku.start(
-      MinimalHostApp.Workflows.DependencyRecovery,
-      :dependency_recovery,
-      attrs,
-      Keyword.put(opts, :search_attributes, search_attributes)
-    )
+        Jizoku.start(
+          MinimalHostApp.Workflows.DependencyRecovery,
+          :dependency_recovery,
+          attrs,
+          Keyword.put(opts, :search_attributes, search_attributes)
+        )
+
+      :error ->
+        Jizoku.start(
+          MinimalHostApp.Workflows.DependencyRecovery,
+          :dependency_recovery,
+          attrs,
+          opts
+        )
+    end
   end
 
   @spec start_manual_approval(manual_approval_attrs()) ::
@@ -334,7 +345,7 @@ defmodule MinimalHostApp.WorkflowRuns do
     ]
 
     filters = if is_binary(cursor), do: Keyword.put(filters, :after, cursor), else: filters
-    runtime_opts = Keyword.put_new(runtime_opts, :visibility_policy, :operator)
+    runtime_opts = Keyword.put(runtime_opts, :visibility_policy, :operator)
 
     Jizoku.list_runs(filters, runtime_opts)
   end

@@ -25,12 +25,18 @@ defmodule Mix.Tasks.Jizoku.Install do
     "jizoku_journal_entries",
     "jizoku_journal_checkpoints"
   ]
-  @journal_markers Enum.map(@journal_tables, &"create table(:#{&1}")
-  @search_markers ["create table(:jizoku_run_search"]
-  @archive_markers ["add(:archived_at", "add(:archive_reason"]
+  @journal_markers Enum.map(
+                     @journal_tables,
+                     &Regex.compile!("create\\s+table\\(\\s*:#{&1}(?=\\s*[,\\)])")
+                   )
+  @search_markers [~r/create\s+table\(\s*:jizoku_run_search(?=\s*[,\)])/]
+  @archive_markers [
+    ~r/add\(\s*:archived_at(?=\s*[,\)])/,
+    ~r/add\(\s*:archive_reason(?=\s*[,\)])/
+  ]
   @retention_markers [
-    "add(:retention_run_id",
-    "create table(:jizoku_retention_receipts"
+    ~r/add\(\s*:retention_run_id(?=\s*[,\)])/,
+    ~r/create\s+table\(\s*:jizoku_retention_receipts(?=\s*[,\)])/
   ]
   @migrations [
     %{
@@ -102,7 +108,7 @@ defmodule Mix.Tasks.Jizoku.Install do
         Mix.shell().info("* skipping Jizoku migrations (current schema already installed)")
 
       migrations ->
-        base_version = String.to_integer(timestamp())
+        base_version = next_migration_version(dest_dir)
 
         migrations
         |> Enum.with_index()
@@ -120,7 +126,24 @@ defmodule Mix.Tasks.Jizoku.Install do
   end
 
   defp markers_present?(body, markers) do
-    Enum.all?(markers, &String.contains?(body, &1))
+    Enum.all?(markers, &Regex.match?(&1, body))
+  end
+
+  defp next_migration_version(dest_dir) do
+    current_version = String.to_integer(timestamp())
+
+    highest_existing_version =
+      dest_dir
+      |> File.ls!()
+      |> Enum.flat_map(fn filename ->
+        case Regex.run(~r/^(\d+)_/, filename, capture: :all_but_first) do
+          [version] -> [String.to_integer(version)]
+          nil -> []
+        end
+      end)
+      |> Enum.max(fn -> 0 end)
+
+    max(current_version, highest_existing_version + 1)
   end
 
   defp copy_migration!(dest_dir, migration, version) do
