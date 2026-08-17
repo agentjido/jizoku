@@ -23,7 +23,7 @@ defmodule Jizoku.Workflow.Migration do
         }
   @type result :: %{
           required(:context) => map(),
-          required(:manual_step) => atom() | String.t()
+          optional(:manual_step) => atom() | String.t()
         }
   @type contract :: %{
           required(:module) => module(),
@@ -56,7 +56,7 @@ defmodule Jizoku.Workflow.Migration do
          target_version: target_version
        }}
     else
-      {:error, _reason} = error -> error
+      {:error, {:invalid_workflow_migration, _reason}} = error -> error
       _missing -> {:error, {:invalid_workflow_migration, :invalid_module}}
     end
   end
@@ -123,6 +123,12 @@ defmodule Jizoku.Workflow.Migration do
 
   defp invoke(module, state) do
     module.migrate(state)
+  catch
+    :error, %{__struct__: exception_module} ->
+      {:error, {:callback_exception, exception_module}}
+
+    kind, _reason ->
+      {:error, {:callback_caught, kind}}
   end
 
   defp migrated_context({:ok, %{context: context}})

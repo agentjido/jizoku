@@ -397,8 +397,8 @@ defmodule Jizoku.Workflow.Compatibility do
       category: category,
       kind: kind,
       path: path,
-      old: json_safe(old),
-      new: json_safe(new)
+      old: canonical_value(old),
+      new: canonical_value(new)
     }
   end
 
@@ -418,7 +418,7 @@ defmodule Jizoku.Workflow.Compatibility do
       triggers: canonical_named(spec, :triggers, &canonical_trigger/1),
       payload: canonical_named(spec, :payload, &canonical_payload/1),
       steps: canonical_named(spec, :steps, &canonical_step/1),
-      transitions: canonical_list(spec, :transitions, &canonical_transition/1),
+      transitions: canonical_transitions(spec),
       retries: canonical_named(spec, :retries, &canonical_retry/1),
       entry_steps: canonical_names(field(spec, :entry_steps, [])),
       initial_step: name(field(spec, :initial_step)),
@@ -439,11 +439,19 @@ defmodule Jizoku.Workflow.Compatibility do
     |> Enum.map(mapper)
   end
 
+  defp canonical_transitions(spec) do
+    spec
+    |> canonical_list(:transitions, &canonical_transition/1)
+    |> Enum.sort_by(fn transition ->
+      {transition.from, transition.on, transition.to}
+    end)
+  end
+
   defp canonical_trigger(trigger) do
     %{
       name: name(field(trigger, :name)),
       type: name(field(trigger, :type)),
-      config: json_safe(field(trigger, :config, %{})),
+      config: canonical_value(field(trigger, :config, %{})),
       payload:
         trigger
         |> field(:payload, [])
@@ -466,12 +474,12 @@ defmodule Jizoku.Workflow.Compatibility do
     %{
       name: name(field(step, :name)),
       action: action_identity(step),
-      input: json_safe(option(opts, :input)),
+      input: canonical_value(option(opts, :input)),
       output: name(option(opts, :output)),
       after: canonical_names(option(opts, :after, [])),
-      retry: json_safe(option(opts, :retry)),
-      deadline: json_safe(option(opts, :deadline)),
-      recovery: json_safe(recovery_identity(opts)),
+      retry: canonical_value(option(opts, :retry)),
+      deadline: canonical_value(option(opts, :deadline)),
+      recovery: canonical_value(recovery_identity(opts)),
       options: additional_step_options(opts)
     }
   end
@@ -481,7 +489,7 @@ defmodule Jizoku.Workflow.Compatibility do
       from: name(field(transition, :from)),
       on: name(field(transition, :on)),
       to: name(field(transition, :to)),
-      condition: json_safe(field(transition, :condition)),
+      condition: canonical_value(field(transition, :condition)),
       recovery: name(field(transition, :recovery))
     }
   end
@@ -508,12 +516,12 @@ defmodule Jizoku.Workflow.Compatibility do
 
   defp canonical_options(opts) when is_list(opts) do
     opts
-    |> Enum.map(fn {key, value} -> {name(key), json_safe(value)} end)
+    |> Enum.map(fn {key, value} -> {name(key), canonical_value(value)} end)
     |> Enum.sort()
   end
 
   defp canonical_options(opts) do
-    json_safe(opts)
+    canonical_value(opts)
   end
 
   defp additional_step_options(opts) when is_list(opts) do
@@ -537,32 +545,46 @@ defmodule Jizoku.Workflow.Compatibility do
     |> Enum.sort()
   end
 
-  defp json_safe(value) when is_boolean(value) or is_nil(value) do
+  defp canonical_value(value) when is_boolean(value) or is_nil(value) do
     value
   end
 
-  defp json_safe(value) when is_atom(value) do
+  defp canonical_value(value) when is_atom(value) do
     name(value)
   end
 
-  defp json_safe(value) when is_list(value) do
-    if Keyword.keyword?(value), do: canonical_options(value), else: Enum.map(value, &json_safe/1)
+  defp canonical_value(value) when is_list(value) do
+    if Keyword.keyword?(value),
+      do: canonical_options(value),
+      else: Enum.map(value, &canonical_value/1)
   end
 
-  defp json_safe(value) when is_map(value) do
+  defp canonical_value(%module{} = value) do
+    fields =
+      value
+      |> Map.from_struct()
+      |> canonical_value()
+
+    %{
+      "__struct__" => Atom.to_string(module),
+      "fields" => fields
+    }
+  end
+
+  defp canonical_value(value) when is_map(value) do
     value
-    |> Enum.map(fn {key, item} -> {name(key), json_safe(item)} end)
+    |> Enum.map(fn {key, item} -> {name(key), canonical_value(item)} end)
     |> Enum.sort()
     |> Map.new()
   end
 
-  defp json_safe(value) when is_tuple(value) do
+  defp canonical_value(value) when is_tuple(value) do
     value
     |> Tuple.to_list()
-    |> Enum.map(&json_safe/1)
+    |> Enum.map(&canonical_value/1)
   end
 
-  defp json_safe(value) do
+  defp canonical_value(value) do
     value
   end
 
@@ -631,6 +653,9 @@ defmodule Jizoku.Workflow.Compatibility do
   end
 
   defp name(value) do
-    to_string(value)
+    case String.Chars.impl_for(value) do
+      nil -> inspect(value)
+      _implementation -> to_string(value)
+    end
   end
 end

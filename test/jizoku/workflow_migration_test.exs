@@ -28,7 +28,12 @@ defmodule Jizoku.WorkflowMigrationTest do
 
     @impl Jizoku.Step
     def run(input, _context) do
-      {:ok, %{implementation: "v2", schema: input.schema}}
+      {:ok,
+       %{
+         implementation: "v2",
+         schema: input.schema,
+         precedence: input.precedence
+       }}
     end
   end
 
@@ -92,7 +97,8 @@ defmodule Jizoku.WorkflowMigrationTest do
            context
            |> Map.delete(:legacy)
            |> Map.delete(:legacy_output)
-           |> Map.put(:schema, 2),
+           |> Map.put(:schema, 2)
+           |> Map.put(:precedence, "migration"),
          manual_step: :gate
        }}
     end
@@ -207,7 +213,13 @@ defmodule Jizoku.WorkflowMigrationTest do
 
     assert migrated.status == :paused
     assert migrated.definition_version == "v2"
-    assert migrated.context == %{account_id: "acct-123", schema: 2}
+
+    assert migrated.context == %{
+             account_id: "acct-123",
+             schema: 2,
+             precedence: "migration"
+           }
+
     assert migrated.manual_state.step == "gate"
 
     assert [
@@ -301,7 +313,7 @@ defmodule Jizoku.WorkflowMigrationTest do
     assert {:ok, %{status: :running}} =
              Jizoku.resume(
                run_id,
-               %{actor: "migration-test"},
+               %{actor: "migration-test", precedence: "manual"},
                runtime: :journal,
                journal_storage: @storage,
                queue: @queue,
@@ -321,7 +333,14 @@ defmodule Jizoku.WorkflowMigrationTest do
            inspect(%{terminal_error: completed.terminal_error, attempts: completed.attempts})
 
     assert completed.context.schema == 2
-    assert Enum.any?(completed.attempts, &(&1.result == %{implementation: "v2", schema: 2}))
+
+    assert Enum.any?(completed.attempts, fn attempt ->
+             attempt.result == %{
+               implementation: "v2",
+               schema: 2,
+               precedence: "migration"
+             }
+           end)
   end
 
   test "exact duplicate delivery is idempotent and conflicting key reuse fails closed" do
