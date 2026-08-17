@@ -683,6 +683,62 @@ defmodule Jizoku.WorkflowTest do
              Jizoku.Workflow.validate_spec(invalid_target_spec)
 
     assert Enum.any?(target_errors, &(&1.code == :invalid_event_timeout_target))
+
+    valid_timeout_spec =
+      put_in(
+        invalid_spec.steps,
+        [
+          %{
+            name: :await_payment,
+            module: :await_event,
+            opts: [
+              event: "payment.completed",
+              correlation: [:payment_id],
+              timeout: [after: 1_000, on_timeout: :complete]
+            ]
+          }
+        ]
+      )
+
+    assert :ok = Jizoku.Workflow.validate_spec(valid_timeout_spec)
+
+    no_timeout_spec =
+      put_in(
+        valid_timeout_spec.steps,
+        [
+          %{
+            name: :await_payment,
+            module: :await_event,
+            opts: [event: "payment.completed", correlation: [:payment_id]]
+          }
+        ]
+      )
+
+    assert :ok = Jizoku.Workflow.validate_spec(no_timeout_spec)
+
+    refute Jizoku.Workflow.Definition.fingerprint(valid_timeout_spec) ==
+             Jizoku.Workflow.Definition.fingerprint(no_timeout_spec)
+
+    duplicate_timeout_spec =
+      put_in(
+        invalid_spec.steps,
+        [
+          %{
+            name: :await_payment,
+            module: :await_event,
+            opts: [
+              event: "payment.completed",
+              correlation: [:payment_id],
+              timeout: [after: 1_000, on_timeout: :complete, after: 2_000]
+            ]
+          }
+        ]
+      )
+
+    assert {:error, {:invalid_workflow_spec, duplicate_errors}} =
+             Jizoku.Workflow.validate_spec(duplicate_timeout_spec)
+
+    assert Enum.any?(duplicate_errors, &(&1.code == :invalid_event_timeout))
   end
 
   test "rejects invalid workflow spec retry options" do

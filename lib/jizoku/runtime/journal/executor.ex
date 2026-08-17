@@ -43,6 +43,7 @@ defmodule Jizoku.Runtime.Journal.Executor do
   alias Jizoku.Telemetry.JournalEvents
   alias Jizoku.Workflow.ActionRegistry
   alias Jizoku.Workflow.Definition
+  alias Jizoku.Workflow.EventWait
   alias Jizoku.Workflow.GuardrailRegistry
 
   @dispatch_append_retries 25
@@ -1455,6 +1456,10 @@ defmodule Jizoku.Runtime.Journal.Executor do
       step_name when is_atom(step_name) -> {:ok, step_name}
       _unknown -> {:error, {:unknown_step, target}}
     end
+  end
+
+  defp event_wait_timeout_target(_definition, timeout) do
+    {:error, {:invalid_event_wait_timeout_target, Map.get(timeout, :target)}}
   end
 
   defp event_wait_timeout_result(timeout, %DateTime{} = now) do
@@ -3886,7 +3891,7 @@ defmodule Jizoku.Runtime.Journal.Executor do
   end
 
   defp record_step_result(
-         {:ok, output, [event_wait_timeout: _timeout] = execution_opts, guardrails},
+         {:ok, output, execution_opts, guardrails},
          %{
            runtime: runtime,
            claim: %ClaimContext{} = claim,
@@ -3894,32 +3899,32 @@ defmodule Jizoku.Runtime.Journal.Executor do
            step_name: step_name
          } = execution,
          mark_finishing
-       ) do
+       )
+       when is_list(execution_opts) do
     mark_finishing.()
 
     with :ok <- run_test_before_completion_hook(execution.opts, claim.attempt) do
-      resolve_event_timeout_attempt(
-        runtime,
-        claim,
-        definition,
-        step_name,
-        output,
-        execution_opts,
-        guardrails
-      )
-    end
-  end
-
-  defp record_step_result(
-         {:ok, output, execution_opts, guardrails},
-         %{runtime: runtime, claim: claim, definition: definition, step_name: step_name} =
-           execution,
-         mark_finishing
-       ) do
-    mark_finishing.()
-
-    with :ok <- run_test_before_completion_hook(execution.opts, claim.attempt) do
-      complete_attempt(runtime, claim, definition, step_name, output, execution_opts, guardrails)
+      if Keyword.has_key?(execution_opts, :event_wait_timeout) do
+        resolve_event_timeout_attempt(
+          runtime,
+          claim,
+          definition,
+          step_name,
+          output,
+          execution_opts,
+          guardrails
+        )
+      else
+        complete_attempt(
+          runtime,
+          claim,
+          definition,
+          step_name,
+          output,
+          execution_opts,
+          guardrails
+        )
+      end
     end
   end
 
@@ -4030,9 +4035,34 @@ defmodule Jizoku.Runtime.Journal.Executor do
       {:ok, %{agent: dispatch_agent}} ->
         {:ok, dispatch_agent}
 
-      {:error, _reason} ->
-        DispatchAgent.rebuild(storage, dispatch_agent.state.queue)
+      {:error, reason} = error ->
+        rebuild_event_timeout_settlement(
+          storage,
+          dispatch_agent.state.queue,
+          runnable_key,
+          error,
+          reason
+        )
     end
+  end
+
+  defp rebuild_event_timeout_settlement(storage, queue, runnable_key, error, reason) do
+    case DispatchAgent.rebuild(storage, queue) do
+      {:ok, rebuilt_agent} ->
+        if settled_event_timeout?(rebuilt_agent, runnable_key),
+          do: {:ok, rebuilt_agent},
+          else: error
+
+      {:error, rebuild_reason} ->
+        {:error, {:event_timeout_claim_settlement_failed, reason, rebuild_reason}}
+    end
+  end
+
+  defp settled_event_timeout?(dispatch_agent, runnable_key) do
+    match?(
+      %ActionAttempt{status: :completed, applied?: true},
+      Map.get(dispatch_agent.state.projection.attempts, runnable_key)
+    )
   end
 
   defp run_repo_transaction_attempt(repo, execution) do
@@ -4173,19 +4203,27 @@ defmodule Jizoku.Runtime.Journal.Executor do
   defp evaluated_step_result(execution, claim) do
     case claim.attempt.event_wait_timeout do
       timeout when is_map(timeout) ->
-        {:ok, %{}, [event_wait_timeout: timeout], []}
+        if EventWait.valid_runtime_timeout?(timeout) do
+          {:ok, %{}, [event_wait_timeout: timeout], []}
+        else
+          invalid_event_wait_timeout_error()
+        end
 
       nil ->
         evaluated_workflow_step_result(execution, claim)
 
-      invalid_timeout ->
-        {:error,
-         %{
-           message: "invalid external event timeout dispatch metadata",
-           reason: invalid_timeout,
-           retryable?: false
-         }}
+      _invalid_timeout ->
+        invalid_event_wait_timeout_error()
     end
+  end
+
+  defp invalid_event_wait_timeout_error do
+    {:error,
+     %{
+       message: "invalid external event timeout dispatch metadata",
+       reason: :invalid_shape,
+       retryable?: false
+     }}
   end
 
   defp evaluated_workflow_step_result(execution, claim) do

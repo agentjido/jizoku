@@ -3,11 +3,87 @@ defmodule Jizoku.ExternalEventWaitTest do
 
   alias Jido.Storage.ETS
   alias Jizoku.ReadModel.Visibility
+  alias Jizoku.Runtime.DispatchAgent
   alias Jizoku.Runtime.Journal
 
   @storage {ETS, table: :jizoku_external_event_wait_test}
   @queue "external-event-wait"
   @started_at ~U[2026-08-16 15:00:00Z]
+
+  defmodule RunAppendBarrierStorage do
+    @behaviour Jido.Storage
+
+    @impl Jido.Storage
+    def get_checkpoint(key, opts) do
+      delegate(:get_checkpoint, [key], opts)
+    end
+
+    @impl Jido.Storage
+    def put_checkpoint(key, data, opts) do
+      delegate(:put_checkpoint, [key, data], opts)
+    end
+
+    @impl Jido.Storage
+    def delete_checkpoint(key, opts) do
+      delegate(:delete_checkpoint, [key], opts)
+    end
+
+    @impl Jido.Storage
+    def load_thread(thread_id, opts) do
+      delegate(:load_thread, [thread_id], opts)
+    end
+
+    @impl Jido.Storage
+    def append_thread(thread_id, entries, opts) do
+      wait_at_barrier(thread_id, entries, opts)
+      delegate(:append_thread, [thread_id, entries], opts)
+    end
+
+    @impl Jido.Storage
+    def delete_thread(thread_id, opts) do
+      delegate(:delete_thread, [thread_id], opts)
+    end
+
+    defp wait_at_barrier(thread_id, entries, opts) do
+      barrier_kinds = Keyword.fetch!(opts, :barrier_kinds)
+      kind = Enum.find_value(entries, &(&1.kind in barrier_kinds && &1.kind))
+      barrier_key = {__MODULE__, Keyword.fetch!(opts, :barrier_ref), kind}
+
+      if thread_id == Keyword.fetch!(opts, :barrier_thread_id) and
+           not is_nil(kind) and
+           is_nil(Process.get(barrier_key)) do
+        Process.put(barrier_key, true)
+        owner = Keyword.fetch!(opts, :barrier_owner)
+        ref = Keyword.fetch!(opts, :barrier_ref)
+        send(owner, {:run_append_blocked, ref, kind, self()})
+
+        receive do
+          {:release_run_append, ^ref} -> :ok
+        after
+          5_000 -> raise "run append barrier timed out"
+        end
+      end
+    end
+
+    defp delegate(callback, args, opts) do
+      {adapter, delegate_opts} = Keyword.fetch!(opts, :delegate)
+
+      forwarded_opts =
+        Keyword.drop(opts, [
+          :barrier_kinds,
+          :barrier_owner,
+          :barrier_ref,
+          :barrier_thread_id,
+          :delegate
+        ])
+
+      apply(
+        adapter,
+        callback,
+        Enum.concat(args, [Keyword.merge(delegate_opts, forwarded_opts)])
+      )
+    end
+  end
 
   defmodule RecordEvent do
     use Jizoku.Step,
@@ -417,6 +493,13 @@ defmodule Jizoku.ExternalEventWaitTest do
 
     assert [%{step: "record_event", status: :available}] = resumed.visible_attempts
 
+    assert {:ok, dispatch_agent} = DispatchAgent.rebuild(@storage, @queue)
+
+    assert %{status: :completed, applied?: true} =
+             dispatch_agent.state.projection.attempts
+             |> Map.values()
+             |> Enum.find(&(&1.run_id == run_id and is_map(&1.event_wait_timeout)))
+
     assert {:ok, %{status: :completed}} =
              Jizoku.execute_next(worker_options(DateTime.add(delivered_at, 1, :millisecond)))
 
@@ -467,73 +550,83 @@ defmodule Jizoku.ExternalEventWaitTest do
     refute Enum.any?(entries, &(&1.type == :external_event_wait_timeout_selected))
   end
 
-  test "simultaneous event and timeout delivery select one outcome after checkpoint loss" do
-    for index <- 1..10 do
-      run_id = Ecto.UUID.generate()
-      correlation = "pay_race_#{index}"
+  test "simultaneous event and timeout appends select one outcome after checkpoint loss" do
+    run_id = Ecto.UUID.generate()
+    correlation = "pay_race"
 
-      assert {:ok, _started} =
-               Jizoku.start(
-                 TimeoutWorkflow,
-                 :manual,
-                 %{payment_id: correlation},
-                 runtime_options(run_id, @started_at)
-               )
+    assert {:ok, _started} =
+             Jizoku.start(
+               TimeoutWorkflow,
+               :manual,
+               %{payment_id: correlation},
+               runtime_options(run_id, @started_at)
+             )
 
-      assert {:ok, %{status: :paused}} = Jizoku.execute_next(worker_options(@started_at))
-      assert :ok = delete_run_checkpoint(run_id)
+    assert {:ok, %{status: :paused}} = Jizoku.execute_next(worker_options(@started_at))
+    assert :ok = delete_run_checkpoint(run_id)
 
-      due_at = DateTime.add(@started_at, 1_000, :millisecond)
+    due_at = DateTime.add(@started_at, 1_000, :millisecond)
+    barrier_ref = make_ref()
+    storage = barrier_storage(run_id, barrier_ref)
 
-      event_task =
-        Task.async(fn ->
-          receive do
-            :resolve ->
-              Jizoku.signal_run(
-                run_id,
-                "payment.completed",
-                %{status: "settled"},
-                Keyword.merge(control_options(due_at),
-                  correlation: correlation,
-                  idempotency_key: "provider-event-timeout-race-#{index}"
-                )
-              )
-          end
-        end)
+    event_task =
+      Task.async(fn ->
+        Jizoku.signal_run(
+          run_id,
+          "payment.completed",
+          %{status: "settled"},
+          Keyword.merge(control_options(due_at),
+            journal_storage: storage,
+            correlation: correlation,
+            idempotency_key: "provider-event-timeout-race"
+          )
+        )
+      end)
 
-      timeout_task =
-        Task.async(fn ->
-          receive do
-            :resolve ->
-              Jizoku.execute_next(
-                Keyword.put(worker_options(due_at), :owner_id, "timeout-race-#{index}")
-              )
-          end
-        end)
+    timeout_task =
+      Task.async(fn ->
+        Jizoku.execute_next(
+          due_at
+          |> worker_options()
+          |> Keyword.put(:journal_storage, storage)
+          |> Keyword.put(:owner_id, "timeout-race")
+        )
+      end)
 
-      send(event_task.pid, :resolve)
-      send(timeout_task.pid, :resolve)
+    blocked =
+      for _operation <- 1..2 do
+        assert_receive {:run_append_blocked, ^barrier_ref, kind, task_pid}, 5_000
+        {kind, task_pid}
+      end
 
-      event_result = Task.await(event_task, 5_000)
-      timeout_result = Task.await(timeout_task, 5_000)
+    assert Enum.sort(Enum.map(blocked, &elem(&1, 0))) == [
+             :external_event_wait_timeout_selected,
+             :run_signal_received
+           ]
 
-      assert match?({:ok, _snapshot}, event_result) or
-               match?({:error, {:event_wait_not_found, _details}}, event_result) or
-               match?({:error, :terminal_run}, event_result)
+    Enum.each(blocked, fn {_kind, task_pid} ->
+      send(task_pid, {:release_run_append, barrier_ref})
+    end)
 
-      assert match?({:ok, _snapshot_or_none}, timeout_result) or
-               match?({:error, :conflict}, timeout_result),
-             "timeout race #{index} failed: event=#{inspect(event_result)} timeout=#{inspect(timeout_result)}"
+    event_result = Task.await(event_task, 5_000)
+    timeout_result = Task.await(timeout_task, 5_000)
 
-      assert {:ok, %{entries: entries}} = Journal.load_thread(@storage, {:run, run_id})
-      received_count = Enum.count(entries, &(&1.type == :external_event_received))
-      timeout_count = Enum.count(entries, &(&1.type == :external_event_wait_timeout_selected))
+    assert match?({:ok, _snapshot}, event_result) or
+             match?({:error, {:event_wait_not_found, _details}}, event_result) or
+             match?({:error, :terminal_run}, event_result)
 
-      assert received_count + timeout_count == 1
-      assert Enum.count(entries, &(&1.type == :external_event_wait_resolved)) == 1
+    assert match?({:ok, _snapshot_or_none}, timeout_result) or
+             match?({:error, :conflict}, timeout_result),
+           "timeout race failed: event=#{inspect(event_result)} timeout=#{inspect(timeout_result)}"
 
-      drain_run(due_at, 5)
-    end
+    assert {:ok, %{entries: entries}} = Journal.load_thread(@storage, {:run, run_id})
+    received_count = Enum.count(entries, &(&1.type == :external_event_received))
+    timeout_count = Enum.count(entries, &(&1.type == :external_event_wait_timeout_selected))
+
+    assert received_count + timeout_count == 1
+    assert Enum.count(entries, &(&1.type == :external_event_wait_resolved)) == 1
+
+    drain_run(due_at, 5)
   end
 
   defp runtime_options(run_id, now) do
@@ -589,6 +682,16 @@ defmodule Jizoku.ExternalEventWaitTest do
       {:ok, :none} -> :ok
       {:ok, %{status: :completed}} -> :ok
       {:ok, _running} -> drain_run(DateTime.add(now, 1, :millisecond), attempts_left - 1)
+      {:error, reason} -> flunk("event-timeout race failed to drain: #{inspect(reason)}")
     end
+  end
+
+  defp barrier_storage(run_id, barrier_ref) do
+    {RunAppendBarrierStorage,
+     delegate: @storage,
+     barrier_owner: self(),
+     barrier_ref: barrier_ref,
+     barrier_thread_id: Journal.thread_id({:run, run_id}),
+     barrier_kinds: [:run_signal_received, :external_event_wait_timeout_selected]}
   end
 end

@@ -174,6 +174,36 @@ defmodule Jizoku.Runtime.Journal.Storage.EctoTest do
            ) == 2
   end
 
+  test "round-trips complete entry structs with nested DateTime metadata" do
+    timeout = %{
+      after: 1_000,
+      correlation: "pay-123",
+      due_at: @visible_at,
+      event: "payment.completed",
+      target: "complete",
+      timeout_runnable_key: "#{@runnable_key}:timeout",
+      wait_id: @runnable_key
+    }
+
+    scheduled =
+      entry(:attempt_scheduled, %{
+        run_id: @run_id,
+        event_wait_timeout: timeout
+      })
+
+    assert {:ok, %{entries: [%Entry{}]}} =
+             @storage_adapter.append_thread(@thread_id, [scheduled], repo: Repo)
+
+    assert {:ok,
+            %{
+              entries: [
+                %Entry{payload: %{event_wait_timeout: %{due_at: %DateTime{} = due_at}}}
+              ]
+            }} = @storage_adapter.load_thread(@thread_id, repo: Repo)
+
+    assert due_at == @visible_at
+  end
+
   test "rejects stale expected revisions without appending" do
     assert {:ok, %{rev: 1}} =
              @storage_adapter.append_thread(@thread_id, [entry(:attempt_scheduled)], repo: Repo)
