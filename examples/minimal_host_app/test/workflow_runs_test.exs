@@ -809,6 +809,27 @@ defmodule MinimalHostApp.WorkflowRunsTest do
                queue: "minimal-host-dashboard"
              )
 
+    update_opts = [
+      queue: "minimal-host-dashboard",
+      idempotency_key: "dashboard:confirm-workflow-kind"
+    ]
+
+    assert {:ok, updated_run} =
+             Jizoku.update_search_attributes(
+               first_run.run_id,
+               %{"workflow_kind" => "dependency_recovery"},
+               update_opts
+             )
+
+    assert {:ok, duplicate_update} =
+             Jizoku.update_search_attributes(
+               first_run.run_id,
+               %{"workflow_kind" => "dependency_recovery"},
+               update_opts
+             )
+
+    assert duplicate_update.thread_revisions == updated_run.thread_revisions
+
     assert {:ok, %Page{items: [first_item], next_cursor: cursor}} =
              WorkflowRuns.page_dependency_recovery_runs(account_id, first: 1)
 

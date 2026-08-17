@@ -1,3 +1,4 @@
+# credo:disable-for-this-file ExSlop.Check.Readability.DocFalseOnPublicFunction
 defmodule Jizoku.Runtime.SearchAttributes do
   @moduledoc """
   Validates the bounded, host-allowlisted operational attributes attached to a run.
@@ -15,6 +16,8 @@ defmodule Jizoku.Runtime.SearchAttributes do
   @max_encoded_bytes 4_096
   @min_integer -9_223_372_036_854_775_808
   @max_integer 9_223_372_036_854_775_807
+  @fingerprint_prefix "v1:"
+  @fingerprint_domain "jizoku.search_attributes"
   @key_pattern ~r/^[a-z][a-z0-9_.-]*$/
   @scalar_types [:string, :integer, :boolean]
 
@@ -89,9 +92,27 @@ defmodule Jizoku.Runtime.SearchAttributes do
   """
   @spec fingerprint(attributes()) :: String.t()
   def fingerprint(attributes) when is_map(attributes) do
-    encoded = :erlang.term_to_binary(Enum.sort(attributes))
-    digest = :crypto.hash(:sha256, encoded)
-    Base.url_encode64(digest, padding: false)
+    encoded =
+      Jason.encode!([
+        @fingerprint_domain,
+        1,
+        attributes
+        |> Enum.sort()
+        |> Enum.map(fn {key, value} -> [key, value] end)
+      ])
+
+    @fingerprint_prefix <> fingerprint_digest(encoded)
+  end
+
+  @doc false
+  @spec fingerprint_matches?(attributes(), term()) :: boolean()
+  def fingerprint_matches?(attributes, fingerprint)
+      when is_map(attributes) and is_binary(fingerprint) do
+    fingerprint == fingerprint(attributes) or fingerprint == legacy_fingerprint(attributes)
+  end
+
+  def fingerprint_matches?(_attributes, _fingerprint) do
+    false
   end
 
   @doc false
@@ -185,8 +206,8 @@ defmodule Jizoku.Runtime.SearchAttributes do
   defp value_errors(key, value, :string) do
     cond do
       not is_binary(value) -> [%{code: :invalid_value_type, key: key}]
-      not String.valid?(value) -> [%{code: :invalid_value, key: key}]
       byte_size(value) > @max_string_bytes -> [%{code: :value_too_large, key: key}]
+      not String.valid?(value) -> [%{code: :invalid_value, key: key}]
       true -> []
     end
   end
@@ -208,12 +229,17 @@ defmodule Jizoku.Runtime.SearchAttributes do
   end
 
   defp value_errors(key, value, {:list, type}) when is_list(value) do
-    if length(value) > @max_list_items do
-      [%{code: :list_too_large, key: key}]
-    else
-      value
-      |> Enum.flat_map(&value_errors(key, &1, type))
-      |> Enum.uniq()
+    case bounded_list_status(value, @max_list_items) do
+      :too_large ->
+        [%{code: :list_too_large, key: key}]
+
+      :improper ->
+        [%{code: :invalid_value_type, key: key}]
+
+      :within_limit ->
+        value
+        |> Enum.flat_map(&value_errors(key, &1, type))
+        |> Enum.uniq()
     end
   end
 
@@ -242,7 +268,8 @@ defmodule Jizoku.Runtime.SearchAttributes do
   end
 
   defp valid_persisted_value?(value) when is_list(value) do
-    length(value) <= @max_list_items and Enum.all?(value, &valid_persisted_scalar?/1)
+    bounded_list_status(value, @max_list_items) == :within_limit and
+      Enum.all?(value, &valid_persisted_scalar?/1)
   end
 
   defp valid_persisted_value?(_value) do
@@ -250,7 +277,7 @@ defmodule Jizoku.Runtime.SearchAttributes do
   end
 
   defp valid_persisted_scalar?(value) when is_binary(value) do
-    String.valid?(value) and byte_size(value) <= @max_string_bytes
+    byte_size(value) <= @max_string_bytes and String.valid?(value)
   end
 
   defp valid_persisted_scalar?(value) when is_integer(value) do
@@ -283,6 +310,35 @@ defmodule Jizoku.Runtime.SearchAttributes do
 
   defp valid_type?(_type) do
     false
+  end
+
+  defp bounded_list_status([], _items_left) do
+    :within_limit
+  end
+
+  defp bounded_list_status([_item | _remaining], 0) do
+    :too_large
+  end
+
+  defp bounded_list_status([_item | remaining], items_left) when items_left > 0 do
+    bounded_list_status(remaining, items_left - 1)
+  end
+
+  defp bounded_list_status(_improper_tail, _items_left) do
+    :improper
+  end
+
+  defp legacy_fingerprint(attributes) do
+    attributes
+    |> Enum.sort()
+    |> :erlang.term_to_binary()
+    |> fingerprint_digest()
+  end
+
+  defp fingerprint_digest(encoded) do
+    encoded
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.url_encode64(padding: false)
   end
 
   defp error_for_key(code, key) when is_binary(key) do

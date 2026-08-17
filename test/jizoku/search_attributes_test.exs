@@ -3,6 +3,7 @@ defmodule Jizoku.SearchAttributesTest do
 
   alias Jido.Storage.ETS
   alias Jizoku.ReadModel.Visibility
+  alias Jizoku.Runtime.DispatchProtocol
   alias Jizoku.Runtime.Journal
   alias Jizoku.Runtime.SearchAttributes
 
@@ -79,6 +80,14 @@ defmodule Jizoku.SearchAttributesTest do
 
     assert Enum.any?(oversized_errors, &(&1.code == :value_too_large))
 
+    assert {:error, {:invalid_search_attributes, invalid_oversized_errors}} =
+             SearchAttributes.normalize(
+               %{"account_id" => :binary.copy(<<255>>, 257)},
+               @schema
+             )
+
+    assert Enum.any?(invalid_oversized_errors, &(&1.code == :value_too_large))
+
     assert {:error, {:invalid_search_attributes, list_errors}} =
              SearchAttributes.normalize(
                %{"regions" => Enum.map(1..17, &"region-#{&1}")},
@@ -86,6 +95,12 @@ defmodule Jizoku.SearchAttributesTest do
              )
 
     assert Enum.any?(list_errors, &(&1.code == :list_too_large))
+
+    refute SearchAttributes.valid_persisted?(%{
+             "regions" => Enum.map(1..17, &"region-#{&1}")
+           })
+
+    refute SearchAttributes.valid_persisted?(%{"regions" => ["eu" | "improper"]})
 
     high_cardinality_schema =
       Map.new(1..33, fn index -> {"attribute_#{index}", :string} end)
@@ -132,7 +147,7 @@ defmodule Jizoku.SearchAttributesTest do
              "priority" => 2
            }
 
-    assert {:ok, external} = Visibility.redact(updated, :external)
+    assert {:ok, external} = Visibility.redact(updated, %{}, :external)
     assert external.search_attributes == %{}
 
     assert {:ok, auditor} = Visibility.redact(updated, %{}, :auditor)
@@ -177,10 +192,10 @@ defmodule Jizoku.SearchAttributesTest do
                runtime_options(search_attributes: %{"account_id" => "acct_concurrent"})
              )
 
-    updates = [
-      {%{"active" => true}, "support:set-active"},
-      {%{"priority" => 5}, "support:set-priority"}
-    ]
+    updates =
+      Enum.map(1..8, fn index ->
+        {%{"regions" => ["region-#{index}"]}, "support:set-region-#{index}"}
+      end)
 
     results =
       updates
@@ -192,20 +207,70 @@ defmodule Jizoku.SearchAttributesTest do
             runtime_options(idempotency_key: idempotency_key)
           )
         end,
-        max_concurrency: 2,
+        max_concurrency: 8,
         ordered: false
       )
       |> Enum.to_list()
 
     assert Enum.all?(results, fn result -> match?({:ok, {:ok, _snapshot}}, result) end)
 
+    assert {:ok, %{entries: entries}} = Journal.load_thread(@storage, {:run, started.run_id})
+    assert Enum.count(entries, &(&1.type == :search_attributes_updated)) == 8
+
     assert {:ok, inspected} = Jizoku.inspect_run(started.run_id, runtime_options())
 
-    assert inspected.search_attributes == %{
-             "account_id" => "acct_concurrent",
-             "active" => true,
-             "priority" => 5
-           }
+    assert inspected.search_attributes["account_id"] == "acct_concurrent"
+    assert inspected.search_attributes["regions"] in Enum.map(1..8, &["region-#{&1}"])
+  end
+
+  test "uses versioned canonical fingerprints and accepts the legacy persisted digest" do
+    changes = %{
+      "account_id" => "acct_123",
+      "active" => true,
+      "priority" => 3,
+      "regions" => ["eu-west", "us-east"]
+    }
+
+    legacy_fingerprint = "TDnZqlSc53vtGxwQMSDQR4UcwxWXnwELBi2pGIfjR6g"
+    versioned_fingerprint = "v1:5ScnbOgiMfFuh2PUZIJpRsHOaRYUCxABS6hRSk5vl7Y"
+
+    assert SearchAttributes.fingerprint(changes) == versioned_fingerprint
+
+    assert SearchAttributes.fingerprint(Map.new(Enum.reverse(Enum.to_list(changes)))) ==
+             versioned_fingerprint
+
+    assert SearchAttributes.fingerprint_matches?(changes, legacy_fingerprint)
+    assert SearchAttributes.fingerprint_matches?(changes, versioned_fingerprint)
+    refute SearchAttributes.fingerprint_matches?(changes, "v1:invalid")
+
+    assert {:ok, started} = Jizoku.start(Workflow, :manual, %{}, runtime_options())
+
+    assert {:ok, entry} =
+             DispatchProtocol.new_entry(:search_attributes_updated, %{
+               run_id: started.run_id,
+               changes: changes,
+               fingerprint: legacy_fingerprint,
+               idempotency_key: "support:legacy-fingerprint",
+               occurred_at: @started_at
+             })
+
+    assert {:ok, _thread} = Journal.append_entries(@storage, [entry])
+    assert :ok = delete_run_checkpoint(started.run_id)
+    assert {:ok, rebuilt} = Jizoku.inspect_run(started.run_id, runtime_options())
+    assert rebuilt.search_attributes == changes
+    assert rebuilt.anomalies == []
+
+    assert {:ok, duplicate} =
+             Jizoku.update_search_attributes(
+               started.run_id,
+               changes,
+               runtime_options(idempotency_key: "support:legacy-fingerprint")
+             )
+
+    assert duplicate.thread_revisions == rebuilt.thread_revisions
+
+    assert {:ok, %{entries: entries}} = Journal.load_thread(@storage, {:run, started.run_id})
+    assert Enum.count(entries, &(&1.type == :search_attributes_updated)) == 1
   end
 
   test "loads the host allowlist from application configuration" do
