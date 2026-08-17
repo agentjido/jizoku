@@ -55,6 +55,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   alias Jizoku.Runtime.SearchAttributes
   alias Jizoku.Runtime.Trace
   alias Jizoku.Runtime.WorkflowAgent.Projection.GraphState
+  alias Jizoku.Workflow.EventWait
 
   @checkpoint_version 6
   @checkpoint_version_key "jizoku.workflow_projection.checkpoint_version"
@@ -1964,11 +1965,14 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   defp manual_resolution_data?(_data), do: false
 
   defp event_wait_opened_data?(data) when is_map(data) do
+    timeout = Map.get(data, :timeout)
+
     required_present?(data, [:run_id, :wait_id, :step, :event, :correlation, :opened_at]) and
       non_empty_binary?(Map.get(data, :wait_id)) and non_empty_binary?(Map.get(data, :step)) and
       non_empty_binary?(Map.get(data, :event)) and
       non_empty_binary?(Map.get(data, :correlation)) and
-      match?(%DateTime{}, Map.get(data, :opened_at)) and is_map(Map.get(data, :result, %{}))
+      match?(%DateTime{}, Map.get(data, :opened_at)) and is_map(Map.get(data, :result, %{})) and
+      (is_nil(timeout) or EventWait.valid_runtime_timeout?(timeout))
   end
 
   defp event_wait_opened_data?(_data) do

@@ -1014,9 +1014,13 @@ defmodule Jizoku.Runtime.DispatchProtocol.Projection do
       is_map(attempt.event_wait_timeout) ->
         put_attempt(projection, %ActionAttempt{
           attempt
-          | applied?: true,
+          | status: :completed,
+            result: Map.get(entry.data, :result, %{}),
+            completed_at: entry.occurred_at,
+            applied?: true,
             guardrails: guardrails(entry.data, attempt.guardrails),
-            transition: Map.get(entry.data, :transition)
+            transition: Map.get(entry.data, :transition),
+            error: nil
         })
 
       terminal_attempt?(projection, attempt) ->

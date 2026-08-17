@@ -321,6 +321,33 @@ defmodule Jizoku.Runtime.WorkflowAgentTest do
     refute Projection.checkpoint_compatible?(%Projection{projection | anomalies: [nil]})
   end
 
+  test "rejects malformed durable event timeout metadata before opening a wait" do
+    opened = %Entry{
+      type: :external_event_wait_opened,
+      thread: {:run, @run_id},
+      data: %{
+        run_id: @run_id,
+        wait_id: "wait-1",
+        step: "await_payment",
+        event: "payment.completed",
+        correlation: "pay-123",
+        opened_at: @started_at,
+        result: %{},
+        timeout: %{due_at: @visible_at},
+        occurred_at: @started_at
+      },
+      occurred_at: @started_at
+    }
+
+    projection = Projection.rebuild([opened])
+
+    assert Projection.manual_state(projection) == nil
+    assert Projection.event_waits(projection) == []
+
+    assert [%{entry_type: :external_event_wait_opened, reason: :malformed_entry}] =
+             Projection.anomalies(projection)
+  end
+
   test "partitioned workflow agents have isolated collision-safe identities" do
     assert WorkflowAgent.agent_id(@run_id, nil) == "jizoku.workflow.run_123"
 
