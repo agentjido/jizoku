@@ -908,13 +908,19 @@ defmodule Jizoku.Runtime.DispatchAgent do
             thread.rev
           )
 
-        {:ok,
-         continuation_completion_update(
-           completed_agent,
-           claimed_attempt!(completed_agent, attempt.runnable_key),
-           Projection.continuation_fence(completed_agent.state.projection, attempt.run_id),
-           true
-         )}
+        case Projection.continuation_fence(completed_agent.state.projection, attempt.run_id) do
+          %{} = retained_fence ->
+            {:ok,
+             continuation_completion_update(
+               completed_agent,
+               claimed_attempt!(completed_agent, attempt.runnable_key),
+               retained_fence,
+               true
+             )}
+
+          nil ->
+            {:error, {:invalid_continuation_fence, :not_retained}}
+        end
 
       {:error, :conflict} = error ->
         error

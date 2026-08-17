@@ -253,6 +253,34 @@ defmodule Jizoku.Runtime.DispatchAgent.ContinuationFenceCASTest do
     assert dispatch_entries() == before_retry
   end
 
+  test "rejects native continuation after ordinary completion omitted the fence" do
+    {claimed_agent, claim_id, claim_token} = claimed_agent()
+    completion = native_completion(claim_id, claim_token)
+
+    assert {:ok, %{agent: completed_agent}} =
+             DispatchAgent.complete(
+               @storage,
+               claimed_agent,
+               @runnable_key,
+               claim_id,
+               claim_token,
+               completion.result,
+               now: @now
+             )
+
+    before_retry = dispatch_entries()
+
+    assert {:error, {:incomplete_continuation_fence, @run_id}} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               completed_agent,
+               completion,
+               now: @now
+             )
+
+    assert dispatch_entries() == before_retry
+  end
+
   test "rejects a native fence for a different run before writing" do
     {claimed_agent, claim_id, claim_token} = claimed_agent()
     before_completion = dispatch_entries()

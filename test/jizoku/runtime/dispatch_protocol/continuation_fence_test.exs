@@ -444,8 +444,10 @@ defmodule Jizoku.Runtime.DispatchProtocol.ContinuationFenceTest do
   end
 
   test "rejects a current-shape checkpoint with an incomplete continuation fence" do
-    incomplete_checkpoint = %Projection{
-      Projection.new()
+    %Projection{} = incomplete_checkpoint = Projection.new()
+
+    incomplete_checkpoint = %{
+      incomplete_checkpoint
       | continuation_fences: %{@run_id => %{run_id: @run_id}}
     }
 
@@ -542,15 +544,23 @@ defmodule Jizoku.Runtime.DispatchProtocol.ContinuationFenceTest do
            )
   end
 
-  test "retains the first abort idempotently" do
+  test "retains exact duplicate aborts and rejects a conflicting abort reason" do
     first = entry!(:run_continuation_aborted, continuation_abort_attrs())
 
-    duplicate =
+    exact_duplicate =
+      entry!(
+        :run_continuation_aborted,
+        continuation_abort_attrs(
+          trace: %{@trace | span_id: "b7ad6b7169203331"},
+          occurred_at: @visible_at
+        )
+      )
+
+    conflicting =
       entry!(
         :run_continuation_aborted,
         continuation_abort_attrs(
           abort_reason: :predecessor_terminal,
-          trace: %{@trace | span_id: "b7ad6b7169203331"},
           occurred_at: @visible_at
         )
       )
@@ -559,11 +569,19 @@ defmodule Jizoku.Runtime.DispatchProtocol.ContinuationFenceTest do
       Projection.rebuild([
         entry!(:run_continuation_fenced, continuation_fence_attrs()),
         first,
-        duplicate
+        exact_duplicate,
+        conflicting
       ])
 
     assert Projection.continuation_abort(projection, @run_id) == first.data
-    assert Projection.anomalies(projection) == []
+    assert [%{reason: :conflicting_continuation_abort}] = Projection.anomalies(projection)
+  end
+
+  test "ignores malformed continuation fences in pending checkpoint state" do
+    %Projection{} = projection = Projection.new()
+    projection = %{projection | continuation_fences: %{@run_id => %{}, "run_bad" => "malformed"}}
+
+    assert Projection.pending_continuation_fences(projection) == []
   end
 
   test "classifies one-field continuation abort identity conflicts" do
@@ -859,7 +877,8 @@ defmodule Jizoku.Runtime.DispatchProtocol.ContinuationFenceTest do
   end
 
   test "rejects malformed or contradictory continuation resolution checkpoints" do
-    non_map_abort_projection = %Projection{Projection.new() | continuation_aborts: nil}
+    %Projection{} = non_map_abort_projection = Projection.new()
+    non_map_abort_projection = %{non_map_abort_projection | continuation_aborts: nil}
 
     refute Projection.checkpoint_compatible?(non_map_abort_projection)
     assert Projection.normalize(non_map_abort_projection).continuation_aborts == %{}

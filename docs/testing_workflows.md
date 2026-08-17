@@ -182,11 +182,13 @@ assert resumed.status == :running
 assert {:completed, completed} = Jizoku.Test.drain(runtime, run)
 ```
 
-`approve/4`, `reject/4`, `resume/4`, and `cancel/3` use the same durable public
-commands as a host application. They inherit the runtime's isolated storage,
-queue, partition, and frozen clock. Callers may provide only `:idempotency_key`
-and signal `:metadata`; routing and occurrence time cannot escape the test
-runtime. Each helper accepts only the runtime's root run.
+`approve/3-4`, `reject/3-4`, `resume/2-4`, and `cancel/2-3` use the same durable
+public commands as a host application. They inherit the runtime's isolated
+storage, queue, partition, and frozen clock. Callers may provide only
+`:idempotency_key` and signal `:metadata`; routing and occurrence time cannot
+escape the test runtime. Each helper accepts only the runtime's root run. A
+control call made while a drain or another control owns the execution lease
+returns `{:error, :runtime_busy}`; retry it after the active helper finishes.
 
 ## Failure diagnostics
 
