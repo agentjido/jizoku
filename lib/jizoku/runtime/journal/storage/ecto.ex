@@ -165,7 +165,14 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
     end
   end
 
-  @doc false
+  @doc "Clears the cached positive receipt-table probe after an operational rollback."
+  @spec clear_retention_receipts_cache(module(), opts()) :: :ok
+  def clear_retention_receipts_cache(repo, opts) when is_atom(repo) and is_list(opts) do
+    :persistent_term.erase(retention_receipts_cache_key(repo, opts))
+    :ok
+  end
+
+  @doc "Decodes one stored entry and returns its retention ownership marker."
   @spec retention_entry_owner(binary()) :: {:ok, String.t()} | {:error, term()}
   def retention_entry_owner(binary) when is_binary(binary) do
     with {:ok, entry} <- decode_entry(binary) do
@@ -263,31 +270,62 @@ defmodule Jizoku.Runtime.Journal.Storage.Ecto do
   end
 
   defp retained_run?(repo, partition, run_id, opts) do
-    with {:ok, true} <- retention_receipts_available?(repo, opts) do
-      {:ok,
-       repo.exists?(
-         from(receipt in RetentionReceipt,
-           where: receipt.partition_key == ^partition_key(partition) and receipt.run_id == ^run_id
-         ),
-         repo_opts(opts)
-       )}
+    case retention_receipts_available?(repo, opts) do
+      {:ok, true} ->
+        {:ok,
+         repo.exists?(
+           from(receipt in RetentionReceipt,
+             where:
+               receipt.partition_key == ^partition_key(partition) and receipt.run_id == ^run_id
+           ),
+           repo_opts(opts)
+         )}
+
+      {:ok, false} ->
+        {:ok, false}
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
   defp retention_receipts_available?(repo, opts) do
-    relation =
-      case Keyword.get(opts, :prefix) do
-        prefix when is_binary(prefix) and prefix != "" ->
-          "#{prefix}.jizoku_retention_receipts"
+    cache_key = retention_receipts_cache_key(repo, opts)
 
-        _default_prefix ->
-          "jizoku_retention_receipts"
-      end
+    case :persistent_term.get(cache_key, :unknown) do
+      true ->
+        {:ok, true}
 
+      :unknown ->
+        probe_retention_receipts(repo, retention_receipts_relation(opts), cache_key)
+    end
+  end
+
+  defp probe_retention_receipts(repo, relation, cache_key) do
     case SQL.query(repo, "SELECT to_regclass($1)::text", [relation]) do
-      {:ok, %{rows: [[nil]]}} -> {:ok, false}
-      {:ok, %{rows: [[_relation]]}} -> {:ok, true}
-      {:error, reason} -> {:error, {:retention_receipt_lookup_failed, reason}}
+      {:ok, %{rows: [[nil]]}} ->
+        {:ok, false}
+
+      {:ok, %{rows: [[_relation]]}} ->
+        :persistent_term.put(cache_key, true)
+        {:ok, true}
+
+      {:error, reason} ->
+        {:error, {:retention_receipt_lookup_failed, reason}}
+    end
+  end
+
+  defp retention_receipts_cache_key(repo, opts) do
+    {__MODULE__, :retention_receipts, repo, retention_receipts_relation(opts)}
+  end
+
+  defp retention_receipts_relation(opts) do
+    case Keyword.get(opts, :prefix) do
+      prefix when is_binary(prefix) and prefix != "" ->
+        "#{prefix}.jizoku_retention_receipts"
+
+      _default_prefix ->
+        "jizoku_retention_receipts"
     end
   end
 
