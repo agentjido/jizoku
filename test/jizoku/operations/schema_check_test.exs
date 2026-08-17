@@ -87,8 +87,8 @@ defmodule Jizoku.Operations.SchemaCheckTest do
 
     partial_primary_indexes =
       Enum.map(indexes, fn
-        ["jizoku_journal_threads", true, true, false, columns] ->
-          ["jizoku_journal_threads", true, true, true, columns]
+        ["jizoku_journal_threads", true, true, false, method, columns, operator_classes] ->
+          ["jizoku_journal_threads", true, true, true, method, columns, operator_classes]
 
         index ->
           index
@@ -105,8 +105,16 @@ defmodule Jizoku.Operations.SchemaCheckTest do
 
     non_unique_indexes =
       Enum.map(indexes, fn
-        ["jizoku_journal_entries", false, true, false, columns] ->
-          ["jizoku_journal_entries", false, false, false, columns]
+        ["jizoku_journal_entries", false, true, false, method, columns, operator_classes] ->
+          [
+            "jizoku_journal_entries",
+            false,
+            false,
+            false,
+            method,
+            columns,
+            operator_classes
+          ]
 
         index ->
           index
@@ -116,6 +124,58 @@ defmodule Jizoku.Operations.SchemaCheckTest do
              SchemaCheck.from_catalog("public", columns, non_unique_indexes, foreign_keys)
 
     assert Enum.any?(mismatched, &(&1.kind == :unique_index))
+  end
+
+  test "reports a btree search-attribute index as incompatible" do
+    {columns, indexes, foreign_keys} = current_catalog()
+
+    incompatible_indexes =
+      Enum.map(indexes, fn
+        ["jizoku_run_search", false, false, false, "gin", ["search_attributes"], ["jsonb_ops"]] ->
+          [
+            "jizoku_run_search",
+            false,
+            false,
+            false,
+            "btree",
+            ["search_attributes"],
+            ["jsonb_ops"]
+          ]
+
+        index ->
+          index
+      end)
+
+    assert %{status: :incompatible, mismatched: mismatched} =
+             SchemaCheck.from_catalog("public", columns, incompatible_indexes, foreign_keys)
+
+    assert %{kind: :index, table: "jizoku_run_search", columns: ["search_attributes"]} in mismatched
+  end
+
+  test "reports a wrong search-attribute operator class as incompatible" do
+    {columns, indexes, foreign_keys} = current_catalog()
+
+    incompatible_indexes =
+      Enum.map(indexes, fn
+        ["jizoku_run_search", false, false, false, "gin", ["search_attributes"], ["jsonb_ops"]] ->
+          [
+            "jizoku_run_search",
+            false,
+            false,
+            false,
+            "gin",
+            ["search_attributes"],
+            ["jsonb_path_ops"]
+          ]
+
+        index ->
+          index
+      end)
+
+    assert %{status: :incompatible, mismatched: mismatched} =
+             SchemaCheck.from_catalog("public", columns, incompatible_indexes, foreign_keys)
+
+    assert %{kind: :index, table: "jizoku_run_search", columns: ["search_attributes"]} in mismatched
   end
 
   test "reports an incompatible foreign-key delete rule" do
@@ -193,9 +253,9 @@ defmodule Jizoku.Operations.SchemaCheckTest do
 
     indexes =
       Enum.flat_map(Schema.tables(), fn {table, table_spec} ->
-        [[table, true, true, false, table_spec.primary_key]] ++
-          Enum.map(Map.get(table_spec, :unique, []), &[table, false, true, false, &1]) ++
-          Enum.map(Map.get(table_spec, :indexes, []), &[table, false, false, false, &1])
+        [index_row(table, true, true, table_spec.primary_key)] ++
+          Enum.map(Map.get(table_spec, :unique, []), &index_row(table, false, true, &1)) ++
+          Enum.map(Map.get(table_spec, :indexes, []), &index_row(table, false, false, &1))
       end)
 
     foreign_keys = [
@@ -209,5 +269,29 @@ defmodule Jizoku.Operations.SchemaCheckTest do
     ]
 
     {columns, indexes, foreign_keys}
+  end
+
+  defp index_row(table, primary?, unique?, %{columns: columns} = spec) do
+    [
+      table,
+      primary?,
+      unique?,
+      false,
+      Map.get(spec, :access_method, "btree"),
+      columns,
+      Map.get(spec, :operator_classes, List.duplicate("text_ops", length(columns)))
+    ]
+  end
+
+  defp index_row(table, primary?, unique?, columns) do
+    [
+      table,
+      primary?,
+      unique?,
+      false,
+      "btree",
+      columns,
+      List.duplicate("text_ops", length(columns))
+    ]
   end
 end

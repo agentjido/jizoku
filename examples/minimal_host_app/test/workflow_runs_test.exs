@@ -841,6 +841,14 @@ defmodule MinimalHostApp.WorkflowRunsTest do
 
     assert second_item.search_attributes == %{}
 
+    assert {:ok, %Page{items: overridden_items}} =
+             WorkflowRuns.page_dependency_recovery_runs(account_id,
+               first: 2,
+               visibility_policy: :auditor
+             )
+
+    assert Enum.all?(overridden_items, &(&1.search_attributes == %{}))
+
     assert MapSet.new([first_item.run_id, second_item.run_id]) ==
              MapSet.new([first_run.run_id, second_run.run_id])
 
@@ -860,6 +868,16 @@ defmodule MinimalHostApp.WorkflowRunsTest do
                "workflow_kind" => "dependency_recovery"
              }
            end)
+  end
+
+  test "returns payload validation errors for missing indexed account identifiers" do
+    assert {:error, {:invalid_payload, details}} =
+             WorkflowRuns.start_indexed_dependency_recovery(%{
+               invoice_id: "invoice_missing_account",
+               attempt_id: "attempt_missing_account"
+             })
+
+    assert details.missing_fields == [:account_id]
   end
 
   test "archives and restores terminal runs through the host dashboard boundary" do

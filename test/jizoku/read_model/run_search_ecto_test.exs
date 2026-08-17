@@ -6,6 +6,7 @@ defmodule Jizoku.ReadModel.RunSearchEctoTest do
   alias Jizoku.Persistence.RunSearch
   alias Jizoku.ReadModel.Listing.Page
   alias Jizoku.ReadModel.RunSearch.EctoQuery
+  alias Jizoku.ReadModel.RunSearch.Rebuilder
   alias Jizoku.Runtime.Journal
 
   @storage {Jizoku.Runtime.Journal.Storage.Ecto, repo: Repo}
@@ -285,6 +286,49 @@ defmodule Jizoku.ReadModel.RunSearchEctoTest do
                partition_key: "tenant_acme",
                run_id: partitioned_run.run_id
              )
+  end
+
+  test "does not overwrite newer projections when source revisions keep changing" do
+    assert {:ok, started} =
+             Jizoku.start(
+               Workflow,
+               :manual,
+               %{},
+               runtime_options(search_attributes: %{"account_id" => "acct_rebuild_conflict"})
+             )
+
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+    change_source_revision = fn ->
+      priority = Agent.get_and_update(counter, fn value -> {value + 1, value + 1} end)
+
+      assert {:ok, _updated} =
+               Jizoku.update_search_attributes(
+                 started.run_id,
+                 %{"priority" => priority},
+                 runtime_options(idempotency_key: "rebuild-conflict-#{priority}")
+               )
+
+      :ok
+    end
+
+    assert {:error, :projection_changed} =
+             Rebuilder.rebuild(@storage,
+               test_before_source_revision_check: change_source_revision
+             )
+
+    assert Agent.get(counter, & &1) == 4
+    assert {:ok, inspected} = Jizoku.inspect_run(started.run_id, runtime_options())
+
+    assert %RunSearch{
+             thread_revision: thread_revision,
+             search_attributes: %{
+               "account_id" => "acct_rebuild_conflict",
+               "priority" => 4
+             }
+           } = Repo.get_by!(RunSearch, partition_key: "", run_id: started.run_id)
+
+    assert thread_revision == inspected.thread_revisions.run
   end
 
   defp runtime_options(overrides \\ []) do

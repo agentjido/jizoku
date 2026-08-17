@@ -78,7 +78,11 @@ defmodule Jizoku.Persistence.Schema do
         ["partition_key", "definition_version", "started_at", "run_id"],
         ["partition_key", "terminal_at", "run_id"],
         ["partition_key", "archived_at", "started_at", "run_id"],
-        ["search_attributes"]
+        %{
+          columns: ["search_attributes"],
+          access_method: "gin",
+          operator_classes: ["jsonb_ops"]
+        }
       ]
     },
     "jizoku_retention_receipts" => %{

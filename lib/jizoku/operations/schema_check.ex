@@ -29,24 +29,33 @@ defmodule Jizoku.Operations.SchemaCheck do
          index_definition.indisprimary,
          index_definition.indisunique,
          index_definition.indpred IS NOT NULL,
-         array_agg(attribute.attname ORDER BY indexed_column.ordinality)
+         access_method.amname,
+         array_agg(attribute.attname ORDER BY indexed_column.ordinality),
+         array_agg(operator_class.opcname ORDER BY indexed_column.ordinality)
   FROM pg_catalog.pg_class AS table_relation
   JOIN pg_catalog.pg_namespace AS namespace
     ON namespace.oid = table_relation.relnamespace
   JOIN pg_catalog.pg_index AS index_definition
     ON index_definition.indrelid = table_relation.oid
-  JOIN LATERAL unnest(index_definition.indkey)
-    WITH ORDINALITY AS indexed_column(attribute_number, ordinality)
+  JOIN pg_catalog.pg_class AS index_relation
+    ON index_relation.oid = index_definition.indexrelid
+  JOIN pg_catalog.pg_am AS access_method
+    ON access_method.oid = index_relation.relam
+  JOIN LATERAL unnest(index_definition.indkey, index_definition.indclass)
+    WITH ORDINALITY AS indexed_column(attribute_number, operator_class_oid, ordinality)
     ON TRUE
   JOIN pg_catalog.pg_attribute AS attribute
     ON attribute.attrelid = table_relation.oid
    AND attribute.attnum = indexed_column.attribute_number
+  JOIN pg_catalog.pg_opclass AS operator_class
+    ON operator_class.oid = indexed_column.operator_class_oid
   WHERE namespace.nspname = $1 AND table_relation.relname = ANY($2)
   GROUP BY table_relation.relname,
            index_definition.indexrelid,
            index_definition.indisprimary,
            index_definition.indisunique,
-           index_definition.indpred
+           index_definition.indpred,
+           access_method.amname
   ORDER BY table_relation.relname, index_definition.indexrelid
   """
 
@@ -217,13 +226,23 @@ defmodule Jizoku.Operations.SchemaCheck do
 
   defp compare_indexes(expected, rows) do
     indexes =
-      Enum.map(rows, fn [table, primary?, unique?, partial?, columns] ->
+      Enum.map(rows, fn [
+                          table,
+                          primary?,
+                          unique?,
+                          partial?,
+                          access_method,
+                          columns,
+                          operator_classes
+                        ] ->
         %{
           table: table,
           primary?: primary?,
           unique?: unique?,
           partial?: partial?,
-          columns: columns
+          access_method: access_method,
+          columns: columns,
+          operator_classes: operator_classes
         }
       end)
 
@@ -231,7 +250,7 @@ defmodule Jizoku.Operations.SchemaCheck do
       requirements =
         [%{kind: :primary_key, columns: table_spec.primary_key}] ++
           Enum.map(Map.get(table_spec, :unique, []), &%{kind: :unique_index, columns: &1}) ++
-          Enum.map(Map.get(table_spec, :indexes, []), &%{kind: :index, columns: &1})
+          Enum.map(Map.get(table_spec, :indexes, []), &index_requirement/1)
 
       Enum.reduce(requirements, {missing, mismatched}, fn requirement, acc ->
         compare_index_requirement(table, requirement, indexes, acc)
@@ -248,18 +267,50 @@ defmodule Jizoku.Operations.SchemaCheck do
 
       {:primary_key, matches} ->
         matches
-        |> Enum.any?(&(&1.primary? and not &1.partial?))
+        |> Enum.any?(&index_matches?(&1, requirement))
         |> compare_index_match(:primary_key, table, requirement.columns, missing, mismatched)
 
       {:unique_index, matches} ->
         matches
-        |> Enum.any?(&(&1.unique? and not &1.partial?))
+        |> Enum.any?(&index_matches?(&1, requirement))
         |> compare_index_match(:unique_index, table, requirement.columns, missing, mismatched)
 
       {:index, matches} ->
         matches
-        |> Enum.any?(&(not &1.partial?))
+        |> Enum.any?(&index_matches?(&1, requirement))
         |> compare_index_match(:index, table, requirement.columns, missing, mismatched)
+    end
+  end
+
+  defp index_requirement(%{} = spec) do
+    Map.put(spec, :kind, :index)
+  end
+
+  defp index_requirement(columns) when is_list(columns) do
+    %{kind: :index, columns: columns}
+  end
+
+  defp index_matches?(index, %{kind: :primary_key} = requirement) do
+    index.primary? and not index.partial? and index_properties_match?(index, requirement)
+  end
+
+  defp index_matches?(index, %{kind: :unique_index} = requirement) do
+    index.unique? and not index.partial? and index_properties_match?(index, requirement)
+  end
+
+  defp index_matches?(index, %{kind: :index} = requirement) do
+    not index.partial? and index_properties_match?(index, requirement)
+  end
+
+  defp index_properties_match?(index, requirement) do
+    optional_index_property_matches?(index, requirement, :access_method) and
+      optional_index_property_matches?(index, requirement, :operator_classes)
+  end
+
+  defp optional_index_property_matches?(index, requirement, property) do
+    case Map.fetch(requirement, property) do
+      :error -> true
+      {:ok, expected} -> Map.fetch!(index, property) == expected
     end
   end
 

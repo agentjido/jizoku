@@ -123,6 +123,72 @@ defmodule Mix.Tasks.Jizoku.InstallTest do
     assert output =~ "creating"
   end
 
+  test "does not treat suffixed table names as installed Jizoku tables", %{tmp_dir: tmp_dir} do
+    File.write!(
+      Path.join(tmp_dir, "priv/repo/migrations/20260101000000_create_archive.exs"),
+      """
+      defmodule ExistingMigration do
+        use Ecto.Migration
+
+        def change do
+          create table(:jizoku_journal_threads_archive)
+          create table(:jizoku_journal_entries_archive)
+          create table(:jizoku_journal_checkpoints_archive)
+          create table(:jizoku_run_search_archive)
+          create table(:jizoku_retention_receipts_archive)
+        end
+      end
+      """
+    )
+
+    File.cd!(tmp_dir, fn ->
+      capture_io(fn -> Install.run([]) end)
+    end)
+
+    installed_migrations = File.ls!(Path.join(tmp_dir, "priv/repo/migrations"))
+
+    assert Enum.any?(installed_migrations, &String.ends_with?(&1, "create_jizoku_schema.exs"))
+
+    assert Enum.any?(
+             installed_migrations,
+             &String.ends_with?(&1, "add_jizoku_run_search_projection.exs")
+           )
+
+    assert Enum.any?(
+             installed_migrations,
+             &String.ends_with?(&1, "add_jizoku_retention.exs")
+           )
+  end
+
+  test "allocates consecutive versions after the highest existing migration", %{tmp_dir: tmp_dir} do
+    existing_version = 99_991_231_235_959
+
+    File.write!(
+      Path.join(
+        tmp_dir,
+        "priv/repo/migrations/#{existing_version}_future_migration.exs"
+      ),
+      "defmodule FutureMigration do\nend\n"
+    )
+
+    File.cd!(tmp_dir, fn ->
+      capture_io(fn -> Install.run([]) end)
+    end)
+
+    generated_versions =
+      tmp_dir
+      |> Path.join("priv/repo/migrations")
+      |> File.ls!()
+      |> Enum.reject(&String.ends_with?(&1, "future_migration.exs"))
+      |> Enum.map(fn filename ->
+        [version | _rest] = String.split(filename, "_", parts: 2)
+        String.to_integer(version)
+      end)
+      |> Enum.sort()
+
+    assert generated_versions == Enum.to_list((existing_version + 1)..(existing_version + 4))
+  end
+
   test "adds only run search when the journal baseline already exists", %{tmp_dir: tmp_dir} do
     File.write!(
       Path.join(tmp_dir, "priv/repo/migrations/20260101000000_create_jizoku_schema.exs"),

@@ -33,18 +33,27 @@ defmodule Jizoku.ReadModel.RunSearch.Rebuilder do
   """
   @spec rebuild(Storage.t() | Storage.config()) :: {:ok, result()} | {:error, term()}
   def rebuild(storage) do
+    rebuild(storage, [])
+  end
+
+  @doc false
+  @spec rebuild(Storage.t() | Storage.config(), keyword()) ::
+          {:ok, result()} | {:error, term()}
+  def rebuild(storage, opts) when is_list(opts) do
     with {:ok, %Storage{} = storage} <- Storage.normalize(storage) do
-      do_rebuild(storage, @retries)
+      do_rebuild(storage, @retries, opts)
     end
   end
 
   defp do_rebuild(
          %Storage{adapter: Jizoku.Runtime.Journal.Storage.Ecto} = storage,
-         retries_left
+         retries_left,
+         opts
        ) do
     with {:ok, catalog} <- RunCatalogProjection.load(storage),
          {:ok, rows} <- build_rows(storage, catalog.projection),
          :ok <- upsert_rows(storage, rows),
+         :ok <- run_test_before_source_revision_check(opts),
          :ok <- verify_source_revisions(storage, catalog.rev, rows) do
       {:ok,
        %{
@@ -54,14 +63,14 @@ defmodule Jizoku.ReadModel.RunSearch.Rebuilder do
        }}
     else
       {:error, :projection_changed} when retries_left > 0 ->
-        do_rebuild(storage, retries_left - 1)
+        do_rebuild(storage, retries_left - 1, opts)
 
       {:error, _reason} = error ->
         error
     end
   end
 
-  defp do_rebuild(%Storage{adapter: adapter}, _retries_left) do
+  defp do_rebuild(%Storage{adapter: adapter}, _retries_left, _opts) do
     {:error, {:unsupported_run_search_projection, adapter}}
   end
 
@@ -177,6 +186,14 @@ defmodule Jizoku.ReadModel.RunSearch.Rebuilder do
     case Keyword.get(opts, :prefix) do
       prefix when is_binary(prefix) and prefix != "" -> [prefix: prefix]
       _default_prefix -> []
+    end
+  end
+
+  defp run_test_before_source_revision_check(opts) do
+    case Keyword.get(opts, :test_before_source_revision_check) do
+      nil -> :ok
+      hook when is_function(hook, 0) -> hook.()
+      _invalid -> {:error, :invalid_test_before_source_revision_check}
     end
   end
 end
