@@ -85,6 +85,99 @@ defmodule Jizoku.Runtime.WorkflowMigrationProjectionTest do
   end
 
   test "replay selects the migrated definition and treats transformed context as authoritative" do
+    %{run_id: run_id} = seed_migrated_run!()
+
+    assert {:ok, agent} = WorkflowAgent.rebuild(@storage, run_id)
+
+    projection = agent.state.projection
+    assert projection.definition_version == "v2"
+    assert projection.context == %{schema: 2}
+    assert Projection.applied_result_context(projection) == %{}
+
+    assert [%{migration_key: "projection-v1-to-v2"}] =
+             Projection.definition_migrations(projection)
+
+    assert {:ok, snapshot} = Inspection.snapshot(@storage, run_id, queue: @queue)
+    assert snapshot.context == %{schema: 2}
+    assert snapshot.manual_state.step == "gate"
+    assert snapshot.definition_version == "v2"
+
+    assert {:ok, CurrentWorkflow, loaded} =
+             WorkflowDefinitionLoader.load(
+               @storage,
+               run_id,
+               Definition.serialize_workflow(CurrentWorkflow)
+             )
+
+    assert loaded.definition_version == "v2"
+  end
+
+  test "stale migration facts are anomalous and cannot replace the active definition" do
+    %{run_id: run_id, source_definition: source_definition} = seed_migrated_run!()
+
+    stale_entry =
+      entry!(:run_definition_migrated, %{
+        run_id: run_id,
+        migration_key: "stale-projection-migration",
+        source_version: "v1",
+        source_fingerprint: Definition.fingerprint(source_definition),
+        target_version: "v1",
+        target_fingerprint: Definition.fingerprint(source_definition),
+        context: %{schema: 1},
+        manual_state: %{
+          step: "legacy_gate",
+          kind: "pause",
+          paused_at: @occurred_at,
+          metadata: %{}
+        },
+        occurred_at: DateTime.add(@occurred_at, 1, :second)
+      })
+
+    assert {:ok, _thread} = Journal.append_entries(@storage, [stale_entry])
+    assert {:ok, agent} = WorkflowAgent.rebuild(@storage, run_id)
+
+    assert Enum.any?(Projection.anomalies(agent.state.projection), fn anomaly ->
+             anomaly.reason == :stale_definition_migration and
+               anomaly.entry_type == :run_definition_migrated
+           end)
+
+    assert {:ok, CurrentWorkflow, still_loaded} =
+             WorkflowDefinitionLoader.load(
+               @storage,
+               run_id,
+               Definition.serialize_workflow(CurrentWorkflow)
+             )
+
+    assert still_loaded.definition_version == "v2"
+  end
+
+  test "resumed execution uses the migrated target definition" do
+    %{run_id: run_id} = seed_migrated_run!()
+
+    assert {:ok, %{status: :running}} =
+             Jizoku.resume(
+               run_id,
+               %{actor: "projection-test"},
+               runtime: :journal,
+               journal_storage: @storage,
+               queue: @queue,
+               idempotency_key: "resume-projected-migration",
+               now: DateTime.add(@occurred_at, 1, :second)
+             )
+
+    assert {:ok, completed} =
+             Jizoku.execute_next(
+               journal_storage: @storage,
+               queue: @queue,
+               owner_id: "projected-migration-worker",
+               now: DateTime.add(@occurred_at, 1, :second)
+             )
+
+    assert completed.status == :completed
+    assert Enum.any?(completed.attempts, &(&1.result == %{schema: 2}))
+  end
+
+  defp seed_migrated_run! do
     run_id = Ecto.UUID.generate()
     source_definition = HistoricalV1.workflow_definition()
     target_definition = CurrentWorkflow.workflow_definition()
@@ -139,80 +232,8 @@ defmodule Jizoku.Runtime.WorkflowMigrationProjectionTest do
     ]
 
     assert {:ok, _thread} = Journal.append_entries(@storage, entries)
-    assert {:ok, agent} = WorkflowAgent.rebuild(@storage, run_id)
 
-    projection = agent.state.projection
-    assert projection.definition_version == "v2"
-    assert projection.context == %{schema: 2}
-    assert Projection.applied_result_context(projection) == %{}
-
-    assert [%{migration_key: "projection-v1-to-v2"}] =
-             Projection.definition_migrations(projection)
-
-    assert {:ok, snapshot} = Inspection.snapshot(@storage, run_id, queue: @queue)
-    assert snapshot.context == %{schema: 2}
-    assert snapshot.manual_state.step == "gate"
-    assert snapshot.definition_version == "v2"
-
-    assert {:ok, CurrentWorkflow, loaded} =
-             WorkflowDefinitionLoader.load(
-               @storage,
-               run_id,
-               Definition.serialize_workflow(CurrentWorkflow)
-             )
-
-    assert loaded.definition_version == "v2"
-
-    stale_entry =
-      entry!(:run_definition_migrated, %{
-        run_id: run_id,
-        migration_key: "stale-projection-migration",
-        source_version: "v1",
-        source_fingerprint: Definition.fingerprint(source_definition),
-        target_version: "v1",
-        target_fingerprint: Definition.fingerprint(source_definition),
-        context: %{schema: 1},
-        manual_state: %{
-          step: "legacy_gate",
-          kind: "pause",
-          paused_at: @occurred_at,
-          metadata: %{}
-        },
-        occurred_at: DateTime.add(@occurred_at, 1, :second)
-      })
-
-    assert {:ok, _thread} = Journal.append_entries(@storage, [stale_entry])
-
-    assert {:ok, CurrentWorkflow, still_loaded} =
-             WorkflowDefinitionLoader.load(
-               @storage,
-               run_id,
-               Definition.serialize_workflow(CurrentWorkflow)
-             )
-
-    assert still_loaded.definition_version == "v2"
-
-    assert {:ok, %{status: :running}} =
-             Jizoku.resume(
-               run_id,
-               %{actor: "projection-test"},
-               runtime: :journal,
-               journal_storage: @storage,
-               queue: @queue,
-               idempotency_key: "resume-projected-migration",
-               now: DateTime.add(@occurred_at, 1, :second)
-             )
-
-    assert {:ok, completed} =
-             Jizoku.execute_next(
-               journal_storage: @storage,
-               queue: @queue,
-               owner_id: "projected-migration-worker",
-               now: DateTime.add(@occurred_at, 1, :second)
-             )
-
-    assert completed.status == :completed
-    assert Enum.any?(completed.attempts, &(&1.result == %{schema: 2}))
+    %{run_id: run_id, source_definition: source_definition}
   end
 
   defp runnable(run_id, runnable_key) do

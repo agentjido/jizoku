@@ -17,11 +17,20 @@ defmodule Jizoku.Runtime.Journal.WorkflowDefinitionLoader do
   end
 
   @doc false
+  @spec load(Journal.storage_config(), String.t(), String.t(), Projection.t()) ::
+          {:ok, module(), Definition.t()} | {:error, term()}
+  def load(storage, run_id, workflow_name, %Projection{} = projection)
+      when is_binary(run_id) and is_binary(workflow_name) do
+    opts = Keyword.put(configured_version_options(), :projection, projection)
+    load(storage, run_id, workflow_name, opts)
+  end
+
+  @doc false
   @spec load(Journal.storage_config(), String.t(), String.t(), keyword()) ::
           {:ok, module(), Definition.t()} | {:error, term()}
   def load(storage, run_id, workflow_name, opts)
       when is_binary(run_id) and is_binary(workflow_name) and is_list(opts) do
-    with {:ok, persisted} <- persisted_definition_metadata(storage, run_id) do
+    with {:ok, persisted} <- persisted_definition_metadata(storage, run_id, opts) do
       case definition_source(persisted) do
         :runtime_spec ->
           load_runtime_spec(persisted)
@@ -36,7 +45,7 @@ defmodule Jizoku.Runtime.Journal.WorkflowDefinitionLoader do
   @spec runtime_spec_run?(Journal.storage_config(), String.t()) ::
           {:ok, boolean()} | {:error, term()}
   def runtime_spec_run?(storage, run_id) when is_binary(run_id) do
-    with {:ok, persisted} <- persisted_definition_metadata(storage, run_id) do
+    with {:ok, persisted} <- persisted_definition_metadata(storage, run_id, []) do
       {:ok, definition_source(persisted) == :runtime_spec}
     end
   end
@@ -77,16 +86,22 @@ defmodule Jizoku.Runtime.Journal.WorkflowDefinitionLoader do
     end
   end
 
-  defp persisted_definition_metadata(storage, run_id) do
+  defp persisted_definition_metadata(storage, run_id, opts) do
     with {:ok, %{entries: entries}} <- Journal.load_thread(storage, {:run, run_id}) do
-      projection = Projection.rebuild(entries)
+      projection = Keyword.get_lazy(opts, :projection, fn -> Projection.rebuild(entries) end)
 
-      metadata =
-        entries
-        |> Enum.find_value(&run_started_metadata/1)
-        |> effective_definition_metadata(projection)
+      case projection do
+        %Projection{} ->
+          metadata =
+            entries
+            |> Enum.find_value(&run_started_metadata/1)
+            |> effective_definition_metadata(projection)
 
-      {:ok, metadata || %{definition_version: nil, definition_fingerprint: nil}}
+          {:ok, metadata || %{definition_version: nil, definition_fingerprint: nil}}
+
+        _invalid_projection ->
+          {:error, {:invalid_option, :projection}}
+      end
     end
   end
 
