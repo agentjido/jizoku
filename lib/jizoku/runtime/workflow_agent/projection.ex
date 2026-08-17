@@ -667,6 +667,8 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
     apply_outbox_entry(projection, entry)
   end
 
+  # Search attributes are operational metadata and remain writable after a run
+  # terminalizes, so this clause intentionally precedes the terminal-run fence.
   defp apply_entry(
          %Entry{type: :search_attributes_updated, data: data} = entry,
          %__MODULE__{} = projection
@@ -1137,7 +1139,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
       SearchAttributes.valid_persisted?(changes) and
       SearchAttributes.valid_idempotency_key?(Map.get(data, :idempotency_key)) and
       non_empty_binary?(fingerprint) and
-      SearchAttributes.fingerprint(changes) == fingerprint
+      SearchAttributes.fingerprint_matches?(changes, fingerprint)
   end
 
   defp search_attributes_updated_data?(_data, _projection) do

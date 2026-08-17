@@ -52,16 +52,20 @@ defmodule Jizoku.Runtime.Journal.Commands.SearchAttributes do
              projection,
              command.idempotency_key
            ) do
-        fingerprint when fingerprint == command.fingerprint ->
-          snapshot(command)
-
         nil ->
           append_new_update(command, projection, thread_rev, retries_left)
 
-        _conflicting_fingerprint ->
-          {:error, {:idempotency_conflict, command.idempotency_key}}
+        fingerprint
+        when is_binary(fingerprint) ->
+          existing_update_result(command, fingerprint)
       end
     end
+  end
+
+  defp existing_update_result(command, fingerprint) do
+    if Jizoku.Runtime.SearchAttributes.fingerprint_matches?(command.changes, fingerprint),
+      do: snapshot(command),
+      else: {:error, {:idempotency_conflict, command.idempotency_key}}
   end
 
   defp append_new_update(command, projection, thread_rev, retries_left) do
