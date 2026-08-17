@@ -464,6 +464,39 @@ defmodule Jizoku.Runtime.DispatchAgent.ContinuationFenceCASTest do
     assert dispatch_entries() == before_fence
   end
 
+  test "preserves the dispatch-protocol reason for malformed fence entries" do
+    agent = queued_agent()
+    before_fence = dispatch_entries()
+
+    fence = Map.delete(continuation_fence(), :workflow)
+
+    assert {:error, {:invalid_continuation_fence, {:missing_fields, [:workflow]}}} =
+             DispatchAgent.fence_run_for_continuation(
+               @storage,
+               agent,
+               fence,
+               now: @now
+             )
+
+    assert dispatch_entries() == before_fence
+  end
+
+  test "does not misreport invalid structural arguments as invalid fence data" do
+    agent = queued_agent()
+
+    assert {:error, {:invalid_continuation_fence, :invalid}} =
+             DispatchAgent.fence_run_for_continuation(@storage, agent, "invalid", now: @now)
+
+    assert_raise FunctionClauseError, fn ->
+      DispatchAgent.fence_run_for_continuation(
+        @storage,
+        agent,
+        continuation_fence(),
+        :invalid
+      )
+    end
+  end
+
   test "rejects a successor that reuses the predecessor run id before writing" do
     agent = queued_agent()
     before_fence = dispatch_entries()
