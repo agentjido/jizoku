@@ -3515,7 +3515,12 @@ defmodule Jizoku.Runtime.Journal.Executor do
 
   defp executable_step(storage, workflow_agent, %ActionAttempt{} = attempt) do
     with {:ok, workflow, definition} <-
-           WorkflowDefinitionLoader.load(storage, attempt.run_id, workflow_agent.state.workflow),
+           WorkflowDefinitionLoader.load(
+             storage,
+             attempt.run_id,
+             workflow_agent.state.workflow,
+             workflow_agent.state.projection
+           ),
          step_name when is_atom(step_name) <-
            Definition.deserialize_step(definition, attempt.step),
          {:ok, step} <- Definition.step(definition, step_name) do
@@ -3531,7 +3536,12 @@ defmodule Jizoku.Runtime.Journal.Executor do
 
   defp executable_dynamic_step(storage, workflow_agent, %ActionAttempt{} = attempt, step_name) do
     with {:ok, workflow, definition} <-
-           WorkflowDefinitionLoader.load(storage, attempt.run_id, workflow_agent.state.workflow),
+           WorkflowDefinitionLoader.load(
+             storage,
+             attempt.run_id,
+             workflow_agent.state.workflow,
+             workflow_agent.state.projection
+           ),
          {:ok, runnable} <- dynamic_planned_runnable(workflow_agent, attempt),
          {:ok, module} <- dynamic_runnable_module(runnable) do
       {:ok, workflow, definition, step_name,
