@@ -130,6 +130,28 @@ defmodule Jizoku.Workflow.CompatibilityTest do
     end)
   end
 
+  test "transition declaration order does not change compatibility" do
+    old = two_step_spec()
+    reordered = Map.update!(old, :transitions, &Enum.reverse/1)
+
+    assert {:ok, %Result{category: :compatible, differences: []}} =
+             Jizoku.Workflow.compatibility(old, reordered)
+  end
+
+  test "canonicalizes validated struct values without raising" do
+    old = put_in(base_spec(), [:triggers, Access.at(0), :config], %{endpoint: %URI{host: "old"}})
+    new = put_in(base_spec(), [:triggers, Access.at(0), :config], %{endpoint: %URI{host: "new"}})
+
+    assert {:ok, %Result{category: :migration_required, differences: differences}} =
+             Jizoku.Workflow.compatibility(old, new)
+
+    assert_difference(differences, :migration_required, :trigger_changed, [
+      :triggers,
+      "manual",
+      :config
+    ])
+  end
+
   test "removing declared structure is incompatible" do
     old = base_spec()
 
@@ -142,12 +164,10 @@ defmodule Jizoku.Workflow.CompatibilityTest do
 
     changed_specs = [without_payload, Map.update!(old, :triggers, &List.delete_at(&1, 1))]
 
-    assert Enum.all?(changed_specs, fn changed ->
-             match?(
-               {:ok, %Result{category: :incompatible}},
+    Enum.each(changed_specs, fn changed ->
+      assert {:ok, %Result{category: :incompatible}} =
                Jizoku.Workflow.compatibility(old, changed)
-             )
-           end)
+    end)
   end
 
   test "graph additions and removals identify steps, transitions, and retries" do
@@ -192,8 +212,16 @@ defmodule Jizoku.Workflow.CompatibilityTest do
       |> put_in([:steps, Access.at(0), :module], StepV2)
       |> put_in([:steps, Access.at(0), :opts], input: [:account_id], output: :result)
 
+    reordered =
+      update_in(new, [:steps, Access.at(0)], fn step ->
+        step
+        |> Map.to_list()
+        |> Enum.reverse()
+        |> Map.new()
+      end)
+
     assert {:ok, %Result{differences: first}} = Jizoku.Workflow.compatibility(old, new)
-    assert {:ok, %Result{differences: second}} = Jizoku.Workflow.compatibility(old, new)
+    assert {:ok, %Result{differences: second}} = Jizoku.Workflow.compatibility(old, reordered)
     assert first == second
 
     assert Enum.map(first, & &1.path) == [

@@ -390,6 +390,13 @@ defmodule Jizoku.Runtime.DispatchProtocol do
     |> Map.update(:target, nil, &normalize_thread_id/1)
   end
 
+  defp normalize_attrs(attrs, :run_definition_migrated) do
+    attrs
+    |> Map.update(:source_manual_step, nil, &normalize_manual_value/1)
+    |> Map.update(:target_manual_step, nil, &normalize_manual_value/1)
+    |> Map.update(:manual_state, %{}, &normalize_migrated_manual_state/1)
+  end
+
   defp normalize_attrs(attrs, :run_signal_received) do
     attrs
     |> Map.update(:signal_type, nil, &normalize_thread_id/1)
@@ -501,6 +508,16 @@ defmodule Jizoku.Runtime.DispatchProtocol do
 
   defp normalize_manual_value(nil), do: nil
   defp normalize_manual_value(value), do: normalize_thread_id(value)
+
+  defp normalize_migrated_manual_state(manual_state) when is_map(manual_state) do
+    manual_state
+    |> Map.update(:step, nil, &normalize_manual_value/1)
+    |> Map.update(:kind, nil, &normalize_manual_value/1)
+  end
+
+  defp normalize_migrated_manual_state(manual_state) do
+    manual_state
+  end
 
   defp normalize_origin(nil), do: nil
 

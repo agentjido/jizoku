@@ -700,9 +700,9 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
   defp event_resolution_context(workflow_agent, manual_state, projection, result) do
     workflow_agent
     |> applied_result_context()
-    |> Map.merge(projection_context(workflow_agent))
     |> Map.merge(manual_input(manual_state, projection))
     |> Map.merge(result)
+    |> Map.merge(projection_context(workflow_agent))
   end
 
   defp event_command_receipt(%Signal{} = signal) do
@@ -1030,9 +1030,9 @@ defmodule Jizoku.Runtime.Journal.Commands.ManualControl do
     context =
       workflow_agent
       |> applied_result_context()
-      |> Map.merge(projection_context(workflow_agent))
       |> Map.merge(input || %{})
       |> Map.merge(result)
+      |> Map.merge(projection_context(workflow_agent))
 
     with {:ok, input} <- successor_input(context, definition, next_step),
          {:ok, runnable} <-

@@ -395,6 +395,29 @@ defmodule Jizoku.Runtime.DispatchProtocolTest do
            }
   end
 
+  test "normalizes migrated manual state before it is persisted" do
+    assert {:ok, entry} =
+             DispatchProtocol.new_entry(:run_definition_migrated, %{
+               run_id: @run_id,
+               migration_key: "billing-v1-to-v2",
+               source_version: "v1",
+               source_fingerprint: "source-fingerprint",
+               target_version: "v2",
+               target_fingerprint: "target-fingerprint",
+               context: %{},
+               manual_state: %{
+                 step: :wait_for_review,
+                 kind: :approval,
+                 paused_at: @started_at,
+                 metadata: %{}
+               },
+               occurred_at: @started_at
+             })
+
+    assert entry.data.manual_state.step == "wait_for_review"
+    assert entry.data.manual_state.kind == "approval"
+  end
+
   test "normalizes runtime command receipt entries on the run thread" do
     assert {:ok, entry} =
              DispatchProtocol.new_entry(:run_signal_received, %{
