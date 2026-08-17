@@ -959,6 +959,12 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert receipt.run_ids == [started.run_id]
     assert receipt.run_entries_deleted > 0
     assert receipt.dispatch_entries_deleted > 0
+
+    assert {:ok, duplicate_receipt} =
+             WorkflowRuns.apply_retention(plan, plan.confirmation_token)
+
+    assert duplicate_receipt.idempotent?
+    assert %{duplicate_receipt | idempotent?: false} == receipt
     assert {:error, :not_found} = WorkflowRuns.inspect_run(started.run_id, runtime_opts)
   end
 

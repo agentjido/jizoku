@@ -502,6 +502,9 @@ defmodule Jizoku.Runtime.Journal.Storage.EctoTest do
       []
     )
 
+    assert :ok = @storage_adapter.clear_retention_receipts_cache(Repo, [])
+    on_exit(fn -> @storage_adapter.clear_retention_receipts_cache(Repo, []) end)
+
     run_id = "0190a4f1-0a7c-7cb1-80c5-b4f8b1d24001"
 
     assert {:ok, snapshot} =

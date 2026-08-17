@@ -1,6 +1,7 @@
 defmodule Jizoku.RetentionApplyTest do
   use Jizoku.DataCase, async: false
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Jizoku.Persistence.JournalEntry
   alias Jizoku.Persistence.RetentionReceipt
   alias Jizoku.Persistence.RunSearch
@@ -39,6 +40,19 @@ defmodule Jizoku.RetentionApplyTest do
 
       step :record, Record
       transition :record, on: :ok, to: :complete
+    end
+  end
+
+  defmodule ToggleHoldPolicy do
+    @behaviour Jizoku.Retention.Policy
+
+    @impl Jizoku.Retention.Policy
+    def evaluate(_snapshot, _context, opts) do
+      if Agent.get(Keyword.fetch!(opts, :toggle), & &1) do
+        {:block, :legal_hold}
+      else
+        :allow
+      end
     end
   end
 
@@ -113,6 +127,59 @@ defmodule Jizoku.RetentionApplyTest do
     assert duplicate.idempotent?
     assert %{duplicate | idempotent?: false} == first
     assert Repo.aggregate(RetentionReceipt, :count) == 1
+  end
+
+  test "serializes concurrent exact retries behind the retained run identity" do
+    assert {:ok, _archived} = archived_run(@target_id)
+    assert {:ok, plan} = preview()
+
+    parent = self()
+
+    tasks =
+      Enum.map(1..2, fn _index ->
+        Task.async(fn ->
+          Sandbox.allow(Repo, parent, self())
+          send(parent, {:retention_apply_ready, self()})
+
+          receive do
+            :apply_retention -> apply_plan(plan)
+          end
+        end)
+      end)
+
+    task_pids =
+      Enum.map(tasks, fn _task ->
+        assert_receive {:retention_apply_ready, task_pid}, 5_000
+        task_pid
+      end)
+
+    Enum.each(task_pids, &send(&1, :apply_retention))
+    results = Enum.map(tasks, &Task.await(&1, 10_000))
+
+    assert Enum.count(results, &match?({:ok, %{idempotent?: false}}, &1)) == 1
+    assert Enum.count(results, &match?({:ok, %{idempotent?: true}}, &1)) == 1
+    assert Repo.aggregate(RetentionReceipt, :count) == 1
+  end
+
+  test "revalidates trusted policy without requiring a source revision change" do
+    assert {:ok, _archived} = archived_run(@target_id)
+
+    previous_policy = Application.get_env(:jizoku, :retention_policy)
+    {:ok, toggle} = Agent.start_link(fn -> false end)
+    Application.put_env(:jizoku, :retention_policy, {ToggleHoldPolicy, toggle: toggle})
+
+    on_exit(fn -> restore_retention_policy(previous_policy) end)
+
+    assert {:ok, plan} = preview()
+    assert [%Plan.Candidate{run_id: @target_id}] = plan.eligible
+
+    Agent.update(toggle, fn _held? -> true end)
+
+    assert {:error, {:retention_candidate_blocked, @target_id, [:legal_hold]}} =
+             apply_plan(plan)
+
+    assert {:ok, _snapshot} = Jizoku.inspect_run(@target_id, runtime_options())
+    assert Repo.aggregate(RetentionReceipt, :count) == 0
   end
 
   test "deletes a bounded same-queue batch and advances shared revisions once" do
@@ -294,5 +361,13 @@ defmodule Jizoku.RetentionApplyTest do
 
   defp retention_options(overrides \\ []) do
     Keyword.merge([journal_storage: @storage, now: @now], overrides)
+  end
+
+  defp restore_retention_policy(nil) do
+    Application.delete_env(:jizoku, :retention_policy)
+  end
+
+  defp restore_retention_policy(value) do
+    Application.put_env(:jizoku, :retention_policy, value)
   end
 end

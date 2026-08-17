@@ -45,15 +45,17 @@ defmodule Jizoku.Retention.EctoApply do
 
   defp apply_in_transaction(repo, storage, plan, now, opts) do
     result =
-      case existing_receipt(repo, plan, opts) do
-        {:ok, %Retention.Receipt{} = receipt} ->
-          {:ok, receipt}
+      with :ok <- lock_run_identities(repo, plan, opts) do
+        case existing_receipt(repo, plan, opts) do
+          {:ok, %Retention.Receipt{} = receipt} ->
+            {:ok, receipt}
 
-        :not_found ->
-          apply_new_plan(repo, storage, plan, now, opts)
+          :not_found ->
+            apply_new_plan(repo, storage, plan, now, opts)
 
-        {:error, _reason} = error ->
-          error
+          {:error, _reason} = error ->
+            error
+        end
       end
 
     case result do
@@ -64,7 +66,6 @@ defmodule Jizoku.Retention.EctoApply do
 
   defp apply_new_plan(repo, storage, %Plan{} = plan, now, opts) do
     with :ok <- validate_new_plan(plan, now),
-         :ok <- lock_run_identities(repo, plan, opts),
          {:ok, threads} <- lock_source_threads(repo, plan, opts),
          :ok <- validate_source_revisions(plan, threads),
          :ok <- require_backfilled_ownership(repo, plan, opts),
@@ -277,11 +278,20 @@ defmodule Jizoku.Retention.EctoApply do
       Enum.reduce(ownership, 0, fn {_identity, count}, total -> total + count end)
 
     with true <- shared_deleted == expected_shared_deleted,
-         :ok <- advance_shared_revisions(repo, shared_ids, threads, now, opts),
+         :ok <-
+           advance_shared_revisions(
+             repo,
+             affected_shared_thread_ids(ownership),
+             threads,
+             now,
+             opts
+           ),
          :ok <- delete_checkpoints(repo, shared_ids ++ run_thread_ids, opts),
+         {:ok, run_entry_counts} <- delete_run_entries(repo, plan, run_thread_ids, opts),
          :ok <- delete_run_threads(repo, run_thread_ids, opts),
          :ok <- delete_search_rows(repo, plan.partition, run_ids, opts),
-         {:ok, rows} <- insert_receipts(repo, plan, ownership, now, opts) do
+         {:ok, rows} <-
+           insert_receipts(repo, plan, ownership, run_entry_counts, now, opts) do
       {:ok, aggregate_receipt(plan, rows, false)}
     else
       false -> {:error, :retention_delete_count_mismatch}
@@ -359,6 +369,44 @@ defmodule Jizoku.Retention.EctoApply do
     end
   end
 
+  defp delete_run_entries(repo, %Plan{} = plan, thread_ids, opts) do
+    counts =
+      Map.new(
+        repo.all(
+          from(entry in JournalEntry,
+            where: entry.thread_id in ^thread_ids,
+            group_by: entry.thread_id,
+            select: {entry.thread_id, count(entry.id)}
+          ),
+          repo_opts(opts)
+        )
+      )
+
+    expected_counts =
+      Map.new(plan.eligible, fn candidate ->
+        {run_thread_id(plan.partition, candidate.run_id), candidate.run_revision}
+      end)
+
+    if counts == expected_counts do
+      expected_deleted =
+        Enum.reduce(counts, 0, fn {_thread_id, count}, total -> total + count end)
+
+      {deleted, _rows} =
+        repo.delete_all(
+          from(entry in JournalEntry, where: entry.thread_id in ^thread_ids),
+          repo_opts(opts)
+        )
+
+      if deleted == expected_deleted do
+        {:ok, counts}
+      else
+        {:error, :retention_run_entry_delete_failed}
+      end
+    else
+      {:error, :retention_run_entry_count_mismatch}
+    end
+  end
+
   defp delete_search_rows(repo, partition, run_ids, opts) do
     repo.delete_all(
       from(run in RunSearch,
@@ -370,7 +418,7 @@ defmodule Jizoku.Retention.EctoApply do
     :ok
   end
 
-  defp insert_receipts(repo, %Plan{} = plan, ownership, now, opts) do
+  defp insert_receipts(repo, %Plan{} = plan, ownership, run_entry_counts, now, opts) do
     rows =
       Enum.map(plan.eligible, fn candidate ->
         %{
@@ -380,7 +428,8 @@ defmodule Jizoku.Retention.EctoApply do
           workflow: candidate.workflow,
           queue: candidate.queue,
           terminal_status: Atom.to_string(candidate.terminal_status),
-          run_entries_deleted: candidate.run_revision,
+          run_entries_deleted:
+            Map.fetch!(run_entry_counts, run_thread_id(plan.partition, candidate.run_id)),
           dispatch_entries_deleted:
             count_for(
               ownership,
@@ -451,6 +500,14 @@ defmodule Jizoku.Retention.EctoApply do
 
   defp count_for(counts, thread_id, run_id) do
     Map.get(counts, {thread_id, run_id}, 0)
+  end
+
+  defp affected_shared_thread_ids(ownership) do
+    ownership
+    |> Map.keys()
+    |> Enum.map(fn {thread_id, _run_id} -> thread_id end)
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 
   defp run_thread_id(partition, run_id), do: Journal.thread_id({:run, run_id}, partition)
