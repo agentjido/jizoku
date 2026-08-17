@@ -20,4 +20,20 @@ defmodule Jizoku.Test.StorageContractTest do
   defp contract_run_task(fun) do
     fun.()
   end
+
+  test "ignores unrelated process messages", %{storage: {Storage, server: server}} do
+    send(server, :unrelated_message)
+
+    assert {:ok, @now} = Storage.now(server)
+  end
+
+  test "does not disguise an abnormal storage crash as a stopped runtime", %{
+    storage: {Storage, server: server}
+  } do
+    Process.unlink(server)
+    :sys.replace_state(server, fn _state -> %{} end)
+
+    assert {{{:badkey, :now, %{}}, _stacktrace}, {GenServer, :call, _args}} =
+             catch_exit(Storage.now(server))
+  end
 end

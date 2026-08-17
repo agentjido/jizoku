@@ -253,6 +253,34 @@ defmodule Jizoku.Runtime.DispatchAgent.ContinuationFenceCASTest do
     assert dispatch_entries() == before_retry
   end
 
+  test "rejects native continuation after ordinary completion omitted the fence" do
+    {claimed_agent, claim_id, claim_token} = claimed_agent()
+    completion = native_completion(claim_id, claim_token)
+
+    assert {:ok, %{agent: completed_agent}} =
+             DispatchAgent.complete(
+               @storage,
+               claimed_agent,
+               @runnable_key,
+               claim_id,
+               claim_token,
+               completion.result,
+               now: @now
+             )
+
+    before_retry = dispatch_entries()
+
+    assert {:error, {:incomplete_continuation_fence, @run_id}} =
+             DispatchAgent.complete_with_continuation_fence(
+               @storage,
+               completed_agent,
+               completion,
+               now: @now
+             )
+
+    assert dispatch_entries() == before_retry
+  end
+
   test "rejects a native fence for a different run before writing" do
     {claimed_agent, claim_id, claim_token} = claimed_agent()
     before_completion = dispatch_entries()
@@ -434,6 +462,39 @@ defmodule Jizoku.Runtime.DispatchAgent.ContinuationFenceCASTest do
              )
 
     assert dispatch_entries() == before_fence
+  end
+
+  test "preserves the dispatch-protocol reason for malformed fence entries" do
+    agent = queued_agent()
+    before_fence = dispatch_entries()
+
+    fence = Map.delete(continuation_fence(), :workflow)
+
+    assert {:error, {:invalid_continuation_fence, {:missing_fields, [:workflow]}}} =
+             DispatchAgent.fence_run_for_continuation(
+               @storage,
+               agent,
+               fence,
+               now: @now
+             )
+
+    assert dispatch_entries() == before_fence
+  end
+
+  test "does not misreport invalid structural arguments as invalid fence data" do
+    agent = queued_agent()
+
+    assert {:error, {:invalid_continuation_fence, :invalid}} =
+             DispatchAgent.fence_run_for_continuation(@storage, agent, "invalid", now: @now)
+
+    assert_raise FunctionClauseError, fn ->
+      DispatchAgent.fence_run_for_continuation(
+        @storage,
+        agent,
+        continuation_fence(),
+        :invalid
+      )
+    end
   end
 
   test "rejects a successor that reuses the predecessor run id before writing" do

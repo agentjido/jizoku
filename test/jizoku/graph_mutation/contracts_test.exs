@@ -90,6 +90,7 @@ defmodule Jizoku.GraphMutation.ContractsTest do
 
     assert {:ok, limits} = Limits.normalize(attrs)
     assert {:ok, ^limits} = Limits.normalize(string_attrs)
+    assert {:ok, ^limits} = Limits.normalize(limits)
     assert Limits.to_map(limits) == attrs
   end
 
@@ -105,6 +106,9 @@ defmodule Jizoku.GraphMutation.ContractsTest do
 
     assert Limits.normalize(Map.put(limits_attrs(), :timeout, 10)) ==
              {:error, {:invalid_graph_mutation_limits, {:timeout, :unsupported}}}
+
+    assert Limits.normalize(DateTime.utc_now()) ==
+             {:error, {:invalid_graph_mutation_limits, {:attrs, :invalid}}}
   end
 
   defp mutation do

@@ -295,7 +295,17 @@ defmodule Jizoku.Runtime.DispatchAgent do
     end
   end
 
-  def fence_run_for_continuation(_storage, _agent, _fence, _opts) do
+  def fence_run_for_continuation(
+        _storage,
+        %Agent{
+          agent_module: __MODULE__,
+          state: %State{queue: queue, projection: %Projection{}, thread_rev: thread_rev}
+        },
+        fence,
+        opts
+      )
+      when is_binary(queue) and not is_map(fence) and is_integer(thread_rev) and thread_rev >= 0 and
+             is_list(opts) do
     {:error, {:invalid_continuation_fence, :invalid}}
   end
 
@@ -908,13 +918,19 @@ defmodule Jizoku.Runtime.DispatchAgent do
             thread.rev
           )
 
-        {:ok,
-         continuation_completion_update(
-           completed_agent,
-           claimed_attempt!(completed_agent, attempt.runnable_key),
-           Projection.continuation_fence(completed_agent.state.projection, attempt.run_id),
-           true
-         )}
+        case Projection.continuation_fence(completed_agent.state.projection, attempt.run_id) do
+          %{} = retained_fence ->
+            {:ok,
+             continuation_completion_update(
+               completed_agent,
+               claimed_attempt!(completed_agent, attempt.runnable_key),
+               retained_fence,
+               true
+             )}
+
+          nil ->
+            {:error, {:invalid_continuation_fence, :not_retained}}
+        end
 
       {:error, :conflict} = error ->
         error
@@ -987,8 +1003,8 @@ defmodule Jizoku.Runtime.DispatchAgent do
     {:ok, entry}
   end
 
-  defp normalize_continuation_fence_entry_result({:error, _reason}) do
-    {:error, {:invalid_continuation_fence, :invalid}}
+  defp normalize_continuation_fence_entry_result({:error, reason}) do
+    {:error, {:invalid_continuation_fence, reason}}
   end
 
   defp ensure_run_queued_after_fence(

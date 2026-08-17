@@ -31,7 +31,11 @@ defmodule Jizoku.GraphMutation.Limits do
   Normalizes a complete atom- or string-keyed limit map.
   """
   @spec normalize(term()) :: {:ok, t()} | {:error, normalize_error()}
-  def normalize(attrs) when is_map(attrs) do
+  def normalize(%__MODULE__{} = limits) do
+    {:ok, limits}
+  end
+
+  def normalize(attrs) when is_map(attrs) and not is_struct(attrs) do
     with :ok <- supported_fields(attrs),
          {:ok, normalized} <- positive_fields(attrs) do
       {:ok, struct!(__MODULE__, normalized)}

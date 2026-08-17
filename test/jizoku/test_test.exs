@@ -742,7 +742,23 @@ defmodule Jizoku.TestTest do
     on_exit(fn -> Test.stop_runtime(runtime) end)
     parent = self()
 
-    assert {:error, _reason} = Test.start(runtime, %{})
+    assert {:error, {:invalid_payload, _details}} = Test.start(runtime, %{})
+
+    live_holder =
+      spawn(fn ->
+        :ok = Jizoku.Test.Storage.reserve_start(runtime.storage_server)
+        send(parent, {:start_reserved, self()})
+
+        receive do
+          :release_start -> Jizoku.Test.Storage.release_start(runtime.storage_server)
+        end
+      end)
+
+    assert_receive {:start_reserved, ^live_holder}
+    assert {:error, :runtime_already_started} = Test.start(runtime, %{value: 1})
+    live_holder_ref = Process.monitor(live_holder)
+    send(live_holder, :release_start)
+    assert_receive {:DOWN, ^live_holder_ref, :process, ^live_holder, :normal}
 
     caller =
       spawn(fn ->
@@ -771,6 +787,8 @@ defmodule Jizoku.TestTest do
     assert {:ok, committed_runtime} =
              Test.start_runtime(workflow: CompleteWorkflow, now: @now)
 
+    on_exit(fn -> Test.stop_runtime(committed_runtime) end)
+
     assert :ok =
              Jizoku.Test.Storage.put_append_fault(
                committed_runtime.storage_server,
@@ -788,6 +806,8 @@ defmodule Jizoku.TestTest do
 
     assert {:ok, unknown_runtime} = Test.start_runtime(workflow: CompleteWorkflow, now: @now)
 
+    on_exit(fn -> Test.stop_runtime(unknown_runtime) end)
+
     assert :ok =
              Jizoku.Test.Storage.put_append_fault(
                unknown_runtime.storage_server,
@@ -800,9 +820,6 @@ defmodule Jizoku.TestTest do
     end
 
     assert {:error, :runtime_already_started} = Test.start(unknown_runtime, %{value: 2})
-
-    on_exit(fn -> Test.stop_runtime(committed_runtime) end)
-    on_exit(fn -> Test.stop_runtime(unknown_runtime) end)
   end
 
   test "in-memory storage preserves checkpoint and expected-revision contracts" do

@@ -329,6 +329,7 @@ defmodule Jizoku.Runtime.DispatchProtocol.Projection do
     projection.continuation_fences
     |> Map.drop(MapSet.to_list(resolved_run_ids))
     |> Map.values()
+    |> Enum.filter(&continuation_fence_data?/1)
     |> Enum.sort_by(& &1.run_id)
   end
 
@@ -540,6 +541,11 @@ defmodule Jizoku.Runtime.DispatchProtocol.Projection do
     end
   end
 
+  defp same_continuation_abort?(left, right) do
+    same_continuation_fence?(left, right) and
+      Map.get(left, :abort_reason) == Map.get(right, :abort_reason)
+  end
+
   defp put_continuation_repair(
          %__MODULE__{} = projection,
          %Entry{data: %{run_id: run_id} = data} = entry
@@ -587,7 +593,7 @@ defmodule Jizoku.Runtime.DispatchProtocol.Projection do
   defp retain_continuation_abort(%__MODULE__{} = projection, entry, data) do
     case Map.fetch(projection.continuation_aborts, data.run_id) do
       {:ok, existing} ->
-        if same_continuation_fence?(existing, data) do
+        if same_continuation_abort?(existing, data) do
           projection
         else
           add_anomaly(projection, entry, :conflicting_continuation_abort)

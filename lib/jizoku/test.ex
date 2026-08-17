@@ -692,18 +692,12 @@ defmodule Jizoku.Test do
 
       finish_start(result, runtime)
     end
-  catch
-    kind, reason ->
-      :erlang.raise(kind, reason, __STACKTRACE__)
   end
 
   defp start_cron_root(runtime, signal, runtime_opts) do
     signal
     |> Jizoku.apply_signal(runtime_opts)
     |> finish_start(runtime)
-  catch
-    kind, reason ->
-      :erlang.raise(kind, reason, __STACKTRACE__)
   end
 
   defp start_cron_signal(runtime, signal, runtime_opts) do

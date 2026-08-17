@@ -450,6 +450,10 @@ defmodule Jizoku.Test.Storage do
     end
   end
 
+  def handle_info(_message, state) do
+    {:noreply, state}
+  end
+
   defp append(nil, thread_id, entries, opts) do
     thread =
       Thread.new(
@@ -608,7 +612,29 @@ defmodule Jizoku.Test.Storage do
   defp safe_call(server, request) do
     GenServer.call(server, request)
   catch
-    :exit, _reason -> {:error, :runtime_stopped}
+    :exit, reason ->
+      if stopped_call_exit?(reason) do
+        {:error, :runtime_stopped}
+      else
+        :erlang.raise(:exit, reason, __STACKTRACE__)
+      end
+  end
+
+  defp stopped_call_exit?({reason, {GenServer, :call, _args}})
+       when reason in [:noproc, :normal, :shutdown] do
+    true
+  end
+
+  defp stopped_call_exit?({{:shutdown, _details}, {GenServer, :call, _args}}) do
+    true
+  end
+
+  defp stopped_call_exit?(reason) when reason in [:noproc, :normal, :shutdown] do
+    true
+  end
+
+  defp stopped_call_exit?(_reason) do
+    false
   end
 
   defp validate_durable(term)
