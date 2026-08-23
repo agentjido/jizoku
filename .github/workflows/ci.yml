@@ -21,10 +21,15 @@ jobs:
     uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v4
     secrets: inherit
     with:
-      quality_otp_version: "29"
-      quality_elixir_version: "1.20"
+      # Elixir 1.20 reports warnings in transitive dependencies. Keep it visible
+      # as an experimental lane until upstream packages are warning-clean.
+      quality_otp_version: "28"
+      quality_elixir_version: "1.19"
       otp_versions: '["27", "28"]'
-      elixir_versions: '["1.18", "1.19", "1.20"]'
+      elixir_versions: '["1.18", "1.19"]'
+      experimental_compile_otp_versions: '["29"]'
+      experimental_compile_elixir_versions: '["1.20.2"]'
+      experimental_compile_otp_name: "29"
       test_command: mix coveralls
       audit_command: mix deps.audit --ignore-file config/deps_audit.ignore
       docs_command: mix docs -f html
