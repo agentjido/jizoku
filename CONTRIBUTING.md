@@ -33,6 +33,12 @@ Run the root verification gate:
 mix precommit
 ```
 
+`mix quality` runs the shared Jido package quality baseline. `mix precommit`
+adds Jizoku-specific audits, quality gates, and tests.
+
+See the [Jido package quality standards](https://jido.run/docs/contributors/package-quality-standards)
+for the ecosystem-wide maintenance baseline.
+
 Run the example host app test suite:
 
 ```sh

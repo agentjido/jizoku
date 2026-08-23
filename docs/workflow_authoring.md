@@ -5,7 +5,7 @@ This guide documents the workflow contract and authoring patterns.
 > ### Learn with Livebook
 >
 > The interactive Livebook demonstrates dependency workflows, DSL declaration, spec normalization, input mapping, execution, and graph output.
-> [![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fdark-trench%2Fjizoku%2Fblob%2Fmain%2Fdocs%2Fworkflow_authoring.livemd)
+> [![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fagentjido%2Fjizoku%2Fblob%2Fmain%2Fdocs%2Fworkflow_authoring.livemd)
 
 ## Formatter Setup
 

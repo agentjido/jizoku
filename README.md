@@ -1,11 +1,11 @@
 <div align="left">
   <h1>Jizoku - Durable Workflow Runtime</h1>
   <p>
-    <a href="https://github.com/dark-trench/jizoku/actions/workflows/ci.yml"><img src="https://github.com/dark-trench/jizoku/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-    <a href="https://codecov.io/gh/dark-trench/jizoku"><img src="https://codecov.io/gh/dark-trench/jizoku/branch/main/graph/badge.svg" alt="Codecov" /></a>
+    <a href="https://github.com/agentjido/jizoku/actions/workflows/ci.yml"><img src="https://github.com/agentjido/jizoku/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <a href="https://codecov.io/gh/agentjido/jizoku"><img src="https://codecov.io/gh/agentjido/jizoku/branch/main/graph/badge.svg" alt="Codecov" /></a>
     <a href="https://hex.pm/packages/jizoku"><img src="https://img.shields.io/hexpm/v/jizoku" alt="Hex.pm" /></a>
     <a href="https://hexdocs.pm/jizoku"><img src="https://img.shields.io/badge/docs-hexdocs-purple" alt="HexDocs" /></a>
-    <a href="https://github.com/dark-trench/jizoku/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
+    <a href="https://github.com/agentjido/jizoku/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
   </p>
 </div>
 
@@ -41,7 +41,7 @@ Queue delivery, worker supervision, and backend leasing remain host-owned
 concerns. Storage portability is defined by the journal storage adapter
 contract; the production relational implementation uses a Postgres-compatible
 Ecto adapter. See the
-[storage strategy](https://github.com/dark-trench/jizoku/blob/main/docs/storage_strategy.md)
+[storage strategy](https://github.com/agentjido/jizoku/blob/main/docs/storage_strategy.md)
 for adapter guarantees.
 
 > **Adoption status**
@@ -58,7 +58,7 @@ for adapter guarantees.
 The fastest way to start is the guided Livebook. It demonstrates creating a
 workflow, starting a durable run, executing work, and inspecting the result.
 
-[![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fdark-trench%2Fjizoku%2Fblob%2Fmain%2Fdocs%2Fgetting_started.livemd)
+[![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fagentjido%2Fjizoku%2Fblob%2Fmain%2Fdocs%2Fgetting_started.livemd)
 
 | Goal | Resource |
 | --- | --- |
@@ -962,7 +962,7 @@ See the [Actor Visibility Guide](docs/actor_visibility.md) for comprehensive doc
 
 ## Optional Dashboard
 
-[Kansoku](https://github.com/dark-trench/kansoku) is the optional
+[Kansoku](https://github.com/agentjido/kansoku) is the optional
 embeddable Phoenix LiveView operator dashboard for Jizoku. Mount it inside a
 Phoenix host application to inspect recent runs, filter by status, search
 runtime metadata, and view run detail pages with diagnosis, history counts,
@@ -980,7 +980,7 @@ Please review the existing runtime model and workflow semantics before proposing
 - [Contributing Guide](CONTRIBUTING.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Elixir Forum discussion thread](https://elixirforum.com/t/jizoku-workflow-automation-runtime-for-elixir-applications/75162)
-- [GitHub Issues](https://github.com/dark-trench/jizoku/issues)
+- [GitHub Issues](https://github.com/agentjido/jizoku/issues)
 - [Jizoku channel on the Jido Discord](https://discord.com/channels/1323353012235796550/1504122798027571331)
 
 ## License
