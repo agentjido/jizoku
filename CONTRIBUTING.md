@@ -33,6 +33,18 @@ Run the root verification gate:
 mix precommit
 ```
 
+`mix quality` runs the shared Jido package quality checks. `mix precommit` adds
+Jizoku-specific audits, structural checks, and tests.
+
+Install the Conventional Commit hook only from the primary checkout:
+
+```sh
+mix install_hooks
+```
+
+See the [Jido package quality standards](https://jido.run/docs/contributors/package-quality-standards)
+for the ecosystem maintenance baseline.
+
 Run the example host app test suite:
 
 ```sh
@@ -77,6 +89,18 @@ Documentation changes are welcome and should keep these sources aligned:
 - `docs/`
 - example host app guides
 - module docs for public or operationally important modules
+
+## Releases
+
+The **Release** GitHub Actions workflow uses the shared Jido release process.
+For a safe preparation check, run it on the target branch with `operation` set
+to `auto` and `dry_run` set to `true`. A dry run does not push a commit or tag,
+create a GitHub release, or publish to Hex.
+
+A real release stays disabled until the repository variable
+`JIZOKU_RELEASES_ENABLED` is `true`. It also needs a publish-capable
+`HEX_API_KEY` secret. Do not enable the variable until the key and release plan
+are ready.
 
 ## Questions And Discussion
 

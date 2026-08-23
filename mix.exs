@@ -1,28 +1,25 @@
 defmodule Jizoku.MixProject do
   use Mix.Project
 
+  @version "0.4.0"
+  @source_url "https://github.com/agentjido/jizoku"
+  @description "Durable workflow runtime for Elixir applications."
+
   def project do
     [
       app: :jizoku,
-      version: "0.4.0",
+      version: @version,
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      description: description(),
-      source_url: "https://github.com/agentjido/jizoku",
-      homepage_url: "https://github.com/agentjido/jizoku",
+      description: @description,
+      source_url: @source_url,
+      homepage_url: @source_url,
       docs: docs(),
       package: package(),
       aliases: aliases(),
       deps: deps(),
-      test_coverage: [tool: ExCoveralls],
-      preferred_cli_env: [
-        coveralls: :test,
-        "coveralls.detail": :test,
-        "coveralls.html": :test,
-        "coveralls.json": :test,
-        precommit: :test
-      ],
+      test_coverage: [tool: ExCoveralls, summary: [threshold: 84], export: "cov"],
       dialyzer: [
         plt_add_apps: [:mix, :ex_unit],
         plt_file: {:no_warn, "priv/plts/dialyzer.plt"}
@@ -39,16 +36,18 @@ defmodule Jizoku.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      preferred_envs: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.html": :test,
+        "coveralls.json": :test,
+        precommit: :test
+      ]
     ]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
-
-  defp description do
-    "Durable workflow runtime for Elixir applications."
-  end
 
   defp package do
     [
@@ -57,13 +56,21 @@ defmodule Jizoku.MixProject do
       licenses: ["Apache-2.0"],
       files:
         ~w(lib priv/repo docs usage-rules usage-rules.md .formatter.exs mix.exs mix.lock README* CHANGELOG* LICENSE* CONTRIBUTING* CODE_OF_CONDUCT*),
-      links: %{"GitHub" => "https://github.com/agentjido/jizoku"}
+      links: %{
+        "Changelog" => "https://hexdocs.pm/jizoku/changelog.html",
+        "Discord" => "https://jido.run/discord",
+        "Documentation" => "https://hexdocs.pm/jizoku",
+        "GitHub" => @source_url,
+        "Website" => "https://jido.run"
+      }
     ]
   end
 
   defp docs do
     [
       main: "readme",
+      source_ref: "v#{@version}",
+      source_url: @source_url,
       extras: [
         "docs/index.md",
         "README.md",
@@ -87,6 +94,7 @@ defmodule Jizoku.MixProject do
         "docs/reference_workflows.md",
         "docs/host_app_integration.md",
         "docs/operations.md",
+        "docs/retention.md",
         "docs/production_readiness.md",
         "docs/migration_guide.md",
         "usage-rules.md",
@@ -114,6 +122,7 @@ defmodule Jizoku.MixProject do
           "docs/continue_as_new.md",
           "docs/testing_workflows.md",
           "docs/operations.md",
+          "docs/retention.md",
           "docs/observability.md",
           "docs/actor_visibility.md"
         ],
@@ -158,12 +167,24 @@ defmodule Jizoku.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:doctor, "~> 0.23.0", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
-      {:excoveralls, "~> 0.18", only: :test}
+      {:excoveralls, "~> 0.18", only: :test},
+      {:git_hooks, "~> 0.8", only: [:dev, :test], runtime: false},
+      {:git_ops, "~> 2.9", only: :dev, runtime: false}
     ]
   end
 
   defp aliases do
     [
+      setup: ["deps.get"],
+      install_hooks: ["git_hooks.install"],
+      q: ["quality"],
+      quality: [
+        "format --check-formatted",
+        "compile --warnings-as-errors",
+        "credo --min-priority higher",
+        "dialyzer",
+        "doctor --raise"
+      ],
       precommit: [
         "compile --warnings-as-errors",
         "xref graph --format cycles --label compile-connected --fail-above 0",
@@ -172,7 +193,7 @@ defmodule Jizoku.MixProject do
         "format --check-formatted",
         "credo --strict",
         "quality_gates",
-        "doctor",
+        "doctor --raise",
         "deps.audit --ignore-file config/deps_audit.ignore",
         "dialyzer",
         "test"
