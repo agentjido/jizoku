@@ -158,10 +158,6 @@ defmodule Jizoku.Workflow.Migration do
     end
   end
 
-  defp migrated_manual_step(_result, _state) do
-    {:error, {:invalid_workflow_migration_result, :manual_step}}
-  end
-
   defp bounded_context(context) do
     if Options.storage_safe_value?(context) and
          byte_size(:erlang.term_to_binary(context)) <= @max_context_bytes do

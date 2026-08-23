@@ -25,41 +25,6 @@ defmodule Mix.Tasks.Jizoku.Install do
     "jizoku_journal_entries",
     "jizoku_journal_checkpoints"
   ]
-  @journal_markers Enum.map(
-                     @journal_tables,
-                     &Regex.compile!("create\\s+table\\(\\s*:#{&1}(?=\\s*[,\\)])")
-                   )
-  @search_markers [~r/create\s+table\(\s*:jizoku_run_search(?=\s*[,\)])/]
-  @archive_markers [
-    ~r/add\(\s*:archived_at(?=\s*[,\)])/,
-    ~r/add\(\s*:archive_reason(?=\s*[,\)])/
-  ]
-  @retention_markers [
-    ~r/add\(\s*:retention_run_id(?=\s*[,\)])/,
-    ~r/create\s+table\(\s*:jizoku_retention_receipts(?=\s*[,\)])/
-  ]
-  @migrations [
-    %{
-      name: @journal_migration_name,
-      source: "20260815000000_create_jizoku_schema.exs",
-      markers: @journal_markers
-    },
-    %{
-      name: @search_migration_name,
-      source: "20260816000000_add_jizoku_run_search_projection.exs",
-      markers: @search_markers
-    },
-    %{
-      name: @archive_migration_name,
-      source: "20260816001000_add_jizoku_run_archives.exs",
-      markers: @archive_markers
-    },
-    %{
-      name: @retention_migration_name,
-      source: "20260816002000_add_jizoku_retention.exs",
-      markers: @retention_markers
-    }
-  ]
 
   use Mix.Task
 
@@ -101,7 +66,11 @@ defmodule Mix.Tasks.Jizoku.Install do
 
   defp install_missing_migrations(dest_dir) do
     installed_body = installed_migration_body(dest_dir)
-    missing = Enum.reject(@migrations, &markers_present?(installed_body, &1.markers))
+
+    missing =
+      Enum.reject(migrations(), fn {_name, _source, markers} ->
+        markers_present?(installed_body, markers)
+      end)
 
     case missing do
       [] ->
@@ -129,6 +98,43 @@ defmodule Mix.Tasks.Jizoku.Install do
     Enum.all?(markers, &Regex.match?(&1, body))
   end
 
+  defp migrations do
+    journal_markers =
+      Enum.map(
+        @journal_tables,
+        &Regex.compile!("create\\s+table\\(\\s*:#{&1}(?=\\s*[,\\)])")
+      )
+
+    [
+      {
+        @journal_migration_name,
+        "20260815000000_create_jizoku_schema.exs",
+        journal_markers
+      },
+      {
+        @search_migration_name,
+        "20260816000000_add_jizoku_run_search_projection.exs",
+        [~r/create\s+table\(\s*:jizoku_run_search(?=\s*[,\)])/]
+      },
+      {
+        @archive_migration_name,
+        "20260816001000_add_jizoku_run_archives.exs",
+        [
+          ~r/add\(\s*:archived_at(?=\s*[,\)])/,
+          ~r/add\(\s*:archive_reason(?=\s*[,\)])/
+        ]
+      },
+      {
+        @retention_migration_name,
+        "20260816002000_add_jizoku_retention.exs",
+        [
+          ~r/add\(\s*:retention_run_id(?=\s*[,\)])/,
+          ~r/create\s+table\(\s*:jizoku_retention_receipts(?=\s*[,\)])/
+        ]
+      }
+    ]
+  end
+
   defp next_migration_version(dest_dir) do
     current_version = String.to_integer(timestamp())
 
@@ -146,14 +152,14 @@ defmodule Mix.Tasks.Jizoku.Install do
     max(current_version, highest_existing_version + 1)
   end
 
-  defp copy_migration!(dest_dir, migration, version) do
-    filename = "#{version}_#{migration.name}"
+  defp copy_migration!(dest_dir, {name, _source, _markers} = migration, version) do
+    filename = "#{version}_#{name}"
     File.cp!(source_path(migration), Path.join(dest_dir, filename))
     Mix.shell().info("* creating #{filename}")
   end
 
   defp validate_sources! do
-    Enum.each(@migrations, fn migration ->
+    Enum.each(migrations(), fn migration ->
       source = source_path(migration)
 
       unless File.regular?(source) do
@@ -162,8 +168,8 @@ defmodule Mix.Tasks.Jizoku.Install do
     end)
   end
 
-  defp source_path(migration) do
-    Application.app_dir(:jizoku, ["priv", "repo", "migrations", migration.source])
+  defp source_path({_name, source, _markers}) do
+    Application.app_dir(:jizoku, ["priv", "repo", "migrations", source])
   end
 
   defp timestamp do

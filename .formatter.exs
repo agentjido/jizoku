@@ -18,7 +18,7 @@ locals_without_parens = [
 ]
 
 [
-  inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"],
+  inputs: ["{mix,.formatter,.credo}.exs", "{config,lib,test}/**/*.{ex,exs}"],
   subdirectories: ["priv/*/migrations"],
   locals_without_parens: locals_without_parens,
   export: [

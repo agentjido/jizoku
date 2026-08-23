@@ -674,7 +674,7 @@ That keeps the important contract visible:
   primitive
 
 The closed `agent_step/3` issue
-[#138](https://github.com/dark-trench/jizoku/issues/138) explored an
+[#138](https://github.com/agentjido/jizoku/issues/138) explored an
 explicit metadata marker for agentic steps. With the workflow run itself now
 coordinated by a Jido agent, that separate DSL construct is not currently part
 of the core runtime surface.
@@ -750,9 +750,9 @@ configured journal runtime.
 | Feature | Issue | Runtime dependency |
 | --- | --- | --- |
 | Projection-backed inspection and explanation hardening | No active issue | Additional coverage for ambiguous attempt states and operator-facing edge cases |
-| Conditional paths and deferred continuation | [#140](https://github.com/dark-trench/jizoku/issues/140) | Durable planner facts and wakeup metadata |
-| Dynamic child runs | [#141](https://github.com/dark-trench/jizoku/issues/141) | Stable parent runnable keys, idempotent child keys, inspectable parent-child lineage |
-| Advanced reference workflows | [#109](https://github.com/dark-trench/jizoku/issues/109) | Implemented target features only, without Oban-specific assumptions |
+| Conditional paths and deferred continuation | [#140](https://github.com/agentjido/jizoku/issues/140) | Durable planner facts and wakeup metadata |
+| Dynamic child runs | [#141](https://github.com/agentjido/jizoku/issues/141) | Stable parent runnable keys, idempotent child keys, inspectable parent-child lineage |
+| Advanced reference workflows | [#109](https://github.com/agentjido/jizoku/issues/109) | Implemented target features only, without Oban-specific assumptions |
 | Child-agent step lifecycle | No active core issue | Only relevant if normal steps are insufficient because child journal semantics are required |
 
 ## Reading Order

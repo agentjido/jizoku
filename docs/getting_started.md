@@ -5,7 +5,7 @@ This guide covers the essential workflow authoring and integration concepts. It 
 > ### Learn with Livebook
 >
 > The fastest way to start is the interactive Livebook. It demonstrates workflow creation, step modules, run inspection, and approval flows.
-> [![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fdark-trench%2Fjizoku%2Fblob%2Fmain%2Fdocs%2Fgetting_started.livemd)
+> [![Run in Livebook](https://livebook.dev/badge/v1/pink.svg)](https://livebook.dev/run?url=https%3A%2F%2Fgithub.com%2Fagentjido%2Fjizoku%2Fblob%2Fmain%2Fdocs%2Fgetting_started.livemd)
 
 For production integration, follow the steps below. They introduce retries, manual gates, cron, child runs, and Bedrock leases after establishing the base execution loop.
 

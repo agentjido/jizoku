@@ -1,43 +1,51 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
-    branches: [main]
+  merge_group:
+  push:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  actions: read
+  contents: read
+
 env:
-  MIX_ENV: test
-  ELIXIR_VERSION: "1.19.5"
-  OTP_VERSION: "28.4.1"
+  ELIXIR_VERSION: "1.20"
+  OTP_VERSION: "29"
 
 jobs:
-  test:
-    name: Unit Tests
-    runs-on: ubuntu-latest
+  ci:
+    name: CI
+    uses: agentjido/github-actions/.github/workflows/jido-ci.yml@v5
+    secrets: inherit
+    with:
+      audit_command: mix deps.audit --ignore-file config/deps_audit.ignore
+      docs_command: mix doctor --raise && mix docs -f html
+      test_setup_command: >-
+        docker run --detach --rm --name jizoku-postgres
+        --env POSTGRES_PASSWORD=postgres --env POSTGRES_DB=postgres
+        --publish 5432:5432 postgres:17 &&
+        until docker exec jizoku-postgres pg_isready -U postgres;
+        do sleep 1; done
+      test_command: mix coveralls
 
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+  package-checks:
+    name: Jizoku Package Checks
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Check Discord notification formatting
         run: bash .github/tests/discord_notifications_test.sh
@@ -48,52 +56,15 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
 
-      - name: Wait for Postgres
-        run: until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done
-
-      - name: Check formatting
-        run: mix format --check-formatted
-
-      - name: Compile with warnings as errors
-        run: mix compile --warnings-as-errors
-
-      - name: Run tests with coverage
-        run: mix coveralls.json
-
-      - name: Upload coverage to Codecov
-        if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
-        uses: codecov/codecov-action@v7
-        with:
-          files: ./cover/excoveralls.json
-          flags: elixir
-          fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-  hex-package:
-    name: Hex Package
-    runs-on: ubuntu-latest
-    env:
-      MIX_ENV: dev
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Elixir
-        uses: ./.github/actions/setup-elixir
-        with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
-
-      - name: Verify package and documentation
+      - name: Run package-specific quality gates
         run: |
-          mix hex.build --output /tmp/jizoku-hex-package.tar
-          mix docs
+          mix xref graph --format cycles --label compile-connected --fail-above 0
+          mix brand.audit
+          mix quality_gates
 
   example-host-app:
     name: Example Host App
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     services:
       postgres:
@@ -116,7 +87,9 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
@@ -151,7 +124,12 @@ jobs:
 
   bedrock-example-host-app:
     name: Bedrock Example Host App
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # Bedrock 0.5.2 does not run on OTP 29. Keep this package-specific
+    # integration on its established runtime until Bedrock adds support.
+    env:
+      ELIXIR_VERSION: "1.19.5"
+      OTP_VERSION: "28.4.1"
 
     services:
       postgres:
@@ -174,7 +152,9 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
@@ -209,132 +189,3 @@ jobs:
 
       - name: Run Bedrock stress coverage
         run: MIX_ENV=test mix test test/bedrock_job_queue_stress_test.exs test/bedrock_multi_node_consumer_test.exs
-
-  credo:
-    name: Code Quality (Credo)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Elixir
-        uses: ./.github/actions/setup-elixir
-        with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
-
-      - name: Compile
-        run: mix compile
-
-      - name: Run Credo
-        run: mix credo --strict
-
-  quality-gates:
-    name: Structural Quality Gates
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Setup Elixir
-        uses: ./.github/actions/setup-elixir
-        with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
-
-      - name: Compile
-        run: mix compile
-
-      - name: Run structural quality gates
-        run: mix quality_gates
-
-  docs:
-    name: Documentation Health (Doctor)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Elixir
-        uses: ./.github/actions/setup-elixir
-        with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
-
-      - name: Compile
-        run: mix compile
-
-      - name: Run Doctor
-        run: mix doctor
-
-  dialyzer:
-    name: Static Analysis (Dialyzer)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Elixir
-        uses: ./.github/actions/setup-elixir
-        with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
-
-      - name: Restore PLT cache
-        uses: actions/cache@v6
-        with:
-          path: priv/plts
-          key: ${{ runner.os }}-dialyzer-v1-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-dialyzer-v1-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-
-      - name: Compile
-        run: mix compile
-
-      - name: Run Dialyzer
-        run: mix dialyzer
-
-  xref:
-    name: Static Analysis (xref)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Elixir
-        uses: ./.github/actions/setup-elixir
-        with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
-
-      - name: Compile
-        run: mix compile
-
-      - name: Check compile-time dependency cycles
-        run: mix xref graph --format cycles --label compile-connected --fail-above 0
-
-  unused-deps:
-    name: Check Unused Dependencies
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Elixir
-        uses: ./.github/actions/setup-elixir
-        with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
-
-      - name: Check for unused dependencies
-        run: mix deps.unlock --check-unused

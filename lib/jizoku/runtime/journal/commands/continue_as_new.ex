@@ -299,8 +299,4 @@ defmodule Jizoku.Runtime.Journal.Commands.ContinueAsNew do
       :error -> {:error, {:invalid_option, {:continuation_key, :missing}}}
     end
   end
-
-  defp continuation_key(_opts) do
-    {:error, {:invalid_option, {:opts, :invalid}}}
-  end
 end

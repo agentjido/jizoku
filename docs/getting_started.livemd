@@ -11,7 +11,7 @@ integration guide.
 
 ```elixir
 Mix.install([
-  {:jizoku, git: "https://github.com/dark-trench/jizoku.git"}
+  {:jizoku, git: "https://github.com/agentjido/jizoku.git"}
 ])
 ```
 
@@ -679,9 +679,9 @@ and finishes the workflow.
 
 ## What To Read Next
 
-- [Getting Started](https://github.com/dark-trench/jizoku/blob/main/docs/getting_started.md)
-- [Workflow Authoring](https://github.com/dark-trench/jizoku/blob/main/docs/workflow_authoring.md)
-- [Reference Workflows](https://github.com/dark-trench/jizoku/blob/main/docs/reference_workflows.md)
-- [Graph Inspection Contract](https://github.com/dark-trench/jizoku/blob/main/docs/graph_inspection.md)
-- [Host App Integration](https://github.com/dark-trench/jizoku/blob/main/docs/host_app_integration.md)
-- [Runtime Architecture](https://github.com/dark-trench/jizoku/blob/main/docs/jido_runtime_architecture.md)
+- [Getting Started](https://github.com/agentjido/jizoku/blob/main/docs/getting_started.md)
+- [Workflow Authoring](https://github.com/agentjido/jizoku/blob/main/docs/workflow_authoring.md)
+- [Reference Workflows](https://github.com/agentjido/jizoku/blob/main/docs/reference_workflows.md)
+- [Graph Inspection Contract](https://github.com/agentjido/jizoku/blob/main/docs/graph_inspection.md)
+- [Host App Integration](https://github.com/agentjido/jizoku/blob/main/docs/host_app_integration.md)
+- [Runtime Architecture](https://github.com/agentjido/jizoku/blob/main/docs/jido_runtime_architecture.md)

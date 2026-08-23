@@ -11,7 +11,7 @@ defmodule Jizoku.RebrandContractTest do
     package = Mix.Project.config()[:package]
 
     assert package[:name] == "jizoku"
-    assert Mix.Project.config()[:source_url] == "https://github.com/dark-trench/jizoku"
+    assert Mix.Project.config()[:source_url] == "https://github.com/agentjido/jizoku"
   end
 
   test "owns a fresh Jizoku journal schema" do

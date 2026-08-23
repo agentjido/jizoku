@@ -1191,10 +1191,6 @@ defmodule Jizoku.Runtime.Journal.Commands.Starter do
       projection.input == expected.input
   end
 
-  defp public_continuation_origin(nil) do
-    nil
-  end
-
   defp public_continuation_origin(%{
          predecessor_run_id: predecessor_run_id,
          continuation_key: continuation_key

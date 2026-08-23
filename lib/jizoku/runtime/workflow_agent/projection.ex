@@ -231,8 +231,9 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   @doc false
   @spec event_waits(t()) :: [map()]
   def event_waits(%__MODULE__{} = projection) do
-    projection
-    |> Map.get(@event_waits_key, %{})
+    event_waits = :maps.get(@event_waits_key, projection, %{})
+
+    event_waits
     |> Map.values()
     |> Enum.sort_by(&Map.get(&1, :opened_at), DateTime)
   end
@@ -244,9 +245,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
       %{kind: "event_wait", metadata: metadata} when is_map(metadata) ->
         wait_id = map_value(metadata, :wait_id)
 
-        projection
-        |> Map.get(@event_waits_key, %{})
-        |> Map.get(wait_id)
+        Map.get(:maps.get(@event_waits_key, projection, %{}), wait_id)
 
       _not_waiting ->
         nil
@@ -256,15 +255,13 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   @doc false
   @spec search_attributes(t()) :: map()
   def search_attributes(%__MODULE__{} = projection) do
-    Map.get(projection, @search_attributes_key, %{})
+    :maps.get(@search_attributes_key, projection, %{})
   end
 
   @doc false
   @spec search_attribute_update_fingerprint(t(), String.t()) :: String.t() | nil
   def search_attribute_update_fingerprint(%__MODULE__{} = projection, idempotency_key) do
-    projection
-    |> Map.get(@search_attribute_updates_key, %{})
-    |> Map.get(idempotency_key)
+    Map.get(:maps.get(@search_attribute_updates_key, projection, %{}), idempotency_key)
   end
 
   @doc false
@@ -525,7 +522,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   @doc false
   @spec jido_outbox(t()) :: map()
   def jido_outbox(%__MODULE__{} = projection) do
-    Map.get(projection, @jido_outbox_key, Outbox.new_projection())
+    :maps.get(@jido_outbox_key, projection, Outbox.new_projection())
   end
 
   @doc false
