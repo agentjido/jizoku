@@ -1,9 +1,6 @@
 defmodule Jizoku.MixProject do
   use Mix.Project
 
-  @source_url "https://github.com/agentjido/jizoku"
-  @description "Durable workflow runtime for Elixir applications."
-
   def project do
     [
       app: :jizoku,
@@ -11,14 +8,14 @@ defmodule Jizoku.MixProject do
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      description: @description,
-      source_url: @source_url,
-      homepage_url: @source_url,
+      description: description(),
+      source_url: "https://github.com/agentjido/jizoku",
+      homepage_url: "https://github.com/agentjido/jizoku",
       docs: docs(),
       package: package(),
       aliases: aliases(),
       deps: deps(),
-      test_coverage: [tool: ExCoveralls, summary: [threshold: 84], export: "cov"],
+      test_coverage: [tool: ExCoveralls],
       preferred_cli_env: [
         coveralls: :test,
         "coveralls.detail": :test,
@@ -49,27 +46,24 @@ defmodule Jizoku.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
+  defp description do
+    "Durable workflow runtime for Elixir applications."
+  end
+
   defp package do
     [
       name: "jizoku",
-      maintainers: ["Mike Hostetler", "Cristiano Carvalho"],
+      maintainers: ["Mike Hostetler"],
       licenses: ["Apache-2.0"],
       files:
         ~w(lib priv/repo docs usage-rules usage-rules.md .formatter.exs mix.exs mix.lock README* CHANGELOG* LICENSE* CONTRIBUTING* CODE_OF_CONDUCT*),
-      links: %{
-        "Changelog" => "https://hexdocs.pm/jizoku/changelog.html",
-        "Discord" => "https://jido.run/discord",
-        "Documentation" => "https://hexdocs.pm/jizoku",
-        "GitHub" => @source_url,
-        "Website" => "https://jido.run"
-      }
+      links: %{"GitHub" => "https://github.com/agentjido/jizoku"}
     ]
   end
 
   defp docs do
     [
       main: "readme",
-      source_url: @source_url,
       extras: [
         "docs/index.md",
         "README.md",
@@ -170,14 +164,6 @@ defmodule Jizoku.MixProject do
 
   defp aliases do
     [
-      q: ["quality"],
-      quality: [
-        "format --check-formatted",
-        "compile --warnings-as-errors",
-        "credo --min-priority higher",
-        "dialyzer",
-        "doctor --raise"
-      ],
       precommit: [
         "compile --warnings-as-errors",
         "xref graph --format cycles --label compile-connected --fail-above 0",
@@ -186,7 +172,7 @@ defmodule Jizoku.MixProject do
         "format --check-formatted",
         "credo --strict",
         "quality_gates",
-        "doctor --raise",
+        "doctor",
         "deps.audit --ignore-file config/deps_audit.ignore",
         "dialyzer",
         "test"

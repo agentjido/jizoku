@@ -5,7 +5,7 @@ defmodule MinimalHostApp.MixProject do
     [
       app: :minimal_host_app,
       version: "0.1.0",
-      elixir: "~> 1.18",
+      elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),

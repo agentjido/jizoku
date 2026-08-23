@@ -30,13 +30,6 @@ jizoku-*.tar
 
 # Editor tooling.
 /.elixir_ls/
-/.vscode/
-*.swp
-*.swo
-
-# OS files.
-.DS_Store
-Thumbs.db
 
 # ExDNA incremental compiler cache.
 /.ex_dna_cache/
