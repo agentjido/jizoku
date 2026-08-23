@@ -125,6 +125,11 @@ jobs:
   bedrock-example-host-app:
     name: Bedrock Example Host App
     runs-on: ubuntu-24.04
+    # Bedrock 0.5.2 does not run on OTP 29. Keep this package-specific
+    # integration on its established runtime until Bedrock adds support.
+    env:
+      ELIXIR_VERSION: "1.19.5"
+      OTP_VERSION: "28.4.1"
 
     services:
       postgres:

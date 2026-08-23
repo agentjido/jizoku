@@ -30,7 +30,6 @@ defmodule BedrockMinimalHostApp.Jobs.JizokuPayload do
   def perform(args, _meta) when is_map(args) do
     case Runner.perform(args) do
       :ok -> drain_journal_attempts(0, journal_queue(args))
-      {:ok, %Snapshot{}} -> drain_journal_attempts(0, journal_queue(args))
       {:error, _reason} = error -> error
     end
   end
