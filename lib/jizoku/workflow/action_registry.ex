@@ -616,8 +616,6 @@ defmodule Jizoku.Workflow.ActionRegistry do
     |> String.starts_with?("Elixir.")
   end
 
-  defp module?(_module), do: false
-
   defp error(path, code, message, details) do
     Map.new(path: path, code: code, message: message, details: details)
   end

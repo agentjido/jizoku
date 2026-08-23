@@ -84,7 +84,7 @@ defmodule Jizoku.Runtime.DispatchProtocol.ActionAttempt do
   @doc false
   @spec upgrade(t()) :: t()
   def upgrade(%__MODULE__{} = attempt) do
-    completion_encoding = Map.get(attempt, @completion_encoding_key)
+    completion_encoding = :maps.get(@completion_encoding_key, attempt, nil)
     attributes = Map.delete(attempt, :__struct__)
 
     __MODULE__
@@ -95,7 +95,7 @@ defmodule Jizoku.Runtime.DispatchProtocol.ActionAttempt do
   @doc false
   @spec completion_encoding(t()) :: term()
   def completion_encoding(%__MODULE__{} = attempt) do
-    Map.get(attempt, @completion_encoding_key)
+    :maps.get(@completion_encoding_key, attempt, nil)
   end
 
   @doc false

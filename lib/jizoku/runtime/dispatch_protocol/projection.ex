@@ -131,7 +131,7 @@ defmodule Jizoku.Runtime.DispatchProtocol.Projection do
   @doc false
   @spec checkpoint_compatible?(term()) :: boolean()
   def checkpoint_compatible?(%__MODULE__{} = projection) do
-    with @checkpoint_version <- Map.get(projection, @checkpoint_version_key),
+    with @checkpoint_version <- :maps.get(@checkpoint_version_key, projection, nil),
          true <- Map.has_key?(projection, :continuation_fences),
          true <- Map.has_key?(projection, :continuation_repairs),
          true <- Map.has_key?(projection, :continuation_aborts),
