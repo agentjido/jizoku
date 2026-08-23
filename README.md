@@ -985,4 +985,6 @@ Please review the existing runtime model and workflow semantics before proposing
 
 ## License
 
-Copyright 2024, released under the [Apache 2.0 License](LICENSE).
+Copyright 2026 Mike Hostetler
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
