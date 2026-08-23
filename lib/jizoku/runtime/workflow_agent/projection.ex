@@ -231,7 +231,9 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   @doc false
   @spec event_waits(t()) :: [map()]
   def event_waits(%__MODULE__{} = projection) do
-    :maps.get(@event_waits_key, projection, %{})
+    event_waits = :maps.get(@event_waits_key, projection, %{})
+
+    event_waits
     |> Map.values()
     |> Enum.sort_by(&Map.get(&1, :opened_at), DateTime)
   end
@@ -243,8 +245,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
       %{kind: "event_wait", metadata: metadata} when is_map(metadata) ->
         wait_id = map_value(metadata, :wait_id)
 
-        :maps.get(@event_waits_key, projection, %{})
-        |> Map.get(wait_id)
+        Map.get(:maps.get(@event_waits_key, projection, %{}), wait_id)
 
       _not_waiting ->
         nil
@@ -260,8 +261,7 @@ defmodule Jizoku.Runtime.WorkflowAgent.Projection do
   @doc false
   @spec search_attribute_update_fingerprint(t(), String.t()) :: String.t() | nil
   def search_attribute_update_fingerprint(%__MODULE__{} = projection, idempotency_key) do
-    :maps.get(@search_attribute_updates_key, projection, %{})
-    |> Map.get(idempotency_key)
+    Map.get(:maps.get(@search_attribute_updates_key, projection, %{}), idempotency_key)
   end
 
   @doc false
