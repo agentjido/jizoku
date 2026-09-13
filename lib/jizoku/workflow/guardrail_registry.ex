@@ -297,13 +297,15 @@ defmodule Jizoku.Workflow.GuardrailRegistry do
     if policy in allowed_policies(ref.placement) do
       []
     else
+      step_name = step_name(step)
+
       [
         error(
           [:steps, index, :opts, :guardrails, ref.placement, ref_index, :policy],
           :invalid_guardrail_policy,
-          "step #{inspect(step_name(step))} defines an invalid #{ref.placement} guardrail policy",
+          "step #{inspect(step_name)} defines an invalid #{ref.placement} guardrail policy",
           %{
-            step: step_name(step),
+            step: step_name,
             guardrail: ref.key,
             policy: policy
           }

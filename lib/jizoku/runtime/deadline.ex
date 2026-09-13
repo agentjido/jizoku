@@ -141,8 +141,9 @@ defmodule Jizoku.Runtime.Deadline do
   @doc false
   @spec public_summary(term()) :: map() | nil
   def public_summary(deadline) when is_map(deadline) do
+    deadline = normalize_deadline_map(deadline)
+
     deadline
-    |> normalize_deadline_map()
     |> Map.take([
       :status,
       :overdue?,
@@ -154,7 +155,7 @@ defmodule Jizoku.Runtime.Deadline do
       :step,
       :runnable_key
     ])
-    |> maybe_put(:escalation, public_escalation(escalation(normalize_deadline_map(deadline))))
+    |> maybe_put(:escalation, public_escalation(escalation(deadline)))
     |> compact()
   end
 
