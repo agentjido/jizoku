@@ -154,7 +154,7 @@ defmodule Jizoku.MixProject do
       {:telemetry_metrics, "~> 1.1"},
       {:bypass, "~> 2.1", only: :test},
       {:jason, "~> 1.4"},
-      {:jido, "~> 2.3"},
+      {:jido, "~> 2.4"},
       {:req, "~> 0.5"},
       {:runic, "~> 0.1.0-alpha"},
       {:spark, "~> 2.7"},
