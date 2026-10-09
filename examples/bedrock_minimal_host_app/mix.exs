@@ -26,15 +26,13 @@ defmodule BedrockMinimalHostApp.MixProject do
   defp deps do
     [
       {:bypass, "~> 2.1", only: :test},
-      {:bedrock, "~> 0.5.2"},
-      {:bedrock_job_queue, "~> 0.3.0"},
-      {:hackney, "~> 4.7.4", override: true},
+      {:bedrock, "~> 0.7.2"},
+      {:bedrock_job_queue, "~> 0.4.0"},
+      {:hackney, "~> 4.8", override: true},
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22.2"},
       {:jizoku, path: "../.."},
-      # Jido currently allows an older Zoi range that keeps Decimal on 2.x.
-      # The example pins Zoi forward so its isolated lockfile can use Decimal 3.
-      {:zoi, "~> 0.18.4", override: true}
+      {:zoi, "~> 0.18.11"}
     ]
   end
 

@@ -2527,9 +2527,6 @@ defmodule MinimalHostApp.Smoke do
           {:error, :missing_daily_digest_run} ->
             Process.sleep(50)
             await_daily_digest_run(existing_run_ids, attempts_remaining - 1)
-
-          {:error, reason} ->
-            {:error, reason}
         end
 
       {:error, reason} ->

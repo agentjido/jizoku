@@ -2231,7 +2231,7 @@ defmodule MinimalHostApp.WorkflowRunsTest do
     assert {:ok, {_supervisor_flags, [child_spec]}} =
              CronPlugin.init(conf: oban_config(), workflows: [DailyDigest])
 
-    %{start: {Oban.Plugins.Cron, :start_link, [opts]}} = child_spec
+    %{start: {Oban.Cron, :start_link, [opts]}} = child_spec
     [{"@reboot", JizokuWorker, entry_opts}] = Keyword.fetch!(opts, :crontab)
     payload = Keyword.fetch!(entry_opts, :args)
     Map.fetch!(payload, "signal_id")
