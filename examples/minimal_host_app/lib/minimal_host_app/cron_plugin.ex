@@ -65,7 +65,7 @@ defmodule MinimalHostApp.CronPlugin do
       |> build_crontabs(JizokuDeliveryAdapter.queue(), reboot_activation_id)
       |> Enum.map(fn {timezone, crontab} ->
         opts = [conf: conf, crontab: crontab, timezone: timezone]
-        Supervisor.child_spec({Oban.Plugins.Cron, opts}, id: {:cron, timezone})
+        Supervisor.child_spec({Oban.Cron, opts}, id: {:cron, timezone})
       end)
 
     Supervisor.init(children, strategy: :one_for_one)
@@ -125,7 +125,7 @@ defmodule MinimalHostApp.CronPlugin do
     with {:ok, payload} <- cron_payload(workflow, trigger, "validation") do
       opts = [args: payload]
 
-      case Oban.Plugins.Cron.validate(
+      case Oban.Cron.validate(
              crontab: [{expression, JizokuWorker, opts}],
              timezone: timezone
            ) do
