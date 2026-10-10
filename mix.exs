@@ -162,7 +162,7 @@ defmodule Jizoku.MixProject do
       {:ex_slop, "~> 0.4.2", only: [:dev, :test], runtime: false},
       {:postgrex, "~> 0.20"},
       {:reach, "~> 2.7", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.40.4", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:doctor, "~> 0.23.0", only: [:dev, :test], runtime: false},

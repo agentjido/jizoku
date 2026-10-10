@@ -983,6 +983,10 @@ Please review the existing runtime model and workflow semantics before proposing
 - [GitHub Issues](https://github.com/agentjido/jizoku/issues)
 - [Jizoku channel on the Jido Discord](https://discord.com/channels/1323353012235796550/1504122798027571331)
 
+## Local Documentation
+
+Run `mix docs` to generate HTML and Markdown documentation in `doc/`, including Markdown pages and `llms.txt`.
+
 ## License
 
 Copyright 2026 Mike Hostetler
