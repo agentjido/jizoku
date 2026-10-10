@@ -26,7 +26,7 @@ jobs:
     secrets: inherit
     with:
       audit_command: mix deps.audit --ignore-file config/deps_audit.ignore
-      docs_command: mix doctor --raise && mix docs -f html
+      docs_command: mix doctor --raise && mix docs -f html -f markdown
       test_setup_command: >-
         docker run --detach --rm --name jizoku-postgres
         --env POSTGRES_PASSWORD=postgres --env POSTGRES_DB=postgres
