@@ -97,8 +97,7 @@ defmodule Mix.Tasks.Jizoku.RetentionTest do
           "--created-at",
           preview["plan"]["created_at"],
           "--apply",
-          "--confirmation",
-          preview["plan"]["confirmation_token"],
+          "--confirmation=#{preview["plan"]["confirmation_token"]}",
           "--json"
         ])
       end)
