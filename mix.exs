@@ -149,6 +149,8 @@ defmodule Jizoku.MixProject do
 
   defp deps do
     [
+      {:db_connection, "~> 2.10 and >= 2.10.3"},
+      {:ecto, "~> 3.14 and >= 3.14.3"},
       {:ecto_sql, "~> 3.13"},
       {:telemetry, "~> 1.3"},
       {:telemetry_metrics, "~> 1.1"},
@@ -156,6 +158,7 @@ defmodule Jizoku.MixProject do
       {:jason, "~> 1.4"},
       {:jido, "~> 2.4"},
       {:req, "~> 0.5"},
+      {:plug, "~> 1.20 and >= 1.20.4", optional: true},
       {:runic, "~> 0.1.0-alpha"},
       {:spark, "~> 2.7"},
       {:ex_dna, "~> 1.5", only: [:dev, :test], runtime: false},
