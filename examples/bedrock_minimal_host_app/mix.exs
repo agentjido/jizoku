@@ -30,7 +30,7 @@ defmodule BedrockMinimalHostApp.MixProject do
       {:bedrock_job_queue, "~> 0.4.0"},
       {:hackney, "~> 4.8", override: true},
       {:ecto_sql, "~> 3.14"},
-      {:postgrex, "~> 0.22.2"},
+      {:postgrex, "~> 0.23.0"},
       {:jizoku, path: "../.."},
       {:zoi, "~> 0.18.11"}
     ]
