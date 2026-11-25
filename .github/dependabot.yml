@@ -2,7 +2,10 @@ version: 2
 
 updates:
   - package-ecosystem: "mix"
-    directory: "/"
+    directories:
+      - "/"
+      - "/examples/minimal_host_app"
+      - "/examples/bedrock_minimal_host_app"
     schedule:
       interval: "weekly"
       day: "monday"
