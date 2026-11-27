@@ -96,7 +96,7 @@ Add Jizoku to your dependencies:
 ```elixir
 defp deps do
   [
-    {:jizoku, "~> 0.4.0"}
+    {:jizoku, "~> 0.5.0"}
   ]
 end
 ```
